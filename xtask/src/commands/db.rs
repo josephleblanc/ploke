@@ -211,6 +211,7 @@ impl Command for LoadFixture {
             )
         })?;
 
+        let checked_path = fixture.checked_path()?;
         let _db = ctx.get_database_from_fixture(fixture)?;
         if self.verify {
             let rels = _db.relations_vec()?;
@@ -228,7 +229,7 @@ impl Command for LoadFixture {
         };
         Ok(DbOutput::Success {
             message: format!("Loaded fixture `{}`.{}", self.fixture, index_note),
-            path: Some(fixture.path()),
+            path: Some(checked_path.into_path()),
         })
     }
 }

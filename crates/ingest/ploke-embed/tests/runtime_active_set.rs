@@ -37,6 +37,8 @@ fn cfg(model: &str, dims: usize) -> OpenRouterConfig {
         initial_backoff_ms: 1,
         max_backoff_ms: 5,
         input_type: Some("code-snippet".into()),
+        provider_order: None,
+        allow_fallbacks: None,
         timeout_secs: 5,
         truncate_policy: TruncatePolicy::Truncate,
     }

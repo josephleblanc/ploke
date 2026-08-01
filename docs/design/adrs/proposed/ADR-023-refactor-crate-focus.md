@@ -19,6 +19,15 @@ These meanings are not equivalent.
 
 This ambiguity became more problematic as workspace-aware parsing and indexing were introduced. A single focused-crate field does not faithfully represent a loaded workspace with multiple member crates. It also encourages incorrect behavior where relative command resolution may drift to process cwd or other incidental context instead of using explicit application state.
 
+2026-05-15 operational evidence: Prototype 1 broad headless-TUI campaign
+`p1-broad-harness-grok4fast-20260515-1` exposed this ambiguity in file tools.
+After an edit in focused crate `crates/ploke-protocol`, `create_file` resolved
+the workspace-relative path `crates/ploke-protocol/src/performance.rs` as
+`crates/ploke-protocol/crates/ploke-protocol/src/performance.rs`. The harness
+had set both a loaded workspace root and a focused crate root; the failure shows
+that focused-crate state must not be the implicit base for model-facing
+filesystem paths.
+
 The database already serves as the primary source of truth for loaded semantic content:
 - parsed code items
 - relations
@@ -35,6 +44,13 @@ Runtime state will instead distinguish between:
 - loaded workspace context
 - loaded crate runtime/cache state
 - ephemeral analysis focus passed as function parameters, not stored as durable system state
+
+Filesystem path resolution is part of loaded environment context, not analysis
+focus. When a workspace is loaded, file tools should resolve and display bare
+relative paths against the workspace root. Focused crate may still be passed
+explicitly to semantic search, graph lookup, ranking, or future visibility-aware
+resolution, but it should not silently reinterpret paths shown to or supplied by
+the model.
 
 The durable application runtime model will move toward:
 
@@ -111,20 +127,20 @@ Resolution from user input into a typed indexing target may still involve path h
 - What exact typed target model should be used for `IndexCrate` and `IndexWorkspace`?
 
 ## Current code notes
-- `SystemStatus` is currently defined in [core.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs). At git `a4f139ba`, it contains `loaded_workspace: Option<LoadedWorkspaceState>` and `crate_focus: Option<CrateId>`, along with versioning, dependency, and parse-failure tracking.
-- `focused_crate_root()` and `focused_crate_name()` are derived accessors in [core.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs), not direct stored fields.
-- `set_loaded_workspace(...)` and `set_focus_from_root(...)` in [core.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs) already treat loaded workspace membership as the underlying authority for focus.
-- DB restore currently writes runtime state through [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs), using `workspace_metadata` when present and otherwise falling back to `set_focus_from_root(...)`.
-- Indexing currently still enters through `StateCommand::IndexWorkspace` and `handlers::indexing::index_workspace(...)` in [indexing.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/handlers/indexing.rs), which is part of why target-kind semantics remain blurry.
+- `SystemStatus` is currently defined in [core.rs](../../../../crates/ploke-tui/src/app_state/core.rs). At git `a4f139ba`, it contains `loaded_workspace: Option<LoadedWorkspaceState>` and `crate_focus: Option<CrateId>`, along with versioning, dependency, and parse-failure tracking.
+- `focused_crate_root()` and `focused_crate_name()` are derived accessors in [core.rs](../../../../crates/ploke-tui/src/app_state/core.rs), not direct stored fields.
+- `set_loaded_workspace(...)` and `set_focus_from_root(...)` in [core.rs](../../../../crates/ploke-tui/src/app_state/core.rs) already treat loaded workspace membership as the underlying authority for focus.
+- DB restore currently writes runtime state through [database.rs](../../../../crates/ploke-tui/src/app_state/database.rs), using `workspace_metadata` when present and otherwise falling back to `set_focus_from_root(...)`.
+- Indexing currently still enters through `StateCommand::IndexWorkspace` and `handlers::indexing::index_workspace(...)` in [indexing.rs](../../../../crates/ploke-tui/src/app_state/handlers/indexing.rs), which is part of why target-kind semantics remain blurry.
 - `crate_focus` usage is still spread across tooling and DB flows:
-  - tool path scoping in [create_file.rs](/home/brasides/code/ploke/crates/ploke-tui/src/tools/create_file.rs), [code_edit.rs](/home/brasides/code/ploke/crates/ploke-tui/src/tools/code_edit.rs), and [rag/tools.rs](/home/brasides/code/ploke/crates/ploke-tui/src/rag/tools.rs)
-  - incremental scan and save flows in [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs)
-  - stale-state checks and path policy derivation in [core.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs)
+  - tool path scoping in [create_file.rs](../../../../crates/ploke-tui/src/tools/create_file.rs), [code_edit.rs](../../../../crates/ploke-tui/src/tools/code_edit.rs), and [rag/tools.rs](../../../../crates/ploke-tui/src/rag/tools.rs)
+  - incremental scan and save flows in [database.rs](../../../../crates/ploke-tui/src/app_state/database.rs)
+  - stale-state checks and path policy derivation in [core.rs](../../../../crates/ploke-tui/src/app_state/core.rs)
 
 ## References
-- [core.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/core.rs)
-- [database.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/database.rs)
-- [indexing.rs](/home/brasides/code/ploke/crates/ploke-tui/src/app_state/handlers/indexing.rs)
-- [create_file.rs](/home/brasides/code/ploke/crates/ploke-tui/src/tools/create_file.rs)
-- [code_edit.rs](/home/brasides/code/ploke/crates/ploke-tui/src/tools/code_edit.rs)
-- [rag/tools.rs](/home/brasides/code/ploke/crates/ploke-tui/src/rag/tools.rs)
+- [core.rs](../../../../crates/ploke-tui/src/app_state/core.rs)
+- [database.rs](../../../../crates/ploke-tui/src/app_state/database.rs)
+- [indexing.rs](../../../../crates/ploke-tui/src/app_state/handlers/indexing.rs)
+- [create_file.rs](../../../../crates/ploke-tui/src/tools/create_file.rs)
+- [code_edit.rs](../../../../crates/ploke-tui/src/tools/code_edit.rs)
+- [rag/tools.rs](../../../../crates/ploke-tui/src/rag/tools.rs)

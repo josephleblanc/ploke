@@ -9,6 +9,13 @@ Ploke is a Rust-focused terminal-based application for developer-LLM collaborati
 
 If you want your coding LLMs to have deep comprehension of your Rust code base, you are in the right place.
 
+## Workspace note
+
+`crates/ploke-tui` is the user-facing application and the workspace default member.
+`crates/ploke-eval` and `crates/ploke-protocol` are internal, non-release-facing
+evaluation/protocol crates; they are expected to evolve faster, may be more
+experimental, and can be less tested than the main TUI path.
+
 <p align="center">
   <a href="#quick-start">Getting Started</a> ·
   <a href="#features-roadmap">Features</a> ·
@@ -22,7 +29,7 @@ If you want your coding LLMs to have deep comprehension of your Rust code base, 
 </p>
 
 Under development, will likely not crash/panic if it tries to parse a crate with an
-error, or in certain [known limitations](.docs/design/known_limitations/) or
+error, or in certain [known limitations](docs/design/known_limitations/) or
 unknown bugs. Please [open an issue](https://github.com/josephleblanc/ploke/issues) if you discovery one, it will jump to the
 top of our todo list.
 
@@ -392,7 +399,7 @@ Workspace metadata (recent roots, snapshot paths, etc.) is stored separately as 
 | **`tooling`** | Timeouts for `cargo check` / `cargo test`, and allowed extensions for create-file tooling. | |
 | **`chat_policy`** | Tool-call timeouts, chain limits, retry/timeout strategy, and related chat-loop behavior. | |
 | **`rag`** | Retrieval: top-k, per-part token limits, dense/sparse/hybrid strategy, BM25 timeouts, RRF/MMR fusion. | |
-| **`token_limit`** | Default token budget for the **`request_code_context`** tool when the model does not pass a budget. | Not a global max-tokens cap for all LLM traffic. |
+| **`token_limit`** | Default total token budget for the **`request_code_context`** tool when the model does not pass `token_budget_total`. | Not a global max-tokens cap for all LLM traffic. |
 | **`tool_retries`** | Intended tool retry count. | **Currently unused** by the chat/tool loop (value is loaded and saved only). |
 | **`llm_timeout_secs`** | HTTP timeout for chat requests to the LLM API. | |
 
@@ -439,7 +446,21 @@ Make sure the chosen `INSTALL_DIR` is in your `PATH` so the `ploke` command can 
 > See the [Rust documentation](https://www.rust-lang.org/tools/install) for troubleshooting.
 
 ## Docs
-Under construction, mdbook soon!
+
+The project mdBook lives in [`docs/book`](docs/book/). It is separate from the Evalnomicon under `docs/workflow/evalnomicon`.
+
+Build it locally with:
+
+```bash
+cargo install mdbook --locked
+mdbook build docs/book
+```
+
+Serve it locally with:
+
+```bash
+mdbook serve docs/book --open
+```
 
 ## Troubleshooting
 

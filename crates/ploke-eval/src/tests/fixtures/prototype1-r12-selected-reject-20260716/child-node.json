@@ -1,0 +1,27 @@
+{
+  "schema_version": "prototype1-treatment-node.v1",
+  "node_id": "node-cb1b41e21e01ddc7",
+  "parent_node_id": "node-802e115bdf749c6d",
+  "generation": 1,
+  "instance_id": "da61ad77-c9f1-4344-a988-eeaa97a3bba9",
+  "source_state_id": "prototype1-parent-p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301-gen0",
+  "operation_target": {
+    "kind": "artifact",
+    "artifact_id": "artifact:git-commit:9d722f2a2cceffc3bc0d5b2f59fd1f062643eed9"
+  },
+  "base_artifact_id": "artifact:git-commit:9d722f2a2cceffc3bc0d5b2f59fd1f062643eed9",
+  "patch_id": "broad-harness:broad-harness-request:node-802e115bdf749c6d:r2",
+  "derived_artifact_id": "artifact:git-commit:af36ab04a272634750a2bfc930222d4af0e5851a",
+  "parent_branch_id": "prototype1-parent-p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301-gen0",
+  "branch_id": "branch-aef83be6f4105a58",
+  "candidate_id": "broad-harness-g1-01",
+  "target_relpath": "proc_macros/syn_parser/syn_parser_macros/src/lib.rs",
+  "node_dir": "/home/brasides/.ploke-eval/campaigns/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301/prototype1/nodes/node-cb1b41e21e01ddc7",
+  "workspace_root": "/home/brasides/.ploke-eval/campaigns/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301/prototype1/workspaces/edit-harness/node-802e115bdf749c6d-r2",
+  "binary_path": "/home/brasides/.ploke-eval/campaigns/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301/prototype1/nodes/node-cb1b41e21e01ddc7/bin/ploke-eval",
+  "runner_request_path": "/home/brasides/.ploke-eval/campaigns/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301/prototype1/nodes/node-cb1b41e21e01ddc7/runner-request.json",
+  "runner_result_path": "/home/brasides/.ploke-eval/campaigns/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301/prototype1/nodes/node-cb1b41e21e01ddc7/runner-result.json",
+  "status": "succeeded",
+  "created_at": "2026-07-17T02:24:27.861950209+00:00",
+  "updated_at": "2026-07-17T02:40:16.103688343+00:00"
+}

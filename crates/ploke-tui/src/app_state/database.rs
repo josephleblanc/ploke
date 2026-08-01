@@ -1,7 +1,8 @@
 use std::{
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
     ops::ControlFlow,
-    path::PathBuf,
+    path::{Path, PathBuf},
+    time::Instant,
 };
 
 use cozo::DataValue;
@@ -43,7 +44,7 @@ use crate::{
     parser::run_parse_no_transform,
     tracing_setup::SCAN_CHANGE,
     user_config::{WorkspaceRegistry, WorkspaceRegistryEntry},
-    utils::parse_errors::format_parse_failure,
+    utils::parse_errors::{extract_nested_parser_diagnostics, format_parse_failure},
 };
 
 use super::*;
@@ -131,6 +132,54 @@ impl IndexTargetDir {
             }
         }
         None
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IndexTarget {
+    WorkspaceRoot(PathBuf),
+    CrateRoot(PathBuf),
+    // 2026-04-20: `LoadedWorkspace` is intentionally "the one current loaded
+    // workspace in AppState", not a Cargo-native workspace name/identity.
+    // If AppState ever supports multiple loaded workspace contexts, replace
+    // this implicit variant with an explicit workspace identity such as
+    // `LoadedWorkspace(WorkspaceId)` or an equivalent typed handle.
+    LoadedWorkspace,
+    LoadedCrate(CrateId),
+}
+
+impl IndexTarget {
+    pub fn resolve_against_loaded_state(
+        &self,
+        status: &super::core::SystemStatus,
+    ) -> Option<IndexTargetDir> {
+        match self {
+            Self::WorkspaceRoot(path) | Self::CrateRoot(path) => {
+                Some(IndexTargetDir::new(path.clone()))
+            }
+            Self::LoadedWorkspace => status.loaded_workspace_root().map(IndexTargetDir::new),
+            Self::LoadedCrate(crate_id) => status.loaded_crate(crate_id).map(|loaded| {
+                let loaded_root = &loaded.context.root_path;
+                let member_roots = status.loaded_workspace_member_roots();
+                let is_workspace_member = member_roots.iter().any(|root| root == loaded_root);
+
+                if is_workspace_member && let Some(workspace_root) = status.loaded_workspace_root()
+                {
+                    IndexTargetDir::new(workspace_root)
+                } else {
+                    IndexTargetDir::new(loaded_root.clone())
+                }
+            }),
+        }
+    }
+
+    pub fn describe(&self) -> String {
+        match self {
+            Self::WorkspaceRoot(path) => format!("workspace root {}", path.display()),
+            Self::CrateRoot(path) => format!("crate root {}", path.display()),
+            Self::LoadedWorkspace => "loaded workspace".to_string(),
+            Self::LoadedCrate(crate_id) => format!("loaded crate {crate_id:?}"),
+        }
     }
 }
 
@@ -476,6 +525,64 @@ async fn primary_scan_target(
     })
 }
 
+fn owning_loaded_target_for_path<'a>(
+    targets: &'a [LoadedCrateScanTarget],
+    path: &Path,
+) -> Option<&'a LoadedCrateScanTarget> {
+    targets
+        .iter()
+        .filter(|target| path.starts_with(&target.root_path))
+        .max_by_key(|target| target.root_path.components().count())
+}
+
+async fn scan_targets_for_paths(
+    state: &Arc<AppState>,
+    paths: &[PathBuf],
+) -> Result<Vec<LoadedCrateScanTarget>, ploke_error::Error> {
+    if paths.is_empty() {
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: "Targeted scan requires at least one changed path".to_string(),
+        }));
+    }
+
+    let (_, loaded_targets) = loaded_crate_targets(state).await?;
+    if loaded_targets.is_empty() {
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: "No loaded crates are available for targeted scan".to_string(),
+        }));
+    }
+
+    let mut selected = Vec::new();
+    for path in paths {
+        if !path.is_absolute() {
+            return Err(ploke_error::Error::Domain(DomainError::Ui {
+                message: format!(
+                    "Targeted scan requires absolute changed paths; got '{}'",
+                    path.display()
+                ),
+            }));
+        }
+
+        let Some(target) = owning_loaded_target_for_path(&loaded_targets, path) else {
+            return Err(ploke_error::Error::Domain(DomainError::Ui {
+                message: format!(
+                    "Changed path '{}' is not under any loaded crate root",
+                    path.display()
+                ),
+            }));
+        };
+
+        if !selected
+            .iter()
+            .any(|existing: &LoadedCrateScanTarget| existing.crate_id == target.crate_id)
+        {
+            selected.push(target.clone());
+        }
+    }
+
+    Ok(selected)
+}
+
 async fn freshness_for_target(
     state: &Arc<AppState>,
     target: &LoadedCrateScanTarget,
@@ -661,12 +768,13 @@ async fn current_workspace_registry_entry(
 fn default_snapshot_file_for_entry(
     entry: &WorkspaceRegistryEntry,
 ) -> Result<PathBuf, ploke_error::Error> {
-    let config_dir = dirs::config_local_dir().ok_or_else(|| {
+    let registry_path = WorkspaceRegistry::default_registry_path();
+    let registry_dir = registry_path.parent().ok_or_else(|| {
         ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir {
-            msg: "Could not locate default config directory on system",
+            msg: "Could not locate workspace registry parent directory",
         })
     })?;
-    Ok(config_dir.join("ploke").join("data").join(format!(
+    Ok(registry_dir.join("data").join(format!(
         "{}_{}.sqlite",
         entry.workspace_name, entry.workspace_id
     )))
@@ -1241,6 +1349,16 @@ pub async fn workspace_update_for_test(
 }
 
 #[cfg(feature = "test_harness")]
+pub async fn scan_paths_for_change_for_test(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    paths: Vec<PathBuf>,
+    scan_tx: oneshot::Sender<Option<Vec<PathBuf>>>,
+) -> Result<(), ploke_error::Error> {
+    scan_paths_for_change(state, event_bus, paths, scan_tx).await
+}
+
+#[cfg(feature = "test_harness")]
 pub async fn workspace_remove_for_test(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
@@ -1268,8 +1386,16 @@ async fn scan_for_change_target(
 ) -> Result<(), ploke_error::Error> {
     let crate_path = target.root_path.clone();
     let crate_name = target.crate_name.clone();
+    let scan_started = Instant::now();
 
     info!("scan_for_change in crate_name: {}", crate_name);
+    info!(
+        target: "ploke_tui::post_apply_refresh",
+        crate_name = %crate_name,
+        crate_path = %crate_path.display(),
+        emit_reindex,
+        "scan_for_change_target_start"
+    );
     // 2. get the files in the target project from the db, with hashes
     let file_data = state.db.get_crate_files(&crate_name)?;
     trace!(target: SCAN_CHANGE, "file_data: {:#?}", file_data);
@@ -1290,12 +1416,28 @@ async fn scan_for_change_target(
             error!("Error in state.io_handle.scan_changes_batch: {e}");
         })?;
     let vec_ok = result?;
+    let changed_file_count = vec_ok.iter().filter(|f| f.is_some()).count();
+    let removed_file_count = removed_file_data.len();
+    info!(
+        target: "ploke_tui::post_apply_refresh",
+        crate_name = %crate_name,
+        changed_file_count,
+        removed_file_count,
+        scan_io_ms = scan_started.elapsed().as_millis() as u64,
+        "scan_for_change_target_file_scan_done"
+    );
 
-    if !vec_ok.iter().any(|f| f.is_some()) && removed_file_data.is_empty() {
+    if changed_file_count == 0 && removed_file_data.is_empty() {
         // 4. if no changes, send complete in oneshot
         match scan_tx.send(None) {
             Ok(()) => {
                 info!("No file changes detected");
+                info!(
+                    target: "ploke_tui::post_apply_refresh",
+                    crate_name = %crate_name,
+                    total_ms = scan_started.elapsed().as_millis() as u64,
+                    "scan_for_change_target_no_changes_done"
+                );
             }
             Err(e) => {
                 error!("Error sending parse oneshot from ScanForChange");
@@ -1314,30 +1456,59 @@ async fn scan_for_change_target(
         // Extract pwd from SystemState before calling sync function
         let pwd = state.with_system_read(|sys| sys.pwd().to_path_buf()).await;
 
-        let mut parser_output =
-            match run_parse_no_transform(Arc::clone(&state.db), Some(crate_path.clone()), &pwd) {
-                Ok(output) => {
-                    state
-                        .with_system_txn(|txn| {
-                            txn.record_parse_success();
-                        })
-                        .await;
-                    output
-                }
-                Err(err) => {
-                    let msg = format_parse_failure(&crate_path, &err);
-                    state
-                        .with_system_txn(|txn| {
-                            txn.record_parse_failure(crate_path.clone(), msg.clone());
-                        })
-                        .await;
-                    event_bus.send(AppEvent::Error(crate::event_bus::ErrorEvent {
-                        message: msg.clone(),
-                        severity: crate::error::ErrorSeverity::Error,
-                    }));
-                    return Err(ploke_error::Error::Domain(DomainError::Ui { message: msg }));
-                }
-            };
+        info!(
+            target: "ploke_tui::post_apply_refresh",
+            crate_name = %crate_name,
+            "scan_for_change_target_parse_start"
+        );
+        let parse_started = Instant::now();
+        let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_parse_no_transform(Arc::clone(&state.db), Some(crate_path.clone()), &pwd)
+        }))
+        .unwrap_or_else(|payload| {
+            let detail = payload
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("non-string panic payload");
+            Err(SynParserError::InternalState(format!(
+                "Parser invariant panic while refreshing {crate_name}: {detail}"
+            )))
+        });
+        let mut parser_output = match parse_result {
+            Ok(output) => {
+                info!(
+                    target: "ploke_tui::post_apply_refresh",
+                    crate_name = %crate_name,
+                    parse_ms = parse_started.elapsed().as_millis() as u64,
+                    "scan_for_change_target_parse_done"
+                );
+                state
+                    .with_system_txn(|txn| {
+                        txn.record_parse_success();
+                    })
+                    .await;
+                output
+            }
+            Err(err) => {
+                let msg = format_parse_failure(&crate_path, &err);
+                let diagnostics = extract_nested_parser_diagnostics(&err);
+                state
+                    .with_system_txn(|txn| {
+                        txn.record_parse_failure_with_diagnostics(
+                            crate_path.clone(),
+                            msg.clone(),
+                            diagnostics.clone(),
+                        );
+                    })
+                    .await;
+                event_bus.send(AppEvent::Error(crate::event_bus::ErrorEvent {
+                    message: msg.clone(),
+                    severity: crate::error::ErrorSeverity::Error,
+                }));
+                return Err(ploke_error::Error::Domain(DomainError::Ui { message: msg }));
+            }
+        };
         let mut merged = match parser_output
             .extract_merged_graph()
             .ok_or(SynParserError::MergeError)
@@ -1345,9 +1516,14 @@ async fn scan_for_change_target(
             Ok(merged) => merged,
             Err(err) => {
                 let msg = format_parse_failure(&crate_path, &err);
+                let diagnostics = extract_nested_parser_diagnostics(&err);
                 state
                     .with_system_txn(|txn| {
-                        txn.record_parse_failure(crate_path.clone(), msg.clone());
+                        txn.record_parse_failure_with_diagnostics(
+                            crate_path.clone(),
+                            msg.clone(),
+                            diagnostics.clone(),
+                        );
                     })
                     .await;
                 event_bus.send(AppEvent::Error(crate::event_bus::ErrorEvent {
@@ -1368,9 +1544,14 @@ module tree process or run_parse_no_transform"
             Ok(tree) => tree,
             Err(err) => {
                 let msg = format_parse_failure(&crate_path, &err);
+                let diagnostics = extract_nested_parser_diagnostics(&err);
                 state
                     .with_system_txn(|txn| {
-                        txn.record_parse_failure(crate_path.clone(), msg.clone());
+                        txn.record_parse_failure_with_diagnostics(
+                            crate_path.clone(),
+                            msg.clone(),
+                            diagnostics.clone(),
+                        );
                     })
                     .await;
                 event_bus.send(AppEvent::Error(crate::event_bus::ErrorEvent {
@@ -1402,9 +1583,13 @@ module tree process or run_parse_no_transform"
         // WARN: Half-assed implementation, this should be a recursive function instead of simple
         // collection.
         //  - coercing into ModuleNodeId with the test method escape hatch, do properly
-        let module_uuids = vec_ok.into_iter().filter_map(|f| f.map(|i| i.id));
+        let module_uuids = vec_ok
+            .into_iter()
+            .filter_map(|f| f.map(|i| i.id))
+            .collect::<BTreeSet<_>>();
         let module_ids = module_uuids
-            .clone()
+            .iter()
+            .copied()
             .map(|uid| ModuleNodeId::new_test(NodeId::Synthetic(uid)));
         // let module_ids = vec_ok.into_iter().filter_map(|f| f.map(|id|
         //     ModuleNodeId::new_test(NodeId::Synthetic(id.id))));
@@ -1619,9 +1804,29 @@ module tree process or run_parse_no_transform"
         // filter nodes
         merged.retain_all(filtered_union);
 
+        let retracted = state
+            .db
+            .retract_file_descendants(&module_uuids)
+            .inspect_err(|e| error!("Error retracting changed file descendants: {e}"))?;
+        if !retracted.is_empty() {
+            info!(
+                "Retracted {} stale descendants before partial graph update",
+                retracted.len()
+            );
+        }
+
+        let transform_started = Instant::now();
         transform_parsed_graph(&state.db, merged, &tree).inspect_err(|e| {
             error!("Error transforming partial graph into database:\n{e}");
         })?;
+        info!(
+            target: "ploke_tui::post_apply_refresh",
+            crate_name = %crate_name,
+            module_count = module_uuids.len(),
+            retracted_count = retracted.len(),
+            transform_ms = transform_started.elapsed().as_millis() as u64,
+            "scan_for_change_target_transform_done"
+        );
 
         for file_id in module_uuids {
             for node_ty in NodeType::primary_nodes() {
@@ -1642,10 +1847,23 @@ module tree process or run_parse_no_transform"
 
         if emit_reindex {
             trace!("Finishing scanning, sending message to reindex workspace");
+            info!(
+                target: "ploke_tui::post_apply_refresh",
+                crate_name = %crate_name,
+                crate_id = ?target.crate_id,
+                "scan_for_change_target_reindex_emit"
+            );
             event_bus.send(AppEvent::System(SystemEvent::ReIndex {
-                workspace: crate_name.to_string(),
+                target: IndexTarget::LoadedCrate(target.crate_id),
             }));
         }
+        info!(
+            target: "ploke_tui::post_apply_refresh",
+            crate_name = %crate_name,
+            changed_path_count = changed_filenames.len(),
+            total_ms = scan_started.elapsed().as_millis() as u64,
+            "scan_for_change_target_changed_done"
+        );
         let _ = scan_tx.send(Some(changed_filenames));
         // TODO: Add validation step here.
     }
@@ -1661,6 +1879,57 @@ pub(super) async fn scan_for_change(
 ) -> Result<(), ploke_error::Error> {
     let target = primary_scan_target(state).await?;
     scan_for_change_target(state, event_bus, &target, scan_tx, true).await
+}
+
+pub(super) async fn scan_paths_for_change(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    paths: Vec<std::path::PathBuf>,
+    scan_tx: oneshot::Sender<Option<Vec<std::path::PathBuf>>>,
+) -> Result<(), ploke_error::Error> {
+    let scan_started = Instant::now();
+    let targets = scan_targets_for_paths(state, &paths).await?;
+    info!(
+        target: "ploke_tui::post_apply_refresh",
+        path_count = paths.len(),
+        target_count = targets.len(),
+        "scan_paths_for_change_start"
+    );
+    let mut changed_paths = Vec::new();
+
+    for target in targets {
+        let (target_tx, target_rx) = oneshot::channel();
+        scan_for_change_target(state, event_bus, &target, target_tx, true).await?;
+        match target_rx.await {
+            Ok(Some(paths)) => {
+                for path in paths {
+                    if !changed_paths.contains(&path) {
+                        changed_paths.push(path);
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(source) => {
+                return Err(ploke_error::Error::Domain(DomainError::Ui {
+                    message: format!("Targeted scan barrier failed: {source}"),
+                }));
+            }
+        }
+    }
+
+    let result = if changed_paths.is_empty() {
+        None
+    } else {
+        Some(changed_paths)
+    };
+    info!(
+        target: "ploke_tui::post_apply_refresh",
+        changed_path_count = result.as_ref().map(|paths| paths.len()).unwrap_or(0),
+        total_ms = scan_started.elapsed().as_millis() as u64,
+        "scan_paths_for_change_done"
+    );
+    let _ = scan_tx.send(result);
+    Ok(())
 }
 
 pub(super) async fn workspace_status(
@@ -1728,22 +1997,10 @@ pub(super) async fn workspace_update(
         let _ = scan_rx.await;
     }
 
-    let workspace_target = state
-        .with_system_read(|sys| {
-            sys.loaded_workspace_root()
-                .or_else(|| sys.focused_crate_root())
-                .ok_or_else(|| {
-                    ploke_error::Error::Domain(DomainError::Ui {
-                        message: "No loaded crate or workspace is available to update.".to_string(),
-                    })
-                })
-        })
-        .await?;
-
-    crate::app_state::handlers::indexing::index_workspace(
+    crate::app_state::handlers::indexing::index_target(
         state,
         event_bus,
-        Some(IndexTargetDir::new(workspace_target)),
+        Some(IndexTarget::LoadedWorkspace),
         false,
     )
     .await;
@@ -2019,29 +2276,74 @@ mod tests {
     use ploke_core::embeddings::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingShape};
     use ploke_db::multi_embedding::debug::DebugAll;
     use ploke_embed::indexer::EmbeddingProcessor;
+    use ploke_test_utils::PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV;
     use ploke_transform::schema::crate_node::CrateContextSchema;
     use tempfile::TempDir;
 
     const HNSW_SUFFIX: &str = ":hnsw_idx";
     use crate::test_support::config_home_lock;
+    use crate::user_config::PLOKE_WORKSPACE_REGISTRY_PATH_ENV;
 
-    struct XdgConfigHomeGuard {
-        old_xdg: Option<String>,
+    #[test]
+    fn loaded_crate_index_target_preserves_workspace_root_for_member() {
+        let workspace_root = PathBuf::from("/repo/workspace");
+        let member_a = workspace_root.join("crates/ploke-protocol");
+        let member_b = workspace_root.join("crates/ploke-tui");
+        let member_a_id = CrateId::from_root_path(&member_a);
+
+        let mut status = SystemStatus::default();
+        status.set_loaded_workspace(
+            workspace_root.clone(),
+            vec![member_a.clone(), member_b],
+            Some(member_a),
+        );
+
+        let resolved = IndexTarget::LoadedCrate(member_a_id)
+            .resolve_against_loaded_state(&status)
+            .expect("loaded crate target should resolve");
+
+        assert_eq!(resolved.as_path(), workspace_root.as_path());
     }
 
-    impl XdgConfigHomeGuard {
+    struct WorkspaceRegistryPathGuard {
+        old_xdg: Option<String>,
+        old_registry_path: Option<String>,
+        old_snapshot_fixture_dir: Option<String>,
+    }
+
+    impl WorkspaceRegistryPathGuard {
         fn set_to(path: &std::path::Path) -> Self {
             let old_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+            let old_snapshot_fixture_dir = std::env::var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV).ok();
+            let old_registry_path = std::env::var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV).ok();
+            let registry_path = path.join("ploke").join("workspaces.toml");
+            let snapshot_fixture_dir = path.join("ploke").join("db_snapshot_fixtures");
             unsafe {
-                std::env::set_var("XDG_CONFIG_HOME", path);
+                std::env::remove_var("XDG_CONFIG_HOME");
+                std::env::set_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV, registry_path);
+                std::env::set_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, snapshot_fixture_dir);
             }
-            Self { old_xdg }
+            Self {
+                old_xdg,
+                old_registry_path,
+                old_snapshot_fixture_dir,
+            }
         }
     }
 
-    impl Drop for XdgConfigHomeGuard {
+    impl Drop for WorkspaceRegistryPathGuard {
         fn drop(&mut self) {
+            restore_workspace_registry_path(self.old_registry_path.take());
             restore_xdg_config_home(self.old_xdg.take());
+            if let Some(old_snapshot_fixture_dir) = self.old_snapshot_fixture_dir.take() {
+                unsafe {
+                    std::env::set_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, old_snapshot_fixture_dir);
+                }
+            } else {
+                unsafe {
+                    std::env::remove_var(PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV);
+                }
+            }
         }
     }
 
@@ -2088,13 +2390,25 @@ mod tests {
         }
     }
 
+    fn restore_workspace_registry_path(old_path: Option<String>) {
+        if let Some(old) = old_path {
+            unsafe {
+                std::env::set_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV, old);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var(PLOKE_WORKSPACE_REGISTRY_PATH_ENV);
+            }
+        }
+    }
+
     #[tokio::test]
     async fn load_db_restores_saved_embedding_set_and_index() {
         let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
-        let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
+        let _registry_guard = WorkspaceRegistryPathGuard::set_to(tmp_config.path());
 
-        let crate_name = "fixture_crate";
+        let crate_name = "fixture_crate_restore_embeddings";
         let crate_root = tmp_config.path().join(crate_name);
         std::fs::create_dir_all(&crate_root).expect("crate root dir");
 
@@ -2229,11 +2543,14 @@ mod tests {
     async fn load_db_requires_workspace_registry_entry_instead_of_prefix_lookup() {
         let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
-        let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
+        let _registry_guard = WorkspaceRegistryPathGuard::set_to(tmp_config.path());
 
+        let workspace_name = "fixture_crate_missing_registry";
         let data_dir = tmp_config.path().join("ploke/data");
         std::fs::create_dir_all(&data_dir).expect("create data dir");
-        let stale_backup = data_dir.join("fixture_crate_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        let stale_backup = data_dir.join(format!(
+            "{workspace_name}_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        ));
         std::fs::write(&stale_backup, "not-a-real-backup").expect("write stale backup");
 
         let fresh_db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
@@ -2245,7 +2562,7 @@ mod tests {
         let fresh_state = build_state(Arc::clone(&fresh_db), Arc::clone(&fresh_embedder));
         let bus = Arc::new(EventBus::new(EventBusCaps::default()));
 
-        let err = load_db(&fresh_state, &bus, "fixture_crate".to_string())
+        let err = load_db(&fresh_state, &bus, workspace_name.to_string())
             .await
             .expect_err("missing registry entry should fail");
         assert!(
@@ -2258,9 +2575,9 @@ mod tests {
     async fn load_db_rejects_first_populated_embedding_fallback_for_workspace_registry_loads() {
         let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
-        let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
+        let _registry_guard = WorkspaceRegistryPathGuard::set_to(tmp_config.path());
 
-        let workspace_name = "fixture_crate";
+        let workspace_name = "fixture_crate_first_populated_fallback";
         let workspace_root = tmp_config.path().join(workspace_name);
         std::fs::create_dir_all(&workspace_root).expect("workspace root dir");
         let workspace = WorkspaceInfo::from_root_path(workspace_root.clone());
@@ -2348,9 +2665,9 @@ mod tests {
     async fn load_db_fails_when_registry_metadata_disagrees_with_restored_snapshot() {
         let _lock = config_home_lock().lock().await;
         let tmp_config = TempDir::new().expect("temp config dir");
-        let _xdg_guard = XdgConfigHomeGuard::set_to(tmp_config.path());
+        let _registry_guard = WorkspaceRegistryPathGuard::set_to(tmp_config.path());
 
-        let workspace_name = "fixture_crate";
+        let workspace_name = "fixture_crate_metadata_mismatch";
         let workspace_root = tmp_config.path().join(workspace_name);
         std::fs::create_dir_all(&workspace_root).expect("workspace root dir");
         let workspace = WorkspaceInfo::from_root_path(workspace_root.clone());

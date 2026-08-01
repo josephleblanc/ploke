@@ -1,0 +1,87 @@
+schema_version = "prototype1-run-profile.v1"
+name = "p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301"
+
+[storage]
+worktree_root = "~/.ploke-eval/worktrees"
+
+[storage.eval]
+backend = "dual-strict"
+
+[target]
+dataset_key = "ripgrep"
+instance = "BurntSushi__ripgrep-2209"
+instances = ["BurntSushi__ripgrep-2209"]
+
+[model]
+id = "google/gemini-3.5-flash"
+route_source = "direct-google"
+provider = "google"
+
+[search]
+max_generations = 3
+max_total_nodes = 10
+schedule = "full-batch"
+stop_on_first_keep = false
+require_keep_for_continuation = true
+explore_from_rejected = false
+
+[search.children]
+min = 1
+max = 3
+parallel_targets = 3
+
+[generation]
+source = "broad-harness-request"
+
+[selection]
+strategy = "history-score-child-prop"
+evidence = "operational-and-protocol"
+seed = 0
+
+[selection.metrics]
+persist = true
+score_profile = "operational-quality-v1"
+
+[selection.metrics.imp_at_k]
+enabled = true
+budget_k = 50
+archive_scope = "selection-scope"
+score_points_per_imp_point = 0
+require_for_score = false
+
+[selection.oracle]
+mode = "record-only"
+require_evidence = true
+
+[protocol]
+max_tokens = 4096
+tool_review_parallelism = 1
+
+[protocol.model]
+id = "google/gemini-3.5-flash"
+route_source = "direct-google"
+provider = "google"
+
+[protocol.reasoning]
+mode = "omit"
+
+[execution]
+stop_after = "complete"
+observe_child_stale_after_secs = 1200
+trace_jsonl = "auto"
+debug_tools = true
+
+[execution.broad_tui]
+max_attempts = 1
+fresh_slots_per_child = 1
+graph_nearest = 24
+timeout_secs = 1800
+
+[execution.mbe]
+enabled = false
+python = "python"
+workers = 1
+
+[control]
+mode = "step"
+parallel_cap = 3

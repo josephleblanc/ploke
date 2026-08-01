@@ -1,0 +1,7 @@
+{
+  "schema_version": "prototype1-run-profile-commitment.v1",
+  "profile_path": "/home/brasides/.ploke-eval/campaigns/p1-gated-parent-3g1x3-p3-20260630-174316/prototype1/run-profile.toml",
+  "sha256": "efb89520ef9a50d4fe52d4f2923bbc9d02ed6f1bac017367b5656e57677f4ae4",
+  "source_path": "/home/brasides/.ploke-eval/profiles/prototype1/p1-gated-parent-3g1x3-p3-20260630-174316.toml",
+  "admitted_at": "2026-06-30T17:45:00.138695228+00:00"
+}

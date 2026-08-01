@@ -4,13 +4,22 @@
 // back, plus what happens to construct those message, and how they are handled after arriving and
 // routed (e.g. to tools or similar), and displaying the UI
 mod loop_error;
+mod semantics;
 mod session;
 // NOTE:ploke-llm 2025-12-14
 // For now moving entirely to `ploke-llm`, but keeping commented here in case we want to bring back
 // some of the `ChatEvt` functionality - now renamed to `ChatEvt` in `ploke-llm`
 pub(crate) mod events;
 pub use crate::llm::manager::session::CancelChatToken;
-pub(crate) use events::{ChatEvt, LlmEvent};
+#[cfg(feature = "test_harness")]
+pub use crate::llm::manager::session::{
+    ChatDebugSink, ChatDebugSinkGuard, ChatDebugStep, ChatDebugToolResult, FullResponseTraceRecord,
+    RequestTapGuard, ResponseTapGuard, SessionCapture, clear_chat_debug_sink,
+    clear_recorded_response_tape, clear_request_tap, clear_response_tap, install_chat_debug_sink,
+    install_recorded_response_prefix_then_live, install_recorded_response_prefix_then_live_steps,
+    install_recorded_response_tape, install_request_tap, install_response_tap,
+};
+pub use events::{ChatEvt, LlmEvent};
 pub(crate) use loop_error::{ChatSessionReport, SessionOutcome};
 
 use crate::{
@@ -25,16 +34,22 @@ use ploke_llm::{
     HasModels as _, Router as _,
     manager::events::{endpoint, models},
     request::ToolChoice,
-    router_only::openrouter::OpenRouter,
+    router_only::{RouterVariants, google::Google, openrouter::OpenRouter},
 };
 
+use crate::llm::model_overrides;
 use ploke_rag::{TokenCounter as _, context::ApproxCharTokenizer};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{env, fs, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    env, fs,
+    path::PathBuf,
+    sync::{Arc, OnceLock, RwLock},
+    time::Duration,
+};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
-use tracing::instrument;
+use tracing::{Instrument, instrument};
 use uuid::Uuid;
 
 pub use ploke_llm::RequestMessage;
@@ -47,8 +62,8 @@ use crate::{
     chat_history::{ContextTokens, MessageKind, TokenKind},
     tools::{
         self, Tool as _, ToolDefinition, cargo::CargoTool, code_edit::GatCodeEdit,
-        create_file::CreateFile, list_dir::ListDir, ns_patch::NsPatch, ns_read::NsRead,
-        request_code_context::RequestCodeContextGat,
+        create_file::CreateFile, insert_rust_item::InsertRustItem, list_dir::ListDir,
+        ns_patch::NsPatch, ns_read::NsRead, request_code_context::RequestCodeContextGat,
     },
     tracing_setup::TOKENS_TARGET,
     utils::consts::{DEBUG_TOOLS, TOOL_CALL_CHAIN_LIMIT},
@@ -56,6 +71,31 @@ use crate::{
 
 const TOKENS_LOG_ENV: &str = "PLOKE_LOG_TOKENS";
 const TOKENS_LOG_MAX_CHARS: usize = 4_000;
+static PROTOTYPE1_TRACE_CONTEXT: OnceLock<RwLock<Option<Prototype1TraceContext>>> = OnceLock::new();
+
+#[derive(Debug, Clone)]
+pub struct Prototype1TraceContext {
+    pub role: String,
+    pub runtime_phase: String,
+    pub campaign_id: String,
+    pub node_id: String,
+    pub branch_id: String,
+    pub generation: u32,
+    pub runtime_id: Option<String>,
+}
+
+pub fn set_prototype1_trace_context(context: Prototype1TraceContext) {
+    let lock = PROTOTYPE1_TRACE_CONTEXT.get_or_init(|| RwLock::new(None));
+    if let Ok(mut guard) = lock.write() {
+        *guard = Some(context);
+    }
+}
+
+fn prototype1_trace_context() -> Option<Prototype1TraceContext> {
+    PROTOTYPE1_TRACE_CONTEXT
+        .get()
+        .and_then(|lock| lock.read().ok().and_then(|guard| guard.clone()))
+}
 
 /// Opt-in toggle for token diagnostics (avoid logging sensitive content by default).
 pub(super) fn tokens_logging_enabled() -> bool {
@@ -74,6 +114,27 @@ pub(super) fn truncate_for_tokens_log(input: &str) -> String {
     format!(
         "{truncated}...<truncated {} chars>",
         total - TOKENS_LOG_MAX_CHARS
+    )
+}
+
+fn prototype1_chat_request_span() -> tracing::Span {
+    let context = prototype1_trace_context();
+    let generation = context
+        .as_ref()
+        .map(|context| context.generation.to_string())
+        .unwrap_or_default();
+
+    tracing::info_span!(
+        target: "chat-loop",
+        "prototype1.chat_request",
+        prototype1 = context.is_some(),
+        role = context.as_ref().map(|context| context.role.as_str()).unwrap_or(""),
+        runtime_phase = context.as_ref().map(|context| context.runtime_phase.as_str()).unwrap_or(""),
+        campaign_id = context.as_ref().map(|context| context.campaign_id.as_str()).unwrap_or(""),
+        node_id = context.as_ref().map(|context| context.node_id.as_str()).unwrap_or(""),
+        branch_id = context.as_ref().map(|context| context.branch_id.as_str()).unwrap_or(""),
+        generation = generation.as_str(),
+        runtime_id = context.as_ref().and_then(|context| context.runtime_id.as_deref()).unwrap_or(""),
     )
 }
 
@@ -112,12 +173,46 @@ struct EvtKey {
 }
 
 pub async fn llm_manager(
+    rt_rx: broadcast::Receiver<AppEvent>,
+    bg_rx: broadcast::Receiver<AppEvent>,
+    state: Arc<AppState>,
+    cmd_tx: mpsc::Sender<StateCommand>,
+    event_bus: Arc<EventBus>,
+    cancel_rx: watch::Receiver<CancelChatToken>,
+) {
+    run_llm_manager(
+        rt_rx,
+        bg_rx,
+        state,
+        cmd_tx,
+        event_bus,
+        cancel_rx,
+        session::SessionCapture::default(),
+    )
+    .await;
+}
+
+#[cfg(feature = "test_harness")]
+pub(crate) async fn captured_llm_manager(
+    rt_rx: broadcast::Receiver<AppEvent>,
+    bg_rx: broadcast::Receiver<AppEvent>,
+    state: Arc<AppState>,
+    cmd_tx: mpsc::Sender<StateCommand>,
+    event_bus: Arc<EventBus>,
+    cancel_rx: watch::Receiver<CancelChatToken>,
+    capture: session::SessionCapture,
+) {
+    run_llm_manager(rt_rx, bg_rx, state, cmd_tx, event_bus, cancel_rx, capture).await;
+}
+
+async fn run_llm_manager(
     mut rt_rx: broadcast::Receiver<AppEvent>,
     mut bg_rx: broadcast::Receiver<AppEvent>,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
     event_bus: Arc<EventBus>,
     cancel_rx: watch::Receiver<CancelChatToken>,
+    capture: session::SessionCapture,
     // providers: crate::user_config::ModelRegistry,
 ) {
     let client = Client::new();
@@ -130,6 +225,7 @@ pub async fn llm_manager(
         cmd_tx,
         client,
         event_bus,
+        capture,
     };
 
     // Enters loop every time there is a new event.
@@ -180,12 +276,37 @@ pub async fn llm_manager(
     }
 }
 
+fn emit_chat_turn_finished(event_bus: &Arc<EventBus>, report: &ChatSessionReport) {
+    let outcome = match &report.outcome {
+        SessionOutcome::Completed => "completed",
+        SessionOutcome::Aborted { .. } => "aborted",
+        SessionOutcome::Exhausted { .. } => "exhausted",
+    };
+    let error_id = match &report.outcome {
+        SessionOutcome::Completed => None,
+        SessionOutcome::Aborted { error_id } | SessionOutcome::Exhausted { error_id } => {
+            Some(*error_id)
+        }
+    };
+    event_bus.send(AppEvent::System(SystemEvent::ChatTurnFinished {
+        session_id: report.session_id,
+        request_id: report.request_id,
+        parent_id: report.parent_id,
+        assistant_message_id: report.assistant_message_id,
+        outcome: outcome.to_string(),
+        error_id,
+        summary: report.summary(),
+        attempts: report.attempts,
+    }));
+}
+
 #[derive(Clone)]
 pub struct LlmRequestArgs {
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
     client: Client,
     event_bus: Arc<EventBus>,
+    capture: session::SessionCapture,
 }
 
 fn handle_event(
@@ -195,7 +316,7 @@ fn handle_event(
     ready_contexts: &mut HashMap<EvtKey, ChatEvt>,
     cancel_rx: watch::Receiver<CancelChatToken>,
 ) {
-    tracing::info!(?event);
+    tracing::trace!(?event);
     match event {
         AppEvent::Llm(LlmEvent::ChatCompletion(
             request @ ChatEvt::Request {
@@ -220,7 +341,10 @@ fn handle_event(
                 let req = pending_requests
                     .remove(&event_key)
                     .expect("Event key-val must exist");
-                tokio::spawn(process_llm_request(req, context, args, cancel_rx));
+                tokio::spawn(
+                    process_llm_request(req, context, args, cancel_rx)
+                        .instrument(prototype1_chat_request_span()),
+                );
             }
         }
         AppEvent::System(SystemEvent::ToolCallRequested {
@@ -412,11 +536,13 @@ pub async fn process_llm_request(
         }
     };
 
+    let event_bus_for_completion = llm_request_args.event_bus.clone();
     let LlmRequestArgs {
         state,
         cmd_tx,
         client,
         event_bus,
+        capture,
     } = llm_request_args;
     let llm_call_args = LlmCallArgs {
         state,
@@ -428,6 +554,7 @@ pub async fn process_llm_request(
         parent_id,
         cmd_tx,
         cancel_rx,
+        capture,
     };
     // Prepare and execute the API call; UI updates happen inside the chat loop.
     let report = prepare_and_run_llm_call(llm_call_args).await;
@@ -440,6 +567,7 @@ pub async fn process_llm_request(
         summary = %summary,
         "LLM request completed"
     );
+    emit_chat_turn_finished(&event_bus_for_completion, &report);
     if let Some(err) = report.last_error() {
         tracing::warn!(
             target: "chat-loop",
@@ -461,6 +589,63 @@ pub struct LlmCallArgs {
     parent_id: Uuid,
     cmd_tx: mpsc::Sender<StateCommand>,
     cancel_rx: watch::Receiver<CancelChatToken>,
+    capture: session::SessionCapture,
+}
+
+#[cfg(feature = "test_harness")]
+#[derive(Clone)]
+pub struct ChatDebugRunArgs {
+    pub state: Arc<AppState>,
+    pub client: Client,
+    pub messages: Vec<RequestMessage>,
+    pub event_bus: Arc<EventBus>,
+    pub assistant_message_id: Uuid,
+    pub parent_id: Uuid,
+    pub cmd_tx: mpsc::Sender<StateCommand>,
+    pub capture: SessionCapture,
+}
+
+#[cfg(feature = "test_harness")]
+#[derive(Clone, Debug)]
+pub struct ChatDebugRunReport {
+    pub session_id: Uuid,
+    pub request_id: Uuid,
+    pub parent_id: Uuid,
+    pub assistant_message_id: Uuid,
+    pub outcome: String,
+    pub attempts: u32,
+    pub final_messages: Vec<RequestMessage>,
+}
+
+#[cfg(feature = "test_harness")]
+pub async fn run_chat_debug_messages(args: ChatDebugRunArgs) -> ChatDebugRunReport {
+    let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+    let report = prepare_and_run_llm_call(LlmCallArgs {
+        state: args.state,
+        client: args.client,
+        messages: args.messages,
+        included_message_ids: Vec::new(),
+        event_bus: args.event_bus,
+        assistant_message_id: args.assistant_message_id,
+        parent_id: args.parent_id,
+        cmd_tx: args.cmd_tx,
+        cancel_rx,
+        capture: args.capture,
+    })
+    .await;
+    ChatDebugRunReport {
+        session_id: report.session_id,
+        request_id: report.request_id,
+        parent_id: report.parent_id,
+        assistant_message_id: report.assistant_message_id,
+        outcome: match report.outcome {
+            SessionOutcome::Completed => "completed".to_string(),
+            SessionOutcome::Aborted { error_id } => format!("aborted:{error_id}"),
+            SessionOutcome::Exhausted { error_id } => format!("exhausted:{error_id}"),
+        },
+        attempts: report.attempts,
+        final_messages: report.final_messages,
+    }
 }
 
 #[instrument(skip_all)]
@@ -475,12 +660,14 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
         parent_id,
         cmd_tx,
         cancel_rx,
+        capture,
     } = args;
     // 5) Tool selection. For now, expose a fixed set of tools.
     //    Later, query registry caps and enforcement policy for tool_choice.
     let tool_defs: Vec<ToolDefinition> = vec![
         RequestCodeContextGat::tool_def(),
         GatCodeEdit::tool_def(),
+        InsertRustItem::tool_def(),
         CreateFile::tool_def(),
         NsPatch::tool_def(),
         NsRead::tool_def(),
@@ -490,13 +677,6 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
         ListDir::tool_def(),
     ];
 
-    // 4) Parameters (placeholder: use defaults until llm registry/prefs are wired)
-    //    When registry is available, merge model/user defaults into LLMParameters.
-    let llm_params = crate::llm::LLMParameters::default();
-
-    // 4.1) Build a router-generic ChatCompRequest using the builder pattern (OpenRouter default).
-    //      Construct a concrete request object that RequestSession will dispatch.
-
     // Gate tools by crate_focus: disable when no workspace is loaded
     let crate_loaded = state.with_system_read(|sys| sys.has_loaded_crates()).await;
     let (tools, tool_choice) = if crate_loaded {
@@ -505,27 +685,44 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
         (None, None)
     };
 
-    // Use the runtime-selected active model (includes optional variant)
-    let (model_id, chat_policy, llm_timeout_secs) = {
+    let (model_id, active_router, chat_policy, llm_timeout_secs, mut llm_params, openrouter_fields) = {
         let cfg = state.config.read().await;
+        let mut router_fields = <OpenRouter as ploke_llm::Router>::CompletionFields::default();
+        if let Some(provider) = cfg
+            .model_registry
+            .models
+            .get(&cfg.active_model.key)
+            .and_then(|mp| mp.selected_provider_preferences())
+        {
+            router_fields = router_fields.with_provider(provider);
+        }
+        router_fields = router_fields.preferences_union(&cfg.model_registry);
         (
             cfg.active_model.clone(),
+            cfg.active_router,
             cfg.chat_policy.clone(),
             cfg.llm_timeout_secs,
+            cfg.llm_params.clone(),
+            router_fields,
         )
     };
 
-    // WARN: Using default fields here, should try to load from registry first and use default if
-    // the selected model is default or if the registry is not yet set up.
-    let req = OpenRouter::default_chat_completion()
-        .with_core_bundle(ploke_llm::request::ChatCompReqCore::default())
-        .with_model(model_id)
-        .with_messages(messages)
-        .with_param_bundle(llm_params)
-        // TODO: This is where Registry will plug in, maybe?
-        // .with_params_union(_llm_params)
-        .with_tools(tools)
-        .with_tool_choice(tool_choice);
+    // Model-specific request quirk overrides (per-model API adaptations).
+    // See `crate::llm::model_overrides` and the direct-Google malformed
+    // function-call bug doc.
+    //
+    // Direct-Google Gemini truncates a structured tool call when the output-token
+    // budget is too small, surfacing as `MALFORMED_FUNCTION_CALL`. The override
+    // raises `max_tokens` to a generous floor (only when unset/lower), which a
+    // live spike proved eliminates the malformation. Raising the budget is
+    // termination-safe. (A forced `tool_choice` was empirically shown NOT to fix
+    // the malformation and would trap the per-request session loop, so no
+    // tool-choice override is emitted here.)
+    if let Some(model_override) = model_overrides::resolve(active_router, &model_id) {
+        llm_params.max_tokens = model_override
+            .params
+            .effective_max_tokens(llm_params.max_tokens);
+    }
 
     // 6) Diagnostics: skip provider-bound diag logs until registry replaces user_config.
     // let log_fut: Option<_> = None;
@@ -539,18 +736,54 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
     let finish_policy = finish_policy_from_chat(&chat_policy);
     let http_timeout = Duration::from_secs(llm_timeout_secs);
 
-    let chat_session = session::ChatSession {
-        client,
-        req,
-        parent_id,
-        assistant_message_id,
-        event_bus,
-        state_cmd_tx: cmd_tx.clone(),
-        included_message_ids,
-        chat_policy,
-        cancel_rx,
-    };
-    run_chat_session(chat_session, llm_timeout_secs).await
+    if matches!(active_router, RouterVariants::Google(_)) {
+        let req = Google::default_chat_completion()
+            .with_core_bundle(ploke_llm::request::ChatCompReqCore::default())
+            .with_model(model_id)
+            .with_messages(messages)
+            .with_param_bundle(llm_params)
+            .with_tools(tools)
+            .with_tool_choice(tool_choice);
+
+        let chat_session = session::ChatSession {
+            client,
+            req,
+            chat_step_source: session::take_recorded_chat_step_source(),
+            parent_id,
+            assistant_message_id,
+            event_bus,
+            state_cmd_tx: cmd_tx.clone(),
+            included_message_ids,
+            chat_policy,
+            cancel_rx,
+            capture,
+        };
+        run_chat_session(chat_session, llm_timeout_secs).await
+    } else {
+        let req = OpenRouter::default_chat_completion()
+            .with_core_bundle(ploke_llm::request::ChatCompReqCore::default())
+            .with_model(model_id)
+            .with_messages(messages)
+            .with_param_bundle(llm_params)
+            .with_router_bundle(openrouter_fields)
+            .with_tools(tools)
+            .with_tool_choice(tool_choice);
+
+        let chat_session = session::ChatSession {
+            client,
+            req,
+            chat_step_source: session::take_recorded_chat_step_source(),
+            parent_id,
+            assistant_message_id,
+            event_bus,
+            state_cmd_tx: cmd_tx.clone(),
+            included_message_ids,
+            chat_policy,
+            cancel_rx,
+            capture,
+        };
+        run_chat_session(chat_session, llm_timeout_secs).await
+    }
 
     // Persist model output or error for later inspection
     // if let Some(fut) = log_fut {
@@ -718,6 +951,76 @@ mod tests {
         assert_eq!(parsed["role"], "tool");
         assert_eq!(parsed["content"], "test result");
         assert_eq!(parsed["tool_call_id"], "call_abc");
+    }
+
+    #[test]
+    fn chat_turn_finished_is_realtime() {
+        let report = ChatSessionReport::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let event = AppEvent::System(SystemEvent::ChatTurnFinished {
+            session_id: report.session_id,
+            request_id: report.request_id,
+            parent_id: report.parent_id,
+            assistant_message_id: report.assistant_message_id,
+            outcome: "completed".to_string(),
+            error_id: None,
+            summary: report.summary(),
+            attempts: report.attempts,
+        });
+        assert!(matches!(event.priority(), crate::EventPriority::Realtime));
+    }
+
+    #[tokio::test]
+    async fn chat_turn_finished_emits_on_realtime_bus() {
+        let bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let mut rx = bus.subscribe(crate::EventPriority::Realtime);
+        let mut report = ChatSessionReport::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        report.outcome = SessionOutcome::Exhausted {
+            error_id: Uuid::new_v4(),
+        };
+        report.attempts = 3;
+
+        emit_chat_turn_finished(&bus, &report);
+
+        let event = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("timed out waiting for chat turn finished event")
+            .expect("realtime channel closed unexpectedly");
+        match event {
+            AppEvent::System(SystemEvent::ChatTurnFinished {
+                session_id,
+                request_id,
+                parent_id,
+                assistant_message_id,
+                outcome,
+                error_id,
+                summary,
+                attempts,
+            }) => {
+                assert_eq!(session_id, report.session_id);
+                assert_eq!(request_id, report.request_id);
+                assert_eq!(parent_id, report.parent_id);
+                assert_eq!(assistant_message_id, report.assistant_message_id);
+                assert_eq!(outcome, "exhausted");
+                let expected_error_id = match &report.outcome {
+                    SessionOutcome::Exhausted { error_id } => Some(*error_id),
+                    _ => None,
+                };
+                assert_eq!(error_id, expected_error_id);
+                assert_eq!(summary, report.summary());
+                assert_eq!(attempts, 3);
+            }
+            other => panic!("expected ChatTurnFinished event, got: {other:?}"),
+        }
     }
 
     #[test]

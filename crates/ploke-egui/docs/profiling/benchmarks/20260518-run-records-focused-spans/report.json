@@ -1,0 +1,3723 @@
+{
+  "schema_version": "ploke-egui.native-benchmark-report.v3",
+  "suite": "standard",
+  "created_at_unix_ms": 1779102190797,
+  "commit": {
+    "short_sha": "f64cd82110f4",
+    "full_sha": "f64cd82110f436d611f377fae343342701b3a894"
+  },
+  "dirty_state": {
+    "dirty": true,
+    "classification": "dirty_relevant",
+    "relevant_dirty": true,
+    "paths": [
+      "crates/ploke-egui/src/allocation.rs",
+      "crates/ploke-egui/src/ui/app/shell.rs"
+    ],
+    "relevant_paths": [
+      "crates/ploke-egui/src/allocation.rs",
+      "crates/ploke-egui/src/ui/app/shell.rs"
+    ],
+    "unrelated_paths": [],
+    "scope": "git status --short at benchmark start; benchmark-relevant paths are Cargo manifests, ploke-egui inputs except generated benchmark reports, ploke-tree, and ploke-records"
+  },
+  "command": "target/debug/ploke-egui --run-root /home/brasides/.ploke-eval/campaigns/p1-five-gen-1x3-20260516-1/prototype1 --benchmark-suite standard --benchmark-output crates/ploke-egui/docs/profiling/benchmarks/20260518-run-records-focused-spans --benchmark-scenario inspector_run_records_phase_sequence_30 --benchmark-scenario inspector_run_records_phase_sequence_alternate_30",
+  "run_root": "/home/brasides/.ploke-eval/campaigns/p1-five-gen-1x3-20260516-1/prototype1",
+  "feature_set": [
+    "dev",
+    "native-benchmark",
+    "profile-with-puffin"
+  ],
+  "scenarios_requested": [
+    "inspector_run_records_phase_sequence_30",
+    "inspector_run_records_phase_sequence_alternate_30"
+  ],
+  "run_readiness": {
+    "policy_max_generations": 5,
+    "policy_child_budget_min": 1,
+    "expected_min_history_blocks": 6,
+    "sealed_history_blocks": 6,
+    "max_sealed_block_height": 5,
+    "expected_min_spawned_children": 5,
+    "spawned_child_nodes": 18,
+    "scheduler_node_count": 1,
+    "node_record_count": 19,
+    "ready": true,
+    "reason": "sealed_history_reached_policy_generation"
+  },
+  "startup": {
+    "spans": [
+      {
+        "name": "run_picker_discovery",
+        "duration_ns": 8516
+      },
+      {
+        "name": "FsRunStore::load",
+        "duration_ns": 1068304663
+      },
+      {
+        "name": "FsRunStore::load_history_blocks",
+        "duration_ns": 24194806
+      },
+      {
+        "name": "FsRunStore::load_transition_journal",
+        "duration_ns": 4703246
+      },
+      {
+        "name": "FsRunStore::load_record_set",
+        "duration_ns": 1097206833
+      },
+      {
+        "name": "compressed_run_record_profile_probe",
+        "duration_ns": 116729649
+      },
+      {
+        "name": "Graph::from_records",
+        "duration_ns": 6566504
+      },
+      {
+        "name": "graph_load_total",
+        "duration_ns": 1220505862
+      }
+    ],
+    "compressed_run_records": [
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/BurntSushi__ripgrep-2209/runs/run-1778950623675-structured-current-policy-da5906b1/record.json.gz",
+        "compressed_bytes": 78413,
+        "decompressed_bytes": 692537,
+        "turn_count": 1,
+        "tool_call_count": 18,
+        "failed_tool_call_count": 2,
+        "open_read_ns": 11121,
+        "gzip_decompress_ns": 2516178,
+        "typed_json_deserialize_ns": 4031170
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-001b9e9fc72533ca/instances/BurntSushi__ripgrep-2209/runs/run-1778965589964-structured-current-policy-5dd3b64c/record.json.gz",
+        "compressed_bytes": 148354,
+        "decompressed_bytes": 1040789,
+        "turn_count": 1,
+        "tool_call_count": 57,
+        "failed_tool_call_count": 9,
+        "open_read_ns": 13866,
+        "gzip_decompress_ns": 4238371,
+        "typed_json_deserialize_ns": 6491463
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-191617d9aacf4dda/instances/BurntSushi__ripgrep-2209/runs/run-1778968862624-structured-current-policy-c97a8076/record.json.gz",
+        "compressed_bytes": 66867,
+        "decompressed_bytes": 456406,
+        "turn_count": 1,
+        "tool_call_count": 25,
+        "failed_tool_call_count": 1,
+        "open_read_ns": 11311,
+        "gzip_decompress_ns": 1886021,
+        "typed_json_deserialize_ns": 3041497
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-38a8fc72b0b8bf03/instances/BurntSushi__ripgrep-2209/runs/run-1778963824453-structured-current-policy-61a90854/record.json.gz",
+        "compressed_bytes": 47520,
+        "decompressed_bytes": 316722,
+        "turn_count": 1,
+        "tool_call_count": 20,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 11532,
+        "gzip_decompress_ns": 1342187,
+        "typed_json_deserialize_ns": 2340607
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-53d3c597b864fcf9/instances/BurntSushi__ripgrep-2209/runs/run-1778962530279-structured-current-policy-c6d6a72d/record.json.gz",
+        "compressed_bytes": 61586,
+        "decompressed_bytes": 503774,
+        "turn_count": 1,
+        "tool_call_count": 36,
+        "failed_tool_call_count": 6,
+        "open_read_ns": 11672,
+        "gzip_decompress_ns": 1846156,
+        "typed_json_deserialize_ns": 3687784
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-67233258b489ccf1/instances/BurntSushi__ripgrep-2209/runs/run-1778953273239-structured-current-policy-277d8be9/record.json.gz",
+        "compressed_bytes": 90600,
+        "decompressed_bytes": 630218,
+        "turn_count": 1,
+        "tool_call_count": 34,
+        "failed_tool_call_count": 8,
+        "open_read_ns": 13615,
+        "gzip_decompress_ns": 2646824,
+        "typed_json_deserialize_ns": 4044075
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-7ee6db64779c8019/instances/BurntSushi__ripgrep-2209/runs/run-1778957355110-structured-current-policy-b0e1d500/record.json.gz",
+        "compressed_bytes": 65528,
+        "decompressed_bytes": 430878,
+        "turn_count": 1,
+        "tool_call_count": 24,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 11441,
+        "gzip_decompress_ns": 1835767,
+        "typed_json_deserialize_ns": 2811484
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-8895520341e426aa/instances/BurntSushi__ripgrep-2209/runs/run-1778963824455-structured-current-policy-b4563a68/record.json.gz",
+        "compressed_bytes": 80492,
+        "decompressed_bytes": 485725,
+        "turn_count": 1,
+        "tool_call_count": 24,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 15860,
+        "gzip_decompress_ns": 2197117,
+        "typed_json_deserialize_ns": 3057417
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-9456db3662f9d15a/instances/BurntSushi__ripgrep-2209/runs/run-1778953272443-structured-current-policy-f1847fad/record.json.gz",
+        "compressed_bytes": 125451,
+        "decompressed_bytes": 1127416,
+        "turn_count": 1,
+        "tool_call_count": 59,
+        "failed_tool_call_count": 10,
+        "open_read_ns": 11952,
+        "gzip_decompress_ns": 4128063,
+        "typed_json_deserialize_ns": 7094418
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b2b9bfa6ac855313/instances/BurntSushi__ripgrep-2209/runs/run-1778965588668-structured-current-policy-8957da87/record.json.gz",
+        "compressed_bytes": 72745,
+        "decompressed_bytes": 531868,
+        "turn_count": 1,
+        "tool_call_count": 37,
+        "failed_tool_call_count": 4,
+        "open_read_ns": 13335,
+        "gzip_decompress_ns": 2107839,
+        "typed_json_deserialize_ns": 3872832
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b360573242cfdaf4/instances/BurntSushi__ripgrep-2209/runs/run-1778965588668-structured-current-policy-ba315811/record.json.gz",
+        "compressed_bytes": 94759,
+        "decompressed_bytes": 751078,
+        "turn_count": 1,
+        "tool_call_count": 59,
+        "failed_tool_call_count": 4,
+        "open_read_ns": 13225,
+        "gzip_decompress_ns": 2781397,
+        "typed_json_deserialize_ns": 5427480
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b53a075a894cedf9/instances/BurntSushi__ripgrep-2209/runs/run-1778953269791-structured-current-policy-6d0dc6f7/record.json.gz",
+        "compressed_bytes": 63371,
+        "decompressed_bytes": 510476,
+        "turn_count": 1,
+        "tool_call_count": 39,
+        "failed_tool_call_count": 8,
+        "open_read_ns": 12002,
+        "gzip_decompress_ns": 1878877,
+        "typed_json_deserialize_ns": 3748047
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b8ec5f10e815fd12/instances/BurntSushi__ripgrep-2209/runs/run-1778957354452-structured-current-policy-9ec5c365/record.json.gz",
+        "compressed_bytes": 44147,
+        "decompressed_bytes": 332582,
+        "turn_count": 1,
+        "tool_call_count": 26,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 9838,
+        "gzip_decompress_ns": 1293275,
+        "typed_json_deserialize_ns": 2741712
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-babdce8b381580ef/instances/BurntSushi__ripgrep-2209/runs/run-1778963824455-structured-current-policy-5e788851/record.json.gz",
+        "compressed_bytes": 62602,
+        "decompressed_bytes": 500893,
+        "turn_count": 1,
+        "tool_call_count": 32,
+        "failed_tool_call_count": 9,
+        "open_read_ns": 11432,
+        "gzip_decompress_ns": 1858349,
+        "typed_json_deserialize_ns": 3441109
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-bd77551f3715f119/instances/BurntSushi__ripgrep-2209/runs/run-1778957354823-structured-current-policy-fadea182/record.json.gz",
+        "compressed_bytes": 50992,
+        "decompressed_bytes": 367261,
+        "turn_count": 1,
+        "tool_call_count": 25,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 9869,
+        "gzip_decompress_ns": 1482601,
+        "typed_json_deserialize_ns": 2732665
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-c1a38306ed49dc1c/instances/BurntSushi__ripgrep-2209/runs/run-1778962529969-structured-current-policy-3204ca08/record.json.gz",
+        "compressed_bytes": 118577,
+        "decompressed_bytes": 884086,
+        "turn_count": 1,
+        "tool_call_count": 53,
+        "failed_tool_call_count": 10,
+        "open_read_ns": 13165,
+        "gzip_decompress_ns": 3418868,
+        "typed_json_deserialize_ns": 5761127
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-c30d784dd5ffb231/instances/BurntSushi__ripgrep-2209/runs/run-1778968862801-structured-current-policy-91092892/record.json.gz",
+        "compressed_bytes": 49619,
+        "decompressed_bytes": 364079,
+        "turn_count": 1,
+        "tool_call_count": 28,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 10660,
+        "gzip_decompress_ns": 1430072,
+        "typed_json_deserialize_ns": 2804491
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-c9841bdf11e59aee/instances/BurntSushi__ripgrep-2209/runs/run-1778962529953-structured-current-policy-9448cde8/record.json.gz",
+        "compressed_bytes": 52601,
+        "decompressed_bytes": 460616,
+        "turn_count": 1,
+        "tool_call_count": 39,
+        "failed_tool_call_count": 5,
+        "open_read_ns": 8145,
+        "gzip_decompress_ns": 1597578,
+        "typed_json_deserialize_ns": 3432153
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-ccfbb42e20f22f5b/instances/BurntSushi__ripgrep-2209/runs/run-1778968862654-structured-current-policy-477c4423/record.json.gz",
+        "compressed_bytes": 46743,
+        "decompressed_bytes": 336339,
+        "turn_count": 1,
+        "tool_call_count": 24,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 9448,
+        "gzip_decompress_ns": 1348849,
+        "typed_json_deserialize_ns": 2489537
+      }
+    ],
+    "notes": [
+      "run_picker_discovery=8516 ns (kept in startup spans)",
+      "standard_run_readiness_heuristic: sealed_history_reached_policy_generation; history_blocks=6/6 max_history_height=Some(5) spawned_children=18/5 node_records=19"
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "inspector_run_records_phase_sequence_30",
+      "target_frames": 270,
+      "frame_stats": {
+        "count": 270,
+        "min_ns": 1691145,
+        "median_ns": 1871654,
+        "p95_ns": 2665429,
+        "p99_ns": 25772707,
+        "max_ns": 60768390
+      },
+      "top_frames": [
+        {
+          "frame_index": 1,
+          "duration_ns": 60768390,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 10799394
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 13517842
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 12416038
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 2347050
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 20612331
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 5230
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 8113,
+            "deallocation_count_delta": 7204,
+            "allocated_object_bytes_delta": 3763799,
+            "deallocated_object_bytes_delta": 3497296,
+            "allocated_wrapped_bytes_delta": 3842048,
+            "deallocated_wrapped_bytes_delta": 3567464,
+            "live_object_bytes": 266503,
+            "live_wrapped_bytes": 274584
+          }
+        },
+        {
+          "frame_index": 31,
+          "duration_ns": 35067288,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 81263
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 69000
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 276531
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 32517457
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 82386
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1021022
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3296
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 5120,
+            "deallocation_count_delta": 4786,
+            "allocated_object_bytes_delta": 2551478,
+            "deallocated_object_bytes_delta": 2440946,
+            "allocated_wrapped_bytes_delta": 2599368,
+            "deallocated_wrapped_bytes_delta": 2485768,
+            "live_object_bytes": 1839999,
+            "live_wrapped_bytes": 1861672
+          }
+        },
+        {
+          "frame_index": 91,
+          "duration_ns": 25772707,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 76955
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 71595
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 285628
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 24173977
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 59602
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1095913
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3427
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 3438,
+            "deallocation_count_delta": 3150,
+            "allocated_object_bytes_delta": 2169172,
+            "deallocated_object_bytes_delta": 1933229,
+            "allocated_wrapped_bytes_delta": 2201880,
+            "deallocated_wrapped_bytes_delta": 1963360,
+            "live_object_bytes": 2293109,
+            "live_wrapped_bytes": 2323192
+          }
+        },
+        {
+          "frame_index": 2,
+          "duration_ns": 17712912,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 79740
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 7870259
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 8631954
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 268225
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 86323
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 8566510
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 4359
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 4016,
+            "deallocation_count_delta": 3119,
+            "allocated_object_bytes_delta": 3098636,
+            "deallocated_object_bytes_delta": 2746495,
+            "allocated_wrapped_bytes_delta": 3136728,
+            "deallocated_wrapped_bytes_delta": 2775944,
+            "live_object_bytes": 618644,
+            "live_wrapped_bytes": 635368
+          }
+        },
+        {
+          "frame_index": 32,
+          "duration_ns": 9294510,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 73368
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 69020
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 276401
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 442163
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 53781
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 8382163
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3246
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1923,
+            "deallocation_count_delta": 1756,
+            "allocated_object_bytes_delta": 1338408,
+            "deallocated_object_bytes_delta": 1310955,
+            "allocated_wrapped_bytes_delta": 1356232,
+            "deallocated_wrapped_bytes_delta": 1327296,
+            "live_object_bytes": 1867452,
+            "live_wrapped_bytes": 1890608
+          }
+        },
+        {
+          "frame_index": 118,
+          "duration_ns": 2724590,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 141827
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 76965
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 359727
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 1014520
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 52649
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1054445
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3446
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1447,
+            "deallocation_count_delta": 1437,
+            "allocated_object_bytes_delta": 1085253,
+            "deallocated_object_bytes_delta": 1081654,
+            "allocated_wrapped_bytes_delta": 1098768,
+            "deallocated_wrapped_bytes_delta": 1095064,
+            "live_object_bytes": 2394511,
+            "live_wrapped_bytes": 2427480
+          }
+        },
+        {
+          "frame_index": 120,
+          "duration_ns": 2711425,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 118503
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 76093
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 325703
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 1044767
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 54483
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1064344
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3316
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1446,
+            "deallocation_count_delta": 1436,
+            "allocated_object_bytes_delta": 1085181,
+            "deallocated_object_bytes_delta": 1081606,
+            "allocated_wrapped_bytes_delta": 1098688,
+            "deallocated_wrapped_bytes_delta": 1095008,
+            "live_object_bytes": 2401672,
+            "live_wrapped_bytes": 2434848
+          }
+        },
+        {
+          "frame_index": 119,
+          "duration_ns": 2700745,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 119134
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 83196
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 333238
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 1014340
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 53190
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1076938
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3266
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1445,
+            "deallocation_count_delta": 1435,
+            "allocated_object_bytes_delta": 1085144,
+            "deallocated_object_bytes_delta": 1081558,
+            "allocated_wrapped_bytes_delta": 1098640,
+            "deallocated_wrapped_bytes_delta": 1094952,
+            "live_object_bytes": 2398097,
+            "live_wrapped_bytes": 2431168
+          }
+        },
+        {
+          "frame_index": 112,
+          "duration_ns": 2691568,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 121569
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 77386
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 339349
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 1017546
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 53260
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1058102
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3326
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1447,
+            "deallocation_count_delta": 1437,
+            "allocated_object_bytes_delta": 1085227,
+            "deallocated_object_bytes_delta": 1081654,
+            "allocated_wrapped_bytes_delta": 1098744,
+            "deallocated_wrapped_bytes_delta": 1095064,
+            "live_object_bytes": 2373017,
+            "live_wrapped_bytes": 2405352
+          }
+        },
+        {
+          "frame_index": 117,
+          "duration_ns": 2688432,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 118864
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 76484
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 322618
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 1015853
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 53811
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1071117
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3306
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1447,
+            "deallocation_count_delta": 1436,
+            "allocated_object_bytes_delta": 1085260,
+            "deallocated_object_bytes_delta": 1081606,
+            "allocated_wrapped_bytes_delta": 1098776,
+            "deallocated_wrapped_bytes_delta": 1095008,
+            "live_object_bytes": 2390912,
+            "live_wrapped_bytes": 2423776
+          }
+        }
+      ],
+      "component_timings": [
+        {
+          "component": "capture_overhead",
+          "stats": {
+            "count": 270,
+            "min_ns": 2816,
+            "median_ns": 3086,
+            "p95_ns": 3587,
+            "p99_ns": 6001,
+            "max_ns": 6422
+          },
+          "median_percent_of_frame_x100": 16
+        },
+        {
+          "component": "central_graph",
+          "stats": {
+            "count": 270,
+            "min_ns": 995594,
+            "median_ns": 1012076,
+            "p95_ns": 1089391,
+            "p99_ns": 8382163,
+            "max_ns": 20612331
+          },
+          "median_percent_of_frame_x100": 5407
+        },
+        {
+          "component": "diagnostics",
+          "stats": {
+            "count": 269,
+            "min_ns": 68770,
+            "median_ns": 70452,
+            "p95_ns": 81173,
+            "p99_ns": 169169,
+            "max_ns": 7870259
+          },
+          "median_percent_of_frame_x100": 376,
+          "nested_under": "run_navigation"
+        },
+        {
+          "component": "run_navigation",
+          "stats": {
+            "count": 270,
+            "min_ns": 275949,
+            "median_ns": 283484,
+            "p95_ns": 334931,
+            "p99_ns": 891529,
+            "max_ns": 13517842
+          },
+          "median_percent_of_frame_x100": 1514
+        },
+        {
+          "component": "selection_inspector",
+          "stats": {
+            "count": 270,
+            "min_ns": 223310,
+            "median_ns": 375166,
+            "p95_ns": 1001847,
+            "p99_ns": 12416038,
+            "max_ns": 32517457
+          },
+          "median_percent_of_frame_x100": 2004
+        },
+        {
+          "component": "timeline",
+          "stats": {
+            "count": 270,
+            "min_ns": 48181,
+            "median_ns": 51827,
+            "p95_ns": 60915,
+            "p99_ns": 82386,
+            "max_ns": 2347050
+          },
+          "median_percent_of_frame_x100": 276
+        },
+        {
+          "component": "top_strip",
+          "stats": {
+            "count": 270,
+            "min_ns": 72306,
+            "median_ns": 75853,
+            "p95_ns": 121519,
+            "p99_ns": 141827,
+            "max_ns": 10799394
+          },
+          "median_percent_of_frame_x100": 405
+        }
+      ],
+      "allocation_frames": {
+        "per_frame": {
+          "allocation_count": {
+            "count": 270,
+            "min": 1141,
+            "median": 1216,
+            "p95": 1448,
+            "p99": 4016,
+            "max": 8113
+          },
+          "allocated_object_bytes": {
+            "count": 270,
+            "min": 815192,
+            "median": 905990,
+            "p95": 1085421,
+            "p99": 2551478,
+            "max": 3763799
+          },
+          "allocated_wrapped_bytes": {
+            "count": 270,
+            "min": 826216,
+            "median": 917648,
+            "p95": 1098944,
+            "p99": 2599368,
+            "max": 3842048
+          },
+          "live_object_bytes": {
+            "count": 270,
+            "min": 266503,
+            "median": 2468696,
+            "p95": 2912649,
+            "p99": 2978590,
+            "max": 2985732
+          },
+          "live_wrapped_bytes": {
+            "count": 270,
+            "min": 274584,
+            "median": 2503464,
+            "p95": 2959976,
+            "p99": 3027088,
+            "max": 3034440
+          }
+        },
+        "first_50": {
+          "frame_start": 1,
+          "frame_end": 50,
+          "stats": {
+            "allocation_count": {
+              "count": 50,
+              "min": 1144,
+              "median": 1211,
+              "p95": 4016,
+              "p99": 8113,
+              "max": 8113
+            },
+            "allocated_object_bytes": {
+              "count": 50,
+              "min": 825738,
+              "median": 850380,
+              "p95": 2551478,
+              "p99": 3763799,
+              "max": 3763799
+            },
+            "allocated_wrapped_bytes": {
+              "count": 50,
+              "min": 836808,
+              "median": 862208,
+              "p95": 2599368,
+              "p99": 3842048,
+              "max": 3842048
+            },
+            "live_object_bytes": {
+              "count": 50,
+              "min": 266503,
+              "median": 1711944,
+              "p95": 1895490,
+              "p99": 1902909,
+              "max": 1902909
+            },
+            "live_wrapped_bytes": {
+              "count": 50,
+              "min": 274584,
+              "median": 1730096,
+              "p95": 1918472,
+              "p99": 1926112,
+              "max": 1926112
+            }
+          }
+        },
+        "last_50": {
+          "frame_start": 221,
+          "frame_end": 270,
+          "stats": {
+            "allocation_count": {
+              "count": 50,
+              "min": 1141,
+              "median": 1142,
+              "p95": 1144,
+              "p99": 1144,
+              "max": 1144
+            },
+            "allocated_object_bytes": {
+              "count": 50,
+              "min": 815192,
+              "median": 815295,
+              "p95": 815459,
+              "p99": 868466,
+              "max": 868466
+            },
+            "allocated_wrapped_bytes": {
+              "count": 50,
+              "min": 826216,
+              "median": 826328,
+              "p95": 826504,
+              "p99": 879496,
+              "max": 879496
+            },
+            "live_object_bytes": {
+              "count": 50,
+              "min": 2783545,
+              "median": 2869686,
+              "p95": 2978590,
+              "p99": 2985732,
+              "max": 2985732
+            },
+            "live_wrapped_bytes": {
+              "count": 50,
+              "min": 2827056,
+              "median": 2915744,
+              "p95": 3027088,
+              "p99": 3034440,
+              "max": 3034440
+            }
+          }
+        },
+        "slope": "growing"
+      },
+      "phase_windows": [
+        {
+          "phase_index": 1,
+          "phase": "idle_before_selection",
+          "inspector_section": "run_records",
+          "selection_target": "primary",
+          "frame_start": 1,
+          "frame_end": 30,
+          "stats": {
+            "allocation_count": {
+              "count": 30,
+              "min": 1144,
+              "median": 1183,
+              "p95": 4016,
+              "p99": 8113,
+              "max": 8113
+            },
+            "allocated_object_bytes": {
+              "count": 30,
+              "min": 825738,
+              "median": 841757,
+              "p95": 3098636,
+              "p99": 3763799,
+              "max": 3763799
+            },
+            "allocated_wrapped_bytes": {
+              "count": 30,
+              "min": 836808,
+              "median": 853288,
+              "p95": 3136728,
+              "p99": 3842048,
+              "max": 3842048
+            },
+            "live_object_bytes": {
+              "count": 30,
+              "min": 266503,
+              "median": 1649763,
+              "p95": 1727510,
+              "p99": 1729467,
+              "max": 1729467
+            },
+            "live_wrapped_bytes": {
+              "count": 30,
+              "min": 274584,
+              "median": 1666832,
+              "p95": 1746000,
+              "p99": 1748072,
+              "max": 1748072
+            }
+          }
+        },
+        {
+          "phase_index": 2,
+          "phase": "select_node",
+          "inspector_section": "run_records",
+          "selection_target": "primary",
+          "frame_start": 31,
+          "frame_end": 60,
+          "stats": {
+            "allocation_count": {
+              "count": 30,
+              "min": 1215,
+              "median": 1216,
+              "p95": 1923,
+              "p99": 5120,
+              "max": 5120
+            },
+            "allocated_object_bytes": {
+              "count": 30,
+              "min": 905933,
+              "median": 905992,
+              "p95": 1338408,
+              "p99": 2551478,
+              "max": 2551478
+            },
+            "allocated_wrapped_bytes": {
+              "count": 30,
+              "min": 917592,
+              "median": 917648,
+              "p95": 1356232,
+              "p99": 2599368,
+              "max": 2599368
+            },
+            "live_object_bytes": {
+              "count": 30,
+              "min": 1839999,
+              "median": 1884482,
+              "p95": 1936112,
+              "p99": 1939757,
+              "max": 1939757
+            },
+            "live_wrapped_bytes": {
+              "count": 30,
+              "min": 1861672,
+              "median": 1907144,
+              "p95": 1960288,
+              "p99": 1964040,
+              "max": 1964040
+            }
+          }
+        },
+        {
+          "phase_index": 3,
+          "phase": "idle_selected_collapsed",
+          "inspector_section": "run_records",
+          "selection_target": "primary",
+          "frame_start": 61,
+          "frame_end": 90,
+          "stats": {
+            "allocation_count": {
+              "count": 30,
+              "min": 1216,
+              "median": 1216,
+              "p95": 1217,
+              "p99": 1219,
+              "max": 1219
+            },
+            "allocated_object_bytes": {
+              "count": 30,
+              "min": 905955,
+              "median": 906001,
+              "p95": 908750,
+              "p99": 919298,
+              "max": 919298
+            },
+            "allocated_wrapped_bytes": {
+              "count": 30,
+              "min": 917608,
+              "median": 917656,
+              "p95": 920416,
+              "p99": 930960,
+              "max": 930960
+            },
+            "live_object_bytes": {
+              "count": 30,
+              "min": 1943535,
+              "median": 2001807,
+              "p95": 2053536,
+              "p99": 2057166,
+              "max": 2057166
+            },
+            "live_wrapped_bytes": {
+              "count": 30,
+              "min": 1967928,
+              "median": 2027712,
+              "p95": 2080936,
+              "p99": 2084672,
+              "max": 2084672
+            }
+          }
+        },
+        {
+          "phase_index": 4,
+          "phase": "expand_section",
+          "inspector_section": "run_records",
+          "selection_target": "primary",
+          "frame_start": 91,
+          "frame_end": 120,
+          "stats": {
+            "allocation_count": {
+              "count": 30,
+              "min": 1382,
+              "median": 1446,
+              "p95": 1449,
+              "p99": 3438,
+              "max": 3438
+            },
+            "allocated_object_bytes": {
+              "count": 30,
+              "min": 956096,
+              "median": 1085194,
+              "p95": 1090845,
+              "p99": 2169172,
+              "max": 2169172
+            },
+            "allocated_wrapped_bytes": {
+              "count": 30,
+              "min": 969120,
+              "median": 1098704,
+              "p95": 1104336,
+              "p99": 2201880,
+              "max": 2201880
+            },
+            "live_object_bytes": {
+              "count": 30,
+              "min": 2293109,
+              "median": 2347676,
+              "p95": 2398097,
+              "p99": 2401672,
+              "max": 2401672
+            },
+            "live_wrapped_bytes": {
+              "count": 30,
+              "min": 2323192,
+              "median": 2379256,
+              "p95": 2431168,
+              "p99": 2434848,
+              "max": 2434848
+            }
+          }
+        },
+        {
+          "phase_index": 5,
+          "phase": "idle_expanded",
+          "inspector_section": "run_records",
+          "selection_target": "primary",
+          "frame_start": 121,
+          "frame_end": 150,
+          "stats": {
+            "allocation_count": {
+              "count": 30,
+              "min": 1446,
+              "median": 1446,
+              "p95": 1448,
+              "p99": 1448,
+              "max": 1448
+            },
+            "allocated_object_bytes": {
+              "count": 30,
+              "min": 1085007,
+              "median": 1085188,
+              "p95": 1088025,
+              "p99": 1111898,
+              "max": 1111898
+            },
+            "allocated_wrapped_bytes": {
+              "count": 30,
+              "min": 1098512,
+              "median": 1098696,
+              "p95": 1101552,
+              "p99": 1125424,
+              "max": 1125424
+            },
+            "live_object_bytes": {
+              "count": 30,
+              "min": 2405249,
+              "median": 2468696,
+              "p95": 2518323,
+              "p99": 2521979,
+              "max": 2521979
+            },
+            "live_wrapped_bytes": {
+              "count": 30,
+              "min": 2438528,
+              "median": 2503464,
+              "p95": 2554568,
+              "p99": 2558328,
+              "max": 2558328
+            }
+          }
+        },
+        {
+          "phase_index": 6,
+          "phase": "collapse_section",
+          "inspector_section": "run_records",
+          "selection_target": "primary",
+          "frame_start": 151,
+          "frame_end": 180,
+          "stats": {
+            "allocation_count": {
+              "count": 30,
+              "min": 1216,
+              "median": 1216,
+              "p95": 1469,
+              "p99": 1471,
+              "max": 1471
+            },
+            "allocated_object_bytes": {
+              "count": 30,
+              "min": 905945,
+              "median": 906010,
+              "p95": 1087141,
+              "p99": 1139203,
+              "max": 1139203
+            },
+            "allocated_wrapped_bytes": {
+              "count": 30,
+              "min": 917600,
+              "median": 917664,
+              "p95": 1100776,
+              "p99": 1152912,
+              "max": 1152912
+            },
+            "live_object_bytes": {
+              "count": 30,
+              "min": 2526783,
+              "median": 2577539,
+              "p95": 2628564,
+              "p99": 2632221,
+              "max": 2632221
+            },
+            "live_wrapped_bytes": {
+              "count": 30,
+              "min": 2563320,
+              "median": 2615560,
+              "p95": 2668040,
+              "p99": 2671800,
+              "max": 2671800
+            }
+          }
+        },
+        {
+          "phase_index": 7,
+          "phase": "idle_collapsed",
+          "inspector_section": "run_records",
+          "selection_target": "primary",
+          "frame_start": 181,
+          "frame_end": 210,
+          "stats": {
+            "allocation_count": {
+              "count": 30,
+              "min": 1215,
+              "median": 1216,
+              "p95": 1217,
+              "p99": 1217,
+              "max": 1217
+            },
+            "allocated_object_bytes": {
+              "count": 30,
+              "min": 905930,
+              "median": 905990,
+              "p95": 906096,
+              "p99": 908740,
+              "max": 908740
+            },
+            "allocated_wrapped_bytes": {
+              "count": 30,
+              "min": 917576,
+              "median": 917648,
+              "p95": 917760,
+              "p99": 920400,
+              "max": 920400
+            },
+            "live_object_bytes": {
+              "count": 30,
+              "min": 2635782,
+              "median": 2686833,
+              "p95": 2737747,
+              "p99": 2741387,
+              "max": 2741387
+            },
+            "live_wrapped_bytes": {
+              "count": 30,
+              "min": 2675456,
+              "median": 2727984,
+              "p95": 2780368,
+              "p99": 2784112,
+              "max": 2784112
+            }
+          }
+        },
+        {
+          "phase_index": 8,
+          "phase": "unselect_node",
+          "inspector_section": "run_records",
+          "selection_target": "primary",
+          "frame_start": 211,
+          "frame_end": 240,
+          "stats": {
+            "allocation_count": {
+              "count": 30,
+              "min": 1141,
+              "median": 1142,
+              "p95": 1170,
+              "p99": 1270,
+              "max": 1270
+            },
+            "allocated_object_bytes": {
+              "count": 30,
+              "min": 815192,
+              "median": 815292,
+              "p95": 819563,
+              "p99": 927233,
+              "max": 927233
+            },
+            "allocated_wrapped_bytes": {
+              "count": 30,
+              "min": 826216,
+              "median": 826320,
+              "p95": 830816,
+              "p99": 939304,
+              "max": 939304
+            },
+            "live_object_bytes": {
+              "count": 30,
+              "min": 2751713,
+              "median": 2797942,
+              "p95": 2848157,
+              "p99": 2851726,
+              "max": 2851726
+            },
+            "live_wrapped_bytes": {
+              "count": 30,
+              "min": 2794280,
+              "median": 2841880,
+              "p95": 2893576,
+              "p99": 2897248,
+              "max": 2897248
+            }
+          }
+        },
+        {
+          "phase_index": 9,
+          "phase": "idle_after_unselect",
+          "inspector_section": "run_records",
+          "selection_target": "primary",
+          "frame_start": 241,
+          "frame_end": 270,
+          "stats": {
+            "allocation_count": {
+              "count": 30,
+              "min": 1141,
+              "median": 1142,
+              "p95": 1144,
+              "p99": 1144,
+              "max": 1144
+            },
+            "allocated_object_bytes": {
+              "count": 30,
+              "min": 815201,
+              "median": 815299,
+              "p95": 818029,
+              "p99": 868466,
+              "max": 868466
+            },
+            "allocated_wrapped_bytes": {
+              "count": 30,
+              "min": 826224,
+              "median": 826328,
+              "p95": 829072,
+              "p99": 879496,
+              "max": 879496
+            },
+            "live_object_bytes": {
+              "count": 30,
+              "min": 2855401,
+              "median": 2905491,
+              "p95": 2982159,
+              "p99": 2985732,
+              "max": 2985732
+            },
+            "live_wrapped_bytes": {
+              "count": 30,
+              "min": 2901040,
+              "median": 2952608,
+              "p95": 3030760,
+              "p99": 3034440,
+              "max": 3034440
+            }
+          }
+        }
+      ],
+      "heap_profile": {
+        "totals": {
+          "allocation_count": 355033,
+          "deallocation_count": 350136,
+          "allocated_object_bytes": 258465869,
+          "deallocated_object_bytes": 255480137,
+          "allocated_wrapped_bytes": 261852584,
+          "deallocated_wrapped_bytes": 258818144,
+          "live_object_bytes": 2985732,
+          "live_wrapped_bytes": 3034440
+        },
+        "unmatched_deallocations": 0,
+        "top_groups_by_allocated_bytes": [
+          {
+            "group_id": 1,
+            "name": "root",
+            "totals": {
+              "allocation_count": 167942,
+              "deallocation_count": 166745,
+              "allocated_object_bytes": 238718790,
+              "deallocated_object_bytes": 236641859,
+              "allocated_wrapped_bytes": 240170848,
+              "deallocated_wrapped_bytes": 238082056,
+              "live_object_bytes": 2076931,
+              "live_wrapped_bytes": 2088792
+            }
+          },
+          {
+            "group_id": 7,
+            "name": "central_graph",
+            "totals": {
+              "allocation_count": 87285,
+              "deallocation_count": 86916,
+              "allocated_object_bytes": 5939825,
+              "deallocated_object_bytes": 5812429,
+              "allocated_wrapped_bytes": 6938608,
+              "deallocated_wrapped_bytes": 6807992,
+              "live_object_bytes": 127396,
+              "live_wrapped_bytes": 130616
+            }
+          },
+          {
+            "group_id": 6,
+            "name": "selection_inspector",
+            "totals": {
+              "allocation_count": 39008,
+              "deallocation_count": 38629,
+              "allocated_object_bytes": 5056576,
+              "deallocated_object_bytes": 4932842,
+              "allocated_wrapped_bytes": 5441424,
+              "deallocated_wrapped_bytes": 5314392,
+              "live_object_bytes": 123734,
+              "live_wrapped_bytes": 127032
+            }
+          },
+          {
+            "group_id": 4,
+            "name": "run_navigation",
+            "totals": {
+              "allocation_count": 23602,
+              "deallocation_count": 23153,
+              "allocated_object_bytes": 2640059,
+              "deallocated_object_bytes": 2571672,
+              "allocated_wrapped_bytes": 2862632,
+              "deallocated_wrapped_bytes": 2789248,
+              "live_object_bytes": 68387,
+              "live_wrapped_bytes": 73384
+            }
+          },
+          {
+            "group_id": 5,
+            "name": "diagnostics",
+            "totals": {
+              "allocation_count": 11128,
+              "deallocation_count": 10994,
+              "allocated_object_bytes": 1693464,
+              "deallocated_object_bytes": 1594168,
+              "allocated_wrapped_bytes": 1792648,
+              "deallocated_wrapped_bytes": 1692208,
+              "live_object_bytes": 99296,
+              "live_wrapped_bytes": 100440
+            }
+          },
+          {
+            "group_id": 16,
+            "name": "inspector_run_records_text_galley",
+            "totals": {
+              "allocation_count": 2154,
+              "deallocation_count": 1882,
+              "allocated_object_bytes": 1250086,
+              "deallocated_object_bytes": 1010184,
+              "allocated_wrapped_bytes": 1270552,
+              "deallocated_wrapped_bytes": 1028248,
+              "live_object_bytes": 239902,
+              "live_wrapped_bytes": 242304
+            }
+          },
+          {
+            "group_id": 3,
+            "name": "top_strip",
+            "totals": {
+              "allocation_count": 5161,
+              "deallocation_count": 5131,
+              "allocated_object_bytes": 1149093,
+              "deallocated_object_bytes": 1134772,
+              "allocated_wrapped_bytes": 1197776,
+              "deallocated_wrapped_bytes": 1183168,
+              "live_object_bytes": 14321,
+              "live_wrapped_bytes": 14608
+            }
+          },
+          {
+            "group_id": 2,
+            "name": "frame_update",
+            "totals": {
+              "allocation_count": 9755,
+              "deallocation_count": 7825,
+              "allocated_object_bytes": 950046,
+              "deallocated_object_bytes": 802524,
+              "allocated_wrapped_bytes": 1033480,
+              "deallocated_wrapped_bytes": 865776,
+              "live_object_bytes": 147522,
+              "live_wrapped_bytes": 167704
+            }
+          },
+          {
+            "group_id": 8,
+            "name": "timeline",
+            "totals": {
+              "allocation_count": 4275,
+              "deallocation_count": 4237,
+              "allocated_object_bytes": 561631,
+              "deallocated_object_bytes": 507741,
+              "allocated_wrapped_bytes": 599048,
+              "deallocated_wrapped_bytes": 544848,
+              "live_object_bytes": 53890,
+              "live_wrapped_bytes": 54200
+            }
+          },
+          {
+            "group_id": 15,
+            "name": "inspector_run_records_widget_row",
+            "totals": {
+              "allocation_count": 3120,
+              "deallocation_count": 3120,
+              "allocated_object_bytes": 312000,
+              "deallocated_object_bytes": 312000,
+              "allocated_wrapped_bytes": 336960,
+              "deallocated_wrapped_bytes": 336960,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 9,
+            "name": "graph_projection_cache_refresh",
+            "totals": {
+              "allocation_count": 1600,
+              "deallocation_count": 1504,
+              "allocated_object_bytes": 181339,
+              "deallocated_object_bytes": 159946,
+              "allocated_wrapped_bytes": 195608,
+              "deallocated_wrapped_bytes": 173248,
+              "live_object_bytes": 21393,
+              "live_wrapped_bytes": 22360
+            }
+          },
+          {
+            "group_id": 17,
+            "name": "inspector_run_records_label_widget",
+            "totals": {
+              "allocation_count": 2,
+              "deallocation_count": 0,
+              "allocated_object_bytes": 12832,
+              "deallocated_object_bytes": 0,
+              "allocated_wrapped_bytes": 12864,
+              "deallocated_wrapped_bytes": 0,
+              "live_object_bytes": 12832,
+              "live_wrapped_bytes": 12864
+            }
+          },
+          {
+            "group_id": 14,
+            "name": "inspector_run_records_row",
+            "totals": {
+              "allocation_count": 1,
+              "deallocation_count": 0,
+              "allocated_object_bytes": 128,
+              "deallocated_object_bytes": 0,
+              "allocated_wrapped_bytes": 136,
+              "deallocated_wrapped_bytes": 0,
+              "live_object_bytes": 128,
+              "live_wrapped_bytes": 136
+            }
+          }
+        ],
+        "top_groups_by_allocation_count": [
+          {
+            "group_id": 1,
+            "name": "root",
+            "totals": {
+              "allocation_count": 167942,
+              "deallocation_count": 166745,
+              "allocated_object_bytes": 238718790,
+              "deallocated_object_bytes": 236641859,
+              "allocated_wrapped_bytes": 240170848,
+              "deallocated_wrapped_bytes": 238082056,
+              "live_object_bytes": 2076931,
+              "live_wrapped_bytes": 2088792
+            }
+          },
+          {
+            "group_id": 7,
+            "name": "central_graph",
+            "totals": {
+              "allocation_count": 87285,
+              "deallocation_count": 86916,
+              "allocated_object_bytes": 5939825,
+              "deallocated_object_bytes": 5812429,
+              "allocated_wrapped_bytes": 6938608,
+              "deallocated_wrapped_bytes": 6807992,
+              "live_object_bytes": 127396,
+              "live_wrapped_bytes": 130616
+            }
+          },
+          {
+            "group_id": 6,
+            "name": "selection_inspector",
+            "totals": {
+              "allocation_count": 39008,
+              "deallocation_count": 38629,
+              "allocated_object_bytes": 5056576,
+              "deallocated_object_bytes": 4932842,
+              "allocated_wrapped_bytes": 5441424,
+              "deallocated_wrapped_bytes": 5314392,
+              "live_object_bytes": 123734,
+              "live_wrapped_bytes": 127032
+            }
+          },
+          {
+            "group_id": 4,
+            "name": "run_navigation",
+            "totals": {
+              "allocation_count": 23602,
+              "deallocation_count": 23153,
+              "allocated_object_bytes": 2640059,
+              "deallocated_object_bytes": 2571672,
+              "allocated_wrapped_bytes": 2862632,
+              "deallocated_wrapped_bytes": 2789248,
+              "live_object_bytes": 68387,
+              "live_wrapped_bytes": 73384
+            }
+          },
+          {
+            "group_id": 5,
+            "name": "diagnostics",
+            "totals": {
+              "allocation_count": 11128,
+              "deallocation_count": 10994,
+              "allocated_object_bytes": 1693464,
+              "deallocated_object_bytes": 1594168,
+              "allocated_wrapped_bytes": 1792648,
+              "deallocated_wrapped_bytes": 1692208,
+              "live_object_bytes": 99296,
+              "live_wrapped_bytes": 100440
+            }
+          },
+          {
+            "group_id": 2,
+            "name": "frame_update",
+            "totals": {
+              "allocation_count": 9755,
+              "deallocation_count": 7825,
+              "allocated_object_bytes": 950046,
+              "deallocated_object_bytes": 802524,
+              "allocated_wrapped_bytes": 1033480,
+              "deallocated_wrapped_bytes": 865776,
+              "live_object_bytes": 147522,
+              "live_wrapped_bytes": 167704
+            }
+          },
+          {
+            "group_id": 3,
+            "name": "top_strip",
+            "totals": {
+              "allocation_count": 5161,
+              "deallocation_count": 5131,
+              "allocated_object_bytes": 1149093,
+              "deallocated_object_bytes": 1134772,
+              "allocated_wrapped_bytes": 1197776,
+              "deallocated_wrapped_bytes": 1183168,
+              "live_object_bytes": 14321,
+              "live_wrapped_bytes": 14608
+            }
+          },
+          {
+            "group_id": 8,
+            "name": "timeline",
+            "totals": {
+              "allocation_count": 4275,
+              "deallocation_count": 4237,
+              "allocated_object_bytes": 561631,
+              "deallocated_object_bytes": 507741,
+              "allocated_wrapped_bytes": 599048,
+              "deallocated_wrapped_bytes": 544848,
+              "live_object_bytes": 53890,
+              "live_wrapped_bytes": 54200
+            }
+          },
+          {
+            "group_id": 15,
+            "name": "inspector_run_records_widget_row",
+            "totals": {
+              "allocation_count": 3120,
+              "deallocation_count": 3120,
+              "allocated_object_bytes": 312000,
+              "deallocated_object_bytes": 312000,
+              "allocated_wrapped_bytes": 336960,
+              "deallocated_wrapped_bytes": 336960,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 16,
+            "name": "inspector_run_records_text_galley",
+            "totals": {
+              "allocation_count": 2154,
+              "deallocation_count": 1882,
+              "allocated_object_bytes": 1250086,
+              "deallocated_object_bytes": 1010184,
+              "allocated_wrapped_bytes": 1270552,
+              "deallocated_wrapped_bytes": 1028248,
+              "live_object_bytes": 239902,
+              "live_wrapped_bytes": 242304
+            }
+          },
+          {
+            "group_id": 9,
+            "name": "graph_projection_cache_refresh",
+            "totals": {
+              "allocation_count": 1600,
+              "deallocation_count": 1504,
+              "allocated_object_bytes": 181339,
+              "deallocated_object_bytes": 159946,
+              "allocated_wrapped_bytes": 195608,
+              "deallocated_wrapped_bytes": 173248,
+              "live_object_bytes": 21393,
+              "live_wrapped_bytes": 22360
+            }
+          },
+          {
+            "group_id": 17,
+            "name": "inspector_run_records_label_widget",
+            "totals": {
+              "allocation_count": 2,
+              "deallocation_count": 0,
+              "allocated_object_bytes": 12832,
+              "deallocated_object_bytes": 0,
+              "allocated_wrapped_bytes": 12864,
+              "deallocated_wrapped_bytes": 0,
+              "live_object_bytes": 12832,
+              "live_wrapped_bytes": 12864
+            }
+          },
+          {
+            "group_id": 14,
+            "name": "inspector_run_records_row",
+            "totals": {
+              "allocation_count": 1,
+              "deallocation_count": 0,
+              "allocated_object_bytes": 128,
+              "deallocated_object_bytes": 0,
+              "allocated_wrapped_bytes": 136,
+              "deallocated_wrapped_bytes": 0,
+              "live_object_bytes": 128,
+              "live_wrapped_bytes": 136
+            }
+          }
+        ],
+        "top_groups_by_retained_bytes": [
+          {
+            "group_id": 1,
+            "name": "root",
+            "totals": {
+              "allocation_count": 167942,
+              "deallocation_count": 166745,
+              "allocated_object_bytes": 238718790,
+              "deallocated_object_bytes": 236641859,
+              "allocated_wrapped_bytes": 240170848,
+              "deallocated_wrapped_bytes": 238082056,
+              "live_object_bytes": 2076931,
+              "live_wrapped_bytes": 2088792
+            }
+          },
+          {
+            "group_id": 16,
+            "name": "inspector_run_records_text_galley",
+            "totals": {
+              "allocation_count": 2154,
+              "deallocation_count": 1882,
+              "allocated_object_bytes": 1250086,
+              "deallocated_object_bytes": 1010184,
+              "allocated_wrapped_bytes": 1270552,
+              "deallocated_wrapped_bytes": 1028248,
+              "live_object_bytes": 239902,
+              "live_wrapped_bytes": 242304
+            }
+          },
+          {
+            "group_id": 2,
+            "name": "frame_update",
+            "totals": {
+              "allocation_count": 9755,
+              "deallocation_count": 7825,
+              "allocated_object_bytes": 950046,
+              "deallocated_object_bytes": 802524,
+              "allocated_wrapped_bytes": 1033480,
+              "deallocated_wrapped_bytes": 865776,
+              "live_object_bytes": 147522,
+              "live_wrapped_bytes": 167704
+            }
+          },
+          {
+            "group_id": 7,
+            "name": "central_graph",
+            "totals": {
+              "allocation_count": 87285,
+              "deallocation_count": 86916,
+              "allocated_object_bytes": 5939825,
+              "deallocated_object_bytes": 5812429,
+              "allocated_wrapped_bytes": 6938608,
+              "deallocated_wrapped_bytes": 6807992,
+              "live_object_bytes": 127396,
+              "live_wrapped_bytes": 130616
+            }
+          },
+          {
+            "group_id": 6,
+            "name": "selection_inspector",
+            "totals": {
+              "allocation_count": 39008,
+              "deallocation_count": 38629,
+              "allocated_object_bytes": 5056576,
+              "deallocated_object_bytes": 4932842,
+              "allocated_wrapped_bytes": 5441424,
+              "deallocated_wrapped_bytes": 5314392,
+              "live_object_bytes": 123734,
+              "live_wrapped_bytes": 127032
+            }
+          },
+          {
+            "group_id": 5,
+            "name": "diagnostics",
+            "totals": {
+              "allocation_count": 11128,
+              "deallocation_count": 10994,
+              "allocated_object_bytes": 1693464,
+              "deallocated_object_bytes": 1594168,
+              "allocated_wrapped_bytes": 1792648,
+              "deallocated_wrapped_bytes": 1692208,
+              "live_object_bytes": 99296,
+              "live_wrapped_bytes": 100440
+            }
+          },
+          {
+            "group_id": 4,
+            "name": "run_navigation",
+            "totals": {
+              "allocation_count": 23602,
+              "deallocation_count": 23153,
+              "allocated_object_bytes": 2640059,
+              "deallocated_object_bytes": 2571672,
+              "allocated_wrapped_bytes": 2862632,
+              "deallocated_wrapped_bytes": 2789248,
+              "live_object_bytes": 68387,
+              "live_wrapped_bytes": 73384
+            }
+          },
+          {
+            "group_id": 8,
+            "name": "timeline",
+            "totals": {
+              "allocation_count": 4275,
+              "deallocation_count": 4237,
+              "allocated_object_bytes": 561631,
+              "deallocated_object_bytes": 507741,
+              "allocated_wrapped_bytes": 599048,
+              "deallocated_wrapped_bytes": 544848,
+              "live_object_bytes": 53890,
+              "live_wrapped_bytes": 54200
+            }
+          },
+          {
+            "group_id": 9,
+            "name": "graph_projection_cache_refresh",
+            "totals": {
+              "allocation_count": 1600,
+              "deallocation_count": 1504,
+              "allocated_object_bytes": 181339,
+              "deallocated_object_bytes": 159946,
+              "allocated_wrapped_bytes": 195608,
+              "deallocated_wrapped_bytes": 173248,
+              "live_object_bytes": 21393,
+              "live_wrapped_bytes": 22360
+            }
+          },
+          {
+            "group_id": 3,
+            "name": "top_strip",
+            "totals": {
+              "allocation_count": 5161,
+              "deallocation_count": 5131,
+              "allocated_object_bytes": 1149093,
+              "deallocated_object_bytes": 1134772,
+              "allocated_wrapped_bytes": 1197776,
+              "deallocated_wrapped_bytes": 1183168,
+              "live_object_bytes": 14321,
+              "live_wrapped_bytes": 14608
+            }
+          },
+          {
+            "group_id": 17,
+            "name": "inspector_run_records_label_widget",
+            "totals": {
+              "allocation_count": 2,
+              "deallocation_count": 0,
+              "allocated_object_bytes": 12832,
+              "deallocated_object_bytes": 0,
+              "allocated_wrapped_bytes": 12864,
+              "deallocated_wrapped_bytes": 0,
+              "live_object_bytes": 12832,
+              "live_wrapped_bytes": 12864
+            }
+          },
+          {
+            "group_id": 14,
+            "name": "inspector_run_records_row",
+            "totals": {
+              "allocation_count": 1,
+              "deallocation_count": 0,
+              "allocated_object_bytes": 128,
+              "deallocated_object_bytes": 0,
+              "allocated_wrapped_bytes": 136,
+              "deallocated_wrapped_bytes": 0,
+              "live_object_bytes": 128,
+              "live_wrapped_bytes": 136
+            }
+          },
+          {
+            "group_id": 15,
+            "name": "inspector_run_records_widget_row",
+            "totals": {
+              "allocation_count": 3120,
+              "deallocation_count": 3120,
+              "allocated_object_bytes": 312000,
+              "deallocated_object_bytes": 312000,
+              "allocated_wrapped_bytes": 336960,
+              "deallocated_wrapped_bytes": 336960,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          }
+        ],
+        "top_callsites_by_allocated_bytes": [],
+        "top_callsites_by_allocation_count": [],
+        "top_callsites_by_retained_bytes": []
+      },
+      "allocations": {
+        "enabled": true,
+        "allocation_count_delta": 355033,
+        "deallocation_count_delta": 350136,
+        "allocated_bytes_delta": 258465869,
+        "deallocated_bytes_delta": 255480137,
+        "scope": "tracking-allocator heap window; object bytes only, excludes GPU and driver memory"
+      },
+      "action": {
+        "action": "inspector_section_phase_sequence",
+        "target_label": "A1",
+        "target_key": "git-commit:06bf3f6c14b833372309cb409d40c137a6832124",
+        "inspector_section": "run_records",
+        "notes": [
+          "phase_sequence_section=run_records",
+          "phase_sequence_target=primary",
+          "phase_sequence_phase=idle_before_selection",
+          "phase_sequence_frames=30",
+          "phase_sequence_action=idle_unselected",
+          "phase_sequence_section=run_records",
+          "phase_sequence_target=primary",
+          "phase_sequence_phase=select_node",
+          "phase_sequence_frames=30",
+          "selection_target=primary",
+          "phase_sequence_action=select_primary",
+          "phase_sequence_section=run_records",
+          "phase_sequence_target=primary",
+          "phase_sequence_phase=expand_section",
+          "phase_sequence_frames=30",
+          "phase_sequence_action=expand_run_records",
+          "phase_sequence_section=run_records",
+          "phase_sequence_target=primary",
+          "phase_sequence_phase=collapse_section",
+          "phase_sequence_frames=30",
+          "phase_sequence_action=collapse_run_records",
+          "phase_sequence_section=run_records",
+          "phase_sequence_target=primary",
+          "phase_sequence_phase=unselect_node",
+          "phase_sequence_frames=30",
+          "phase_sequence_action=unselect_node"
+        ]
+      }
+    },
+    {
+      "name": "inspector_run_records_phase_sequence_alternate_30",
+      "target_frames": 270,
+      "frame_stats": {
+        "count": 270,
+        "min_ns": 1690613,
+        "median_ns": 1869981,
+        "p95_ns": 2567234,
+        "p99_ns": 2743556,
+        "max_ns": 4470758
+      },
+      "top_frames": [
+        {
+          "frame_index": 31,
+          "duration_ns": 4470758,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 117933
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 75071
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 321284
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 1735698
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 78388
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1045478
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3417
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 2224,
+            "deallocation_count_delta": 2079,
+            "allocated_object_bytes_delta": 1031263,
+            "deallocated_object_bytes_delta": 986458,
+            "allocated_wrapped_bytes_delta": 1051568,
+            "deallocated_wrapped_bytes_delta": 1005392,
+            "live_object_bytes": 172518,
+            "live_wrapped_bytes": 178208
+          }
+        },
+        {
+          "frame_index": 91,
+          "duration_ns": 2878460,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 74540
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 70273
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 283483
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 1385789
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 52238
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1004451
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3106
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1380,
+            "deallocation_count_delta": 1291,
+            "allocated_object_bytes_delta": 1147033,
+            "deallocated_object_bytes_delta": 976025,
+            "allocated_wrapped_bytes_delta": 1160120,
+            "deallocated_wrapped_bytes_delta": 988272,
+            "live_object_bytes": 567332,
+            "live_wrapped_bytes": 580112
+          }
+        },
+        {
+          "frame_index": 151,
+          "duration_ns": 2743556,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 117882
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 103424
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 352894
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 1045218
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 54031
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1054445
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3146
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1460,
+            "deallocation_count_delta": 1442,
+            "allocated_object_bytes_delta": 1087300,
+            "deallocated_object_bytes_delta": 1082385,
+            "allocated_wrapped_bytes_delta": 1100944,
+            "deallocated_wrapped_bytes_delta": 1095840,
+            "live_object_bytes": 796269,
+            "live_wrapped_bytes": 815432
+          }
+        },
+        {
+          "frame_index": 104,
+          "duration_ns": 2726052,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 125196
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 76413
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 336003
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 1017986
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 54272
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1088840
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3126
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1447,
+            "deallocation_count_delta": 1438,
+            "allocated_object_bytes_delta": 1085242,
+            "deallocated_object_bytes_delta": 1081758,
+            "allocated_wrapped_bytes_delta": 1098760,
+            "deallocated_wrapped_bytes_delta": 1095176,
+            "live_object_bytes": 613413,
+            "live_wrapped_bytes": 627536
+          }
+        },
+        {
+          "frame_index": 113,
+          "duration_ns": 2686699,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 120217
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 76945
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 327126
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 1025211
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 58841
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1054576
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3116
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1446,
+            "deallocation_count_delta": 1436,
+            "allocated_object_bytes_delta": 1085182,
+            "deallocated_object_bytes_delta": 1081606,
+            "allocated_wrapped_bytes_delta": 1098688,
+            "deallocated_wrapped_bytes_delta": 1095008,
+            "live_object_bytes": 645470,
+            "live_wrapped_bytes": 660528
+          }
+        },
+        {
+          "frame_index": 50,
+          "duration_ns": 2682641,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 246064
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 144913
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 599538
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 545217
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 59141
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1063071
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3416
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1215,
+            "deallocation_count_delta": 1204,
+            "allocated_object_bytes_delta": 905342,
+            "deallocated_object_bytes_delta": 901646,
+            "allocated_wrapped_bytes_delta": 917000,
+            "deallocated_wrapped_bytes_delta": 913192,
+            "live_object_bytes": 244851,
+            "live_wrapped_bytes": 252544
+          }
+        },
+        {
+          "frame_index": 118,
+          "duration_ns": 2681980,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 117872
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 88367
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 338337
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 1015081
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 53761
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1054986
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3206
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1447,
+            "deallocation_count_delta": 1437,
+            "allocated_object_bytes_delta": 1085240,
+            "deallocated_object_bytes_delta": 1081654,
+            "allocated_wrapped_bytes_delta": 1098752,
+            "deallocated_wrapped_bytes_delta": 1095064,
+            "live_object_bytes": 663399,
+            "live_wrapped_bytes": 678984
+          }
+        },
+        {
+          "frame_index": 140,
+          "duration_ns": 2681439,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 128753
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 75643
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 331604
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 1006245
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 53170
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1059044
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3306
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1447,
+            "deallocation_count_delta": 1438,
+            "allocated_object_bytes_delta": 1085248,
+            "deallocated_object_bytes_delta": 1081758,
+            "allocated_wrapped_bytes_delta": 1098760,
+            "deallocated_wrapped_bytes_delta": 1095176,
+            "live_object_bytes": 755230,
+            "live_wrapped_bytes": 773120
+          }
+        },
+        {
+          "frame_index": 119,
+          "duration_ns": 2680226,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 125246
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 76334
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 327917
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 1010643
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 53761
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1055167
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3166
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1447,
+            "deallocation_count_delta": 1436,
+            "allocated_object_bytes_delta": 1085303,
+            "deallocated_object_bytes_delta": 1081606,
+            "allocated_wrapped_bytes_delta": 1098816,
+            "deallocated_wrapped_bytes_delta": 1095008,
+            "live_object_bytes": 667096,
+            "live_wrapped_bytes": 682792
+          }
+        },
+        {
+          "frame_index": 112,
+          "duration_ns": 2678203,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 124003
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 76914
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 334349
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 1008539
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 52870
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1053283
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3256
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1447,
+            "deallocation_count_delta": 1438,
+            "allocated_object_bytes_delta": 1085238,
+            "deallocated_object_bytes_delta": 1081758,
+            "allocated_wrapped_bytes_delta": 1098752,
+            "deallocated_wrapped_bytes_delta": 1095176,
+            "live_object_bytes": 641894,
+            "live_wrapped_bytes": 656848
+          }
+        }
+      ],
+      "component_timings": [
+        {
+          "component": "capture_overhead",
+          "stats": {
+            "count": 270,
+            "min_ns": 2826,
+            "median_ns": 3036,
+            "p95_ns": 3387,
+            "p99_ns": 6021,
+            "max_ns": 6853
+          },
+          "median_percent_of_frame_x100": 16
+        },
+        {
+          "component": "central_graph",
+          "stats": {
+            "count": 270,
+            "min_ns": 997078,
+            "median_ns": 1010413,
+            "p95_ns": 1065276,
+            "p99_ns": 1192245,
+            "max_ns": 1363057
+          },
+          "median_percent_of_frame_x100": 5403
+        },
+        {
+          "component": "diagnostics",
+          "stats": {
+            "count": 270,
+            "min_ns": 68679,
+            "median_ns": 70193,
+            "p95_ns": 76965,
+            "p99_ns": 109446,
+            "max_ns": 144913
+          },
+          "median_percent_of_frame_x100": 375,
+          "nested_under": "run_navigation"
+        },
+        {
+          "component": "run_navigation",
+          "stats": {
+            "count": 270,
+            "min_ns": 275118,
+            "median_ns": 282672,
+            "p95_ns": 334340,
+            "p99_ns": 404351,
+            "max_ns": 621050
+          },
+          "median_percent_of_frame_x100": 1511
+        },
+        {
+          "component": "selection_inspector",
+          "stats": {
+            "count": 270,
+            "min_ns": 222799,
+            "median_ns": 373734,
+            "p95_ns": 927746,
+            "p99_ns": 1045218,
+            "max_ns": 1735698
+          },
+          "median_percent_of_frame_x100": 1998
+        },
+        {
+          "component": "timeline",
+          "stats": {
+            "count": 270,
+            "min_ns": 48050,
+            "median_ns": 51577,
+            "p95_ns": 58129,
+            "p99_ns": 76594,
+            "max_ns": 87445
+          },
+          "median_percent_of_frame_x100": 275
+        },
+        {
+          "component": "top_strip",
+          "stats": {
+            "count": 270,
+            "min_ns": 72877,
+            "median_ns": 75002,
+            "p95_ns": 124464,
+            "p99_ns": 156515,
+            "max_ns": 252045
+          },
+          "median_percent_of_frame_x100": 401
+        }
+      ],
+      "allocation_frames": {
+        "per_frame": {
+          "allocation_count": {
+            "count": 270,
+            "min": 627,
+            "median": 1213,
+            "p95": 1447,
+            "p99": 1468,
+            "max": 2224
+          },
+          "allocated_object_bytes": {
+            "count": 270,
+            "min": 40581,
+            "median": 905210,
+            "p95": 1085248,
+            "p99": 1111839,
+            "max": 1854504
+          },
+          "allocated_wrapped_bytes": {
+            "count": 270,
+            "min": 47152,
+            "median": 916856,
+            "p95": 1098760,
+            "p99": 1125352,
+            "max": 1866784
+          },
+          "live_object_bytes": {
+            "count": 270,
+            "min": 3658,
+            "median": 737431,
+            "p95": 1183367,
+            "p99": 1246618,
+            "max": 1254588
+          },
+          "live_wrapped_bytes": {
+            "count": 270,
+            "min": 4376,
+            "median": 754808,
+            "p95": 1213552,
+            "p99": 1277960,
+            "max": 1286296
+          }
+        },
+        "first_50": {
+          "frame_start": 1,
+          "frame_end": 50,
+          "stats": {
+            "allocation_count": {
+              "count": 50,
+              "min": 627,
+              "median": 1143,
+              "p95": 1214,
+              "p99": 2224,
+              "max": 2224
+            },
+            "allocated_object_bytes": {
+              "count": 50,
+              "min": 40581,
+              "median": 815462,
+              "p95": 907960,
+              "p99": 1031263,
+              "max": 1031263
+            },
+            "allocated_wrapped_bytes": {
+              "count": 50,
+              "min": 47152,
+              "median": 826488,
+              "p95": 919608,
+              "p99": 1051568,
+              "max": 1051568
+            },
+            "live_object_bytes": {
+              "count": 50,
+              "min": 3658,
+              "median": 109803,
+              "p95": 237528,
+              "p99": 244851,
+              "max": 244851
+            },
+            "live_wrapped_bytes": {
+              "count": 50,
+              "min": 4376,
+              "median": 113560,
+              "p95": 245000,
+              "p99": 252544,
+              "max": 252544
+            }
+          }
+        },
+        "last_50": {
+          "frame_start": 221,
+          "frame_end": 270,
+          "stats": {
+            "allocation_count": {
+              "count": 50,
+              "min": 1141,
+              "median": 1142,
+              "p95": 1143,
+              "p99": 1288,
+              "max": 1288
+            },
+            "allocated_object_bytes": {
+              "count": 50,
+              "min": 815221,
+              "median": 815290,
+              "p95": 818021,
+              "p99": 1854504,
+              "max": 1854504
+            },
+            "allocated_wrapped_bytes": {
+              "count": 50,
+              "min": 826256,
+              "median": 826320,
+              "p95": 829064,
+              "p99": 1866784,
+              "max": 1866784
+            },
+            "live_object_bytes": {
+              "count": 50,
+              "min": 1052046,
+              "median": 1137823,
+              "p95": 1246618,
+              "p99": 1254588,
+              "max": 1254588
+            },
+            "live_wrapped_bytes": {
+              "count": 50,
+              "min": 1078400,
+              "median": 1166728,
+              "p95": 1277960,
+              "p99": 1286296,
+              "max": 1286296
+            }
+          }
+        },
+        "slope": "growing"
+      },
+      "phase_windows": [
+        {
+          "phase_index": 1,
+          "phase": "idle_before_selection",
+          "inspector_section": "run_records",
+          "selection_target": "alternate",
+          "frame_start": 1,
+          "frame_end": 30,
+          "stats": {
+            "allocation_count": {
+              "count": 30,
+              "min": 627,
+              "median": 1142,
+              "p95": 1143,
+              "p99": 1143,
+              "max": 1143
+            },
+            "allocated_object_bytes": {
+              "count": 30,
+              "min": 40581,
+              "median": 815299,
+              "p95": 818031,
+              "p99": 818639,
+              "max": 818639
+            },
+            "allocated_wrapped_bytes": {
+              "count": 30,
+              "min": 47152,
+              "median": 826336,
+              "p95": 829072,
+              "p99": 829680,
+              "max": 829680
+            },
+            "live_object_bytes": {
+              "count": 30,
+              "min": 3658,
+              "median": 72731,
+              "p95": 124101,
+              "p99": 127689,
+              "max": 127689
+            },
+            "live_wrapped_bytes": {
+              "count": 30,
+              "min": 4376,
+              "median": 75440,
+              "p95": 128288,
+              "p99": 131984,
+              "max": 131984
+            }
+          }
+        },
+        {
+          "phase_index": 2,
+          "phase": "select_node",
+          "inspector_section": "run_records",
+          "selection_target": "alternate",
+          "frame_start": 31,
+          "frame_end": 60,
+          "stats": {
+            "allocation_count": {
+              "count": 30,
+              "min": 1197,
+              "median": 1213,
+              "p95": 1215,
+              "p99": 2224,
+              "max": 2224
+            },
+            "allocated_object_bytes": {
+              "count": 30,
+              "min": 905089,
+              "median": 905230,
+              "p95": 911871,
+              "p99": 1031263,
+              "max": 1031263
+            },
+            "allocated_wrapped_bytes": {
+              "count": 30,
+              "min": 916712,
+              "median": 916872,
+              "p95": 923520,
+              "p99": 1051568,
+              "max": 1051568
+            },
+            "live_object_bytes": {
+              "count": 30,
+              "min": 172518,
+              "median": 226826,
+              "p95": 277521,
+              "p99": 281248,
+              "max": 281248
+            },
+            "live_wrapped_bytes": {
+              "count": 30,
+              "min": 178208,
+              "median": 233984,
+              "p95": 286168,
+              "p99": 290008,
+              "max": 290008
+            }
+          }
+        },
+        {
+          "phase_index": 3,
+          "phase": "idle_selected_collapsed",
+          "inspector_section": "run_records",
+          "selection_target": "alternate",
+          "frame_start": 61,
+          "frame_end": 90,
+          "stats": {
+            "allocation_count": {
+              "count": 30,
+              "min": 1212,
+              "median": 1213,
+              "p95": 1214,
+              "p99": 1214,
+              "max": 1214
+            },
+            "allocated_object_bytes": {
+              "count": 30,
+              "min": 905170,
+              "median": 905217,
+              "p95": 907928,
+              "p99": 918515,
+              "max": 918515
+            },
+            "allocated_wrapped_bytes": {
+              "count": 30,
+              "min": 916808,
+              "median": 916864,
+              "p95": 919576,
+              "p99": 930160,
+              "max": 930160
+            },
+            "live_object_bytes": {
+              "count": 30,
+              "min": 284874,
+              "median": 342260,
+              "p95": 392713,
+              "p99": 396324,
+              "max": 396324
+            },
+            "live_wrapped_bytes": {
+              "count": 30,
+              "min": 293736,
+              "median": 352616,
+              "p95": 404544,
+              "p99": 408264,
+              "max": 408264
+            }
+          }
+        },
+        {
+          "phase_index": 4,
+          "phase": "expand_section",
+          "inspector_section": "run_records",
+          "selection_target": "alternate",
+          "frame_start": 91,
+          "frame_end": 120,
+          "stats": {
+            "allocation_count": {
+              "count": 30,
+              "min": 1375,
+              "median": 1446,
+              "p95": 1447,
+              "p99": 1447,
+              "max": 1447
+            },
+            "allocated_object_bytes": {
+              "count": 30,
+              "min": 1058896,
+              "median": 1085188,
+              "p95": 1087948,
+              "p99": 1147033,
+              "max": 1147033
+            },
+            "allocated_wrapped_bytes": {
+              "count": 30,
+              "min": 1071824,
+              "median": 1098696,
+              "p95": 1101464,
+              "p99": 1160120,
+              "max": 1160120
+            },
+            "live_object_bytes": {
+              "count": 30,
+              "min": 567332,
+              "median": 617003,
+              "p95": 667096,
+              "p99": 670688,
+              "max": 670688
+            },
+            "live_wrapped_bytes": {
+              "count": 30,
+              "min": 580112,
+              "median": 631232,
+              "p95": 682792,
+              "p99": 686488,
+              "max": 686488
+            }
+          }
+        },
+        {
+          "phase_index": 5,
+          "phase": "idle_expanded",
+          "inspector_section": "run_records",
+          "selection_target": "alternate",
+          "frame_start": 121,
+          "frame_end": 150,
+          "stats": {
+            "allocation_count": {
+              "count": 30,
+              "min": 1445,
+              "median": 1446,
+              "p95": 1447,
+              "p99": 1448,
+              "max": 1448
+            },
+            "allocated_object_bytes": {
+              "count": 30,
+              "min": 1085100,
+              "median": 1085180,
+              "p95": 1087924,
+              "p99": 1111839,
+              "max": 1111839
+            },
+            "allocated_wrapped_bytes": {
+              "count": 30,
+              "min": 1098608,
+              "median": 1098688,
+              "p95": 1101440,
+              "p99": 1125352,
+              "max": 1125352
+            },
+            "live_object_bytes": {
+              "count": 30,
+              "min": 674264,
+              "median": 737431,
+              "p95": 787790,
+              "p99": 791354,
+              "max": 791354
+            },
+            "live_wrapped_bytes": {
+              "count": 30,
+              "min": 690168,
+              "median": 754808,
+              "p95": 806656,
+              "p99": 810328,
+              "max": 810328
+            }
+          }
+        },
+        {
+          "phase_index": 6,
+          "phase": "collapse_section",
+          "inspector_section": "run_records",
+          "selection_target": "alternate",
+          "frame_start": 151,
+          "frame_end": 180,
+          "stats": {
+            "allocation_count": {
+              "count": 30,
+              "min": 1212,
+              "median": 1213,
+              "p95": 1468,
+              "p99": 1470,
+              "max": 1470
+            },
+            "allocated_object_bytes": {
+              "count": 30,
+              "min": 868174,
+              "median": 905226,
+              "p95": 1086478,
+              "p99": 1087300,
+              "max": 1087300
+            },
+            "allocated_wrapped_bytes": {
+              "count": 30,
+              "min": 881344,
+              "median": 916872,
+              "p95": 1100024,
+              "p99": 1100944,
+              "max": 1100944
+            },
+            "live_object_bytes": {
+              "count": 30,
+              "min": 796269,
+              "median": 846093,
+              "p95": 896543,
+              "p99": 900134,
+              "max": 900134
+            },
+            "live_wrapped_bytes": {
+              "count": 30,
+              "min": 815432,
+              "median": 866696,
+              "p95": 918616,
+              "p99": 922312,
+              "max": 922312
+            }
+          }
+        },
+        {
+          "phase_index": 7,
+          "phase": "idle_collapsed",
+          "inspector_section": "run_records",
+          "selection_target": "alternate",
+          "frame_start": 181,
+          "frame_end": 210,
+          "stats": {
+            "allocation_count": {
+              "count": 30,
+              "min": 1212,
+              "median": 1213,
+              "p95": 1214,
+              "p99": 1215,
+              "max": 1215
+            },
+            "allocated_object_bytes": {
+              "count": 30,
+              "min": 905144,
+              "median": 905212,
+              "p95": 905358,
+              "p99": 907916,
+              "max": 907916
+            },
+            "allocated_wrapped_bytes": {
+              "count": 30,
+              "min": 916776,
+              "median": 916856,
+              "p95": 917016,
+              "p99": 919568,
+              "max": 919568
+            },
+            "live_object_bytes": {
+              "count": 30,
+              "min": 903710,
+              "median": 956896,
+              "p95": 1004472,
+              "p99": 1008100,
+              "max": 1008100
+            },
+            "live_wrapped_bytes": {
+              "count": 30,
+              "min": 925992,
+              "median": 980648,
+              "p95": 1029664,
+              "p99": 1033400,
+              "max": 1033400
+            }
+          }
+        },
+        {
+          "phase_index": 8,
+          "phase": "unselect_node",
+          "inspector_section": "run_records",
+          "selection_target": "alternate",
+          "frame_start": 211,
+          "frame_end": 240,
+          "stats": {
+            "allocation_count": {
+              "count": 30,
+              "min": 1141,
+              "median": 1142,
+              "p95": 1170,
+              "p99": 1269,
+              "max": 1269
+            },
+            "allocated_object_bytes": {
+              "count": 30,
+              "min": 815221,
+              "median": 815288,
+              "p95": 819407,
+              "p99": 926581,
+              "max": 926581
+            },
+            "allocated_wrapped_bytes": {
+              "count": 30,
+              "min": 826256,
+              "median": 826320,
+              "p95": 830656,
+              "p99": 938656,
+              "max": 938656
+            },
+            "live_object_bytes": {
+              "count": 30,
+              "min": 1020284,
+              "median": 1066459,
+              "p95": 1116398,
+              "p99": 1119958,
+              "max": 1119958
+            },
+            "live_wrapped_bytes": {
+              "count": 30,
+              "min": 1045688,
+              "median": 1093248,
+              "p95": 1144672,
+              "p99": 1148336,
+              "max": 1148336
+            }
+          }
+        },
+        {
+          "phase_index": 9,
+          "phase": "idle_after_unselect",
+          "inspector_section": "run_records",
+          "selection_target": "alternate",
+          "frame_start": 241,
+          "frame_end": 270,
+          "stats": {
+            "allocation_count": {
+              "count": 30,
+              "min": 1141,
+              "median": 1142,
+              "p95": 1143,
+              "p99": 1288,
+              "max": 1288
+            },
+            "allocated_object_bytes": {
+              "count": 30,
+              "min": 815247,
+              "median": 815293,
+              "p95": 868528,
+              "p99": 1854504,
+              "max": 1854504
+            },
+            "allocated_wrapped_bytes": {
+              "count": 30,
+              "min": 826272,
+              "median": 826328,
+              "p95": 879568,
+              "p99": 1866784,
+              "max": 1866784
+            },
+            "live_object_bytes": {
+              "count": 30,
+              "min": 1123555,
+              "median": 1173519,
+              "p95": 1251333,
+              "p99": 1254588,
+              "max": 1254588
+            },
+            "live_wrapped_bytes": {
+              "count": 30,
+              "min": 1152040,
+              "median": 1203480,
+              "p95": 1282960,
+              "p99": 1286296,
+              "max": 1286296
+            }
+          }
+        }
+      ],
+      "heap_profile": {
+        "totals": {
+          "allocation_count": 337307,
+          "deallocation_count": 334369,
+          "allocated_object_bytes": 248341099,
+          "deallocated_object_bytes": 247106493,
+          "allocated_wrapped_bytes": 251559736,
+          "deallocated_wrapped_bytes": 250294360,
+          "live_object_bytes": 1254588,
+          "live_wrapped_bytes": 1286296
+        },
+        "unmatched_deallocations": 97,
+        "top_groups_by_allocated_bytes": [
+          {
+            "group_id": 1,
+            "name": "root",
+            "totals": {
+              "allocation_count": 165793,
+              "deallocation_count": 165190,
+              "allocated_object_bytes": 236542820,
+              "deallocated_object_bytes": 235651207,
+              "allocated_wrapped_bytes": 237973480,
+              "deallocated_wrapped_bytes": 237075968,
+              "live_object_bytes": 891613,
+              "live_wrapped_bytes": 897512
+            }
+          },
+          {
+            "group_id": 7,
+            "name": "central_graph",
+            "totals": {
+              "allocation_count": 84330,
+              "deallocation_count": 84301,
+              "allocated_object_bytes": 4367070,
+              "deallocated_object_bytes": 4364950,
+              "allocated_wrapped_bytes": 5339520,
+              "deallocated_wrapped_bytes": 5337056,
+              "live_object_bytes": 2120,
+              "live_wrapped_bytes": 2464
+            }
+          },
+          {
+            "group_id": 6,
+            "name": "selection_inspector",
+            "totals": {
+              "allocation_count": 34325,
+              "deallocation_count": 34202,
+              "allocated_object_bytes": 2764270,
+              "deallocated_object_bytes": 2724097,
+              "allocated_wrapped_bytes": 3105032,
+              "deallocated_wrapped_bytes": 3063776,
+              "live_object_bytes": 40173,
+              "live_wrapped_bytes": 41256
+            }
+          },
+          {
+            "group_id": 4,
+            "name": "run_navigation",
+            "totals": {
+              "allocation_count": 21600,
+              "deallocation_count": 21325,
+              "allocated_object_bytes": 1552500,
+              "deallocated_object_bytes": 1549194,
+              "allocated_wrapped_bytes": 1756080,
+              "deallocated_wrapped_bytes": 1749224,
+              "live_object_bytes": 3306,
+              "live_wrapped_bytes": 6856
+            }
+          },
+          {
+            "group_id": 5,
+            "name": "diagnostics",
+            "totals": {
+              "allocation_count": 9990,
+              "deallocation_count": 9990,
+              "allocated_object_bytes": 948240,
+              "deallocated_object_bytes": 948240,
+              "allocated_wrapped_bytes": 1036800,
+              "deallocated_wrapped_bytes": 1036800,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 2,
+            "name": "frame_update",
+            "totals": {
+              "allocation_count": 9561,
+              "deallocation_count": 7635,
+              "allocated_object_bytes": 939367,
+              "deallocated_object_bytes": 793577,
+              "allocated_wrapped_bytes": 1020960,
+              "deallocated_wrapped_bytes": 855048,
+              "live_object_bytes": 145790,
+              "live_wrapped_bytes": 165912
+            }
+          },
+          {
+            "group_id": 8,
+            "name": "timeline",
+            "totals": {
+              "allocation_count": 3891,
+              "deallocation_count": 3882,
+              "allocated_object_bytes": 329572,
+              "deallocated_object_bytes": 324268,
+              "allocated_wrapped_bytes": 363400,
+              "deallocated_wrapped_bytes": 358024,
+              "live_object_bytes": 5304,
+              "live_wrapped_bytes": 5376
+            }
+          },
+          {
+            "group_id": 15,
+            "name": "inspector_run_records_widget_row",
+            "totals": {
+              "allocation_count": 3120,
+              "deallocation_count": 3120,
+              "allocated_object_bytes": 312000,
+              "deallocated_object_bytes": 312000,
+              "allocated_wrapped_bytes": 336960,
+              "deallocated_wrapped_bytes": 336960,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 3,
+            "name": "top_strip",
+            "totals": {
+              "allocation_count": 3510,
+              "deallocation_count": 3510,
+              "allocated_object_bytes": 258930,
+              "deallocated_object_bytes": 258930,
+              "allocated_wrapped_bytes": 291600,
+              "deallocated_wrapped_bytes": 291600,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 16,
+            "name": "inspector_run_records_text_galley",
+            "totals": {
+              "allocation_count": 101,
+              "deallocation_count": 31,
+              "allocated_object_bytes": 235106,
+              "deallocated_object_bytes": 68824,
+              "allocated_wrapped_bytes": 235992,
+              "deallocated_wrapped_bytes": 69072,
+              "live_object_bytes": 166282,
+              "live_wrapped_bytes": 166920
+            }
+          },
+          {
+            "group_id": 9,
+            "name": "graph_projection_cache_refresh",
+            "totals": {
+              "allocation_count": 1086,
+              "deallocation_count": 1086,
+              "allocated_object_bytes": 91224,
+              "deallocated_object_bytes": 91224,
+              "allocated_wrapped_bytes": 99912,
+              "deallocated_wrapped_bytes": 99912,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          }
+        ],
+        "top_groups_by_allocation_count": [
+          {
+            "group_id": 1,
+            "name": "root",
+            "totals": {
+              "allocation_count": 165793,
+              "deallocation_count": 165190,
+              "allocated_object_bytes": 236542820,
+              "deallocated_object_bytes": 235651207,
+              "allocated_wrapped_bytes": 237973480,
+              "deallocated_wrapped_bytes": 237075968,
+              "live_object_bytes": 891613,
+              "live_wrapped_bytes": 897512
+            }
+          },
+          {
+            "group_id": 7,
+            "name": "central_graph",
+            "totals": {
+              "allocation_count": 84330,
+              "deallocation_count": 84301,
+              "allocated_object_bytes": 4367070,
+              "deallocated_object_bytes": 4364950,
+              "allocated_wrapped_bytes": 5339520,
+              "deallocated_wrapped_bytes": 5337056,
+              "live_object_bytes": 2120,
+              "live_wrapped_bytes": 2464
+            }
+          },
+          {
+            "group_id": 6,
+            "name": "selection_inspector",
+            "totals": {
+              "allocation_count": 34325,
+              "deallocation_count": 34202,
+              "allocated_object_bytes": 2764270,
+              "deallocated_object_bytes": 2724097,
+              "allocated_wrapped_bytes": 3105032,
+              "deallocated_wrapped_bytes": 3063776,
+              "live_object_bytes": 40173,
+              "live_wrapped_bytes": 41256
+            }
+          },
+          {
+            "group_id": 4,
+            "name": "run_navigation",
+            "totals": {
+              "allocation_count": 21600,
+              "deallocation_count": 21325,
+              "allocated_object_bytes": 1552500,
+              "deallocated_object_bytes": 1549194,
+              "allocated_wrapped_bytes": 1756080,
+              "deallocated_wrapped_bytes": 1749224,
+              "live_object_bytes": 3306,
+              "live_wrapped_bytes": 6856
+            }
+          },
+          {
+            "group_id": 5,
+            "name": "diagnostics",
+            "totals": {
+              "allocation_count": 9990,
+              "deallocation_count": 9990,
+              "allocated_object_bytes": 948240,
+              "deallocated_object_bytes": 948240,
+              "allocated_wrapped_bytes": 1036800,
+              "deallocated_wrapped_bytes": 1036800,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 2,
+            "name": "frame_update",
+            "totals": {
+              "allocation_count": 9561,
+              "deallocation_count": 7635,
+              "allocated_object_bytes": 939367,
+              "deallocated_object_bytes": 793577,
+              "allocated_wrapped_bytes": 1020960,
+              "deallocated_wrapped_bytes": 855048,
+              "live_object_bytes": 145790,
+              "live_wrapped_bytes": 165912
+            }
+          },
+          {
+            "group_id": 8,
+            "name": "timeline",
+            "totals": {
+              "allocation_count": 3891,
+              "deallocation_count": 3882,
+              "allocated_object_bytes": 329572,
+              "deallocated_object_bytes": 324268,
+              "allocated_wrapped_bytes": 363400,
+              "deallocated_wrapped_bytes": 358024,
+              "live_object_bytes": 5304,
+              "live_wrapped_bytes": 5376
+            }
+          },
+          {
+            "group_id": 3,
+            "name": "top_strip",
+            "totals": {
+              "allocation_count": 3510,
+              "deallocation_count": 3510,
+              "allocated_object_bytes": 258930,
+              "deallocated_object_bytes": 258930,
+              "allocated_wrapped_bytes": 291600,
+              "deallocated_wrapped_bytes": 291600,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 15,
+            "name": "inspector_run_records_widget_row",
+            "totals": {
+              "allocation_count": 3120,
+              "deallocation_count": 3120,
+              "allocated_object_bytes": 312000,
+              "deallocated_object_bytes": 312000,
+              "allocated_wrapped_bytes": 336960,
+              "deallocated_wrapped_bytes": 336960,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 9,
+            "name": "graph_projection_cache_refresh",
+            "totals": {
+              "allocation_count": 1086,
+              "deallocation_count": 1086,
+              "allocated_object_bytes": 91224,
+              "deallocated_object_bytes": 91224,
+              "allocated_wrapped_bytes": 99912,
+              "deallocated_wrapped_bytes": 99912,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 16,
+            "name": "inspector_run_records_text_galley",
+            "totals": {
+              "allocation_count": 101,
+              "deallocation_count": 31,
+              "allocated_object_bytes": 235106,
+              "deallocated_object_bytes": 68824,
+              "allocated_wrapped_bytes": 235992,
+              "deallocated_wrapped_bytes": 69072,
+              "live_object_bytes": 166282,
+              "live_wrapped_bytes": 166920
+            }
+          }
+        ],
+        "top_groups_by_retained_bytes": [
+          {
+            "group_id": 1,
+            "name": "root",
+            "totals": {
+              "allocation_count": 165793,
+              "deallocation_count": 165190,
+              "allocated_object_bytes": 236542820,
+              "deallocated_object_bytes": 235651207,
+              "allocated_wrapped_bytes": 237973480,
+              "deallocated_wrapped_bytes": 237075968,
+              "live_object_bytes": 891613,
+              "live_wrapped_bytes": 897512
+            }
+          },
+          {
+            "group_id": 16,
+            "name": "inspector_run_records_text_galley",
+            "totals": {
+              "allocation_count": 101,
+              "deallocation_count": 31,
+              "allocated_object_bytes": 235106,
+              "deallocated_object_bytes": 68824,
+              "allocated_wrapped_bytes": 235992,
+              "deallocated_wrapped_bytes": 69072,
+              "live_object_bytes": 166282,
+              "live_wrapped_bytes": 166920
+            }
+          },
+          {
+            "group_id": 2,
+            "name": "frame_update",
+            "totals": {
+              "allocation_count": 9561,
+              "deallocation_count": 7635,
+              "allocated_object_bytes": 939367,
+              "deallocated_object_bytes": 793577,
+              "allocated_wrapped_bytes": 1020960,
+              "deallocated_wrapped_bytes": 855048,
+              "live_object_bytes": 145790,
+              "live_wrapped_bytes": 165912
+            }
+          },
+          {
+            "group_id": 6,
+            "name": "selection_inspector",
+            "totals": {
+              "allocation_count": 34325,
+              "deallocation_count": 34202,
+              "allocated_object_bytes": 2764270,
+              "deallocated_object_bytes": 2724097,
+              "allocated_wrapped_bytes": 3105032,
+              "deallocated_wrapped_bytes": 3063776,
+              "live_object_bytes": 40173,
+              "live_wrapped_bytes": 41256
+            }
+          },
+          {
+            "group_id": 4,
+            "name": "run_navigation",
+            "totals": {
+              "allocation_count": 21600,
+              "deallocation_count": 21325,
+              "allocated_object_bytes": 1552500,
+              "deallocated_object_bytes": 1549194,
+              "allocated_wrapped_bytes": 1756080,
+              "deallocated_wrapped_bytes": 1749224,
+              "live_object_bytes": 3306,
+              "live_wrapped_bytes": 6856
+            }
+          },
+          {
+            "group_id": 8,
+            "name": "timeline",
+            "totals": {
+              "allocation_count": 3891,
+              "deallocation_count": 3882,
+              "allocated_object_bytes": 329572,
+              "deallocated_object_bytes": 324268,
+              "allocated_wrapped_bytes": 363400,
+              "deallocated_wrapped_bytes": 358024,
+              "live_object_bytes": 5304,
+              "live_wrapped_bytes": 5376
+            }
+          },
+          {
+            "group_id": 7,
+            "name": "central_graph",
+            "totals": {
+              "allocation_count": 84330,
+              "deallocation_count": 84301,
+              "allocated_object_bytes": 4367070,
+              "deallocated_object_bytes": 4364950,
+              "allocated_wrapped_bytes": 5339520,
+              "deallocated_wrapped_bytes": 5337056,
+              "live_object_bytes": 2120,
+              "live_wrapped_bytes": 2464
+            }
+          },
+          {
+            "group_id": 3,
+            "name": "top_strip",
+            "totals": {
+              "allocation_count": 3510,
+              "deallocation_count": 3510,
+              "allocated_object_bytes": 258930,
+              "deallocated_object_bytes": 258930,
+              "allocated_wrapped_bytes": 291600,
+              "deallocated_wrapped_bytes": 291600,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 5,
+            "name": "diagnostics",
+            "totals": {
+              "allocation_count": 9990,
+              "deallocation_count": 9990,
+              "allocated_object_bytes": 948240,
+              "deallocated_object_bytes": 948240,
+              "allocated_wrapped_bytes": 1036800,
+              "deallocated_wrapped_bytes": 1036800,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 9,
+            "name": "graph_projection_cache_refresh",
+            "totals": {
+              "allocation_count": 1086,
+              "deallocation_count": 1086,
+              "allocated_object_bytes": 91224,
+              "deallocated_object_bytes": 91224,
+              "allocated_wrapped_bytes": 99912,
+              "deallocated_wrapped_bytes": 99912,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 15,
+            "name": "inspector_run_records_widget_row",
+            "totals": {
+              "allocation_count": 3120,
+              "deallocation_count": 3120,
+              "allocated_object_bytes": 312000,
+              "deallocated_object_bytes": 312000,
+              "allocated_wrapped_bytes": 336960,
+              "deallocated_wrapped_bytes": 336960,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          }
+        ],
+        "top_callsites_by_allocated_bytes": [],
+        "top_callsites_by_allocation_count": [],
+        "top_callsites_by_retained_bytes": []
+      },
+      "allocations": {
+        "enabled": true,
+        "allocation_count_delta": 337307,
+        "deallocation_count_delta": 334369,
+        "allocated_bytes_delta": 248341099,
+        "deallocated_bytes_delta": 247106493,
+        "scope": "tracking-allocator heap window; object bytes only, excludes GPU and driver memory"
+      },
+      "action": {
+        "action": "inspector_section_phase_sequence",
+        "target_label": "A2",
+        "target_key": "git-commit:0dddaf057afa4a89e36e5bff98cd1a87056daaaa",
+        "inspector_section": "run_records",
+        "notes": [
+          "phase_sequence_section=run_records",
+          "phase_sequence_target=alternate",
+          "phase_sequence_phase=idle_before_selection",
+          "phase_sequence_frames=30",
+          "phase_sequence_action=idle_unselected",
+          "phase_sequence_section=run_records",
+          "phase_sequence_target=alternate",
+          "phase_sequence_phase=select_node",
+          "phase_sequence_frames=30",
+          "selection_target=alternate",
+          "phase_sequence_action=select_alternate",
+          "phase_sequence_section=run_records",
+          "phase_sequence_target=alternate",
+          "phase_sequence_phase=expand_section",
+          "phase_sequence_frames=30",
+          "phase_sequence_action=expand_run_records",
+          "phase_sequence_section=run_records",
+          "phase_sequence_target=alternate",
+          "phase_sequence_phase=collapse_section",
+          "phase_sequence_frames=30",
+          "phase_sequence_action=collapse_run_records",
+          "phase_sequence_section=run_records",
+          "phase_sequence_target=alternate",
+          "phase_sequence_phase=unselect_node",
+          "phase_sequence_frames=30",
+          "phase_sequence_action=unselect_node"
+        ]
+      }
+    }
+  ],
+  "puffin_artifacts": [
+    {
+      "path": "/home/brasides/code/ploke/crates/ploke-egui/data/profiling/puffin/benchmarks/20260518-run-records-focused-spans/standard.puffin",
+      "bytes": 1755762,
+      "sha256": "9a5c2e6d29c9d287018f3eae7fd7fbb9281beb1aa3f3752ed6085afb239b7087",
+      "tracked": false
+    }
+  ],
+  "heap_artifacts": [
+    {
+      "path": "/home/brasides/code/ploke/crates/ploke-egui/data/profiling/heap/benchmarks/20260518-run-records-focused-spans/inspector_run_records_phase_sequence_30.heap.json",
+      "bytes": 5793,
+      "sha256": "7cc84cb6358e82f6bf833025b13ec1f3fb7f9b0d10dd7333036137d2c7fcbb0c",
+      "tracked": false
+    },
+    {
+      "path": "/home/brasides/code/ploke/crates/ploke-egui/data/profiling/heap/benchmarks/20260518-run-records-focused-spans/inspector_run_records_phase_sequence_alternate_30.heap.json",
+      "bytes": 4931,
+      "sha256": "dc353a65fa3b7aa07e969e8883ba329e73bc420bb0b7cb744ad16a6fe4424c89",
+      "tracked": false
+    }
+  ],
+  "notes": [
+    "reporting-only benchmark; no pass/fail thresholds applied",
+    "allocation deltas use tracking-allocator object bytes and wrapped bytes; GPU and driver memory are outside the measured surface",
+    "standard heap attribution is driven by #[tracing::instrument] span names and uses cheap totals/group counters; callsite backtraces are not captured in standard mode",
+    "report.json and README.md are rewritten after each completed scenario so interrupted runs keep partial evidence",
+    "puffin captures are local ignored artifacts under crates/ploke-egui/data/",
+    "full heap profiles are local ignored artifacts under crates/ploke-egui/data/profiling/heap/benchmarks/"
+  ]
+}

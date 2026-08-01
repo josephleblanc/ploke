@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ploke Tree Browser</title>
+    <style>
+      html,
+      body,
+      canvas {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #111;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="ploke-tree-canvas"></canvas>
+    <link data-trunk rel="rust" href="Cargo.toml" data-bin="ploke-tree-egui" />
+  </body>
+</html>

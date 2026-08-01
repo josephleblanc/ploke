@@ -1,0 +1,124 @@
+//! TUI tool-carrier coverage boundary:
+//!
+//! - Covered: serde roundtrips for `request_code_context` arguments/results
+//!   and the optional `type_context` carrier on context parts.
+//! - Covered elsewhere: the direct `request_code_context` production tool path
+//!   is exercised in `tools::request_code_context::gat_tests` against the shared
+//!   corpus-backed `TypeShapeCase` matrix. That test observes
+//!   `ToolCallCompleted` and asserts structured `ConciseContext.type_context`.
+//! - Not covered here: live model/tool selection. Ignored live tests should use
+//!   the same matrix prompts and assert tool payloads, not final model wording.
+//! - Recursive/nested type behavior is matrix-bounded by the deepest real corpus
+//!   examples selected for DB and RAG coverage.
+
+use ploke_core::rag_types::{
+    ApplyCodeEditResult, CanonPath, ConciseContext, ContextPartKind, GetFileMetadataResult,
+    NodeFilepath, RequestCodeContextArgs, RequestCodeContextResult, TypeContextInfo,
+    TypeContextKind,
+};
+use uuid::Uuid;
+
+#[test]
+fn serde_roundtrip_request_code_context() {
+    let args = RequestCodeContextArgs {
+        token_budget_per_result: Some(512),
+        token_budget_total: Some(1536),
+        search_term: "SimpleStruct".to_string(),
+    };
+    let args_json = serde_json::to_string(&args).expect("serialize args");
+    let args_back: RequestCodeContextArgs =
+        serde_json::from_str(&args_json).expect("deserialize args");
+    assert_eq!(args_back.token_budget_per_result, Some(512));
+    assert_eq!(args_back.token_budget_total, Some(1536));
+    assert_eq!(args_back.search_term, "SimpleStruct");
+
+    let part = ConciseContext {
+        id: Uuid::from_u128(2),
+        file_path: NodeFilepath("id://dummy".to_string()),
+        canon_path: CanonPath("some::module::dummy".to_string()),
+        snippet: "fn foo() {}".to_string(),
+        type_context: Some(TypeContextInfo {
+            seed_id: Uuid::from_u128(1),
+            relation: TypeContextKind::TypeDefinitionImpact,
+            distance: 1,
+        }),
+    };
+    let result = RequestCodeContextResult {
+        ok: true,
+        search_term: "foo".to_string(),
+        top_k: 3,
+        note: Some("No indexed snippets matched `foo`.".to_string()),
+        next_steps: vec![
+            "Retry with an exact symbol.".to_string(),
+            "Use code_item_lookup.".to_string(),
+        ],
+        context: vec![part.clone()],
+        kind: ContextPartKind::Code,
+    };
+    let res_json = serde_json::to_string(&result).expect("serialize result");
+    let res_back: RequestCodeContextResult =
+        serde_json::from_str(&res_json).expect("deserialize result");
+    assert!(res_back.ok);
+    assert_eq!(res_back.search_term, "foo");
+    assert_eq!(res_back.top_k, 3);
+    assert_eq!(
+        res_back.note.as_deref(),
+        Some("No indexed snippets matched `foo`.")
+    );
+    assert_eq!(res_back.next_steps.len(), 2);
+    assert_eq!(res_back.context, vec![part]);
+    assert_eq!(res_back.kind, ContextPartKind::Code);
+
+    let missing_id_json = r#"{
+        "file_path": "id://dummy",
+        "canon_path": "some::module::dummy",
+        "snippet": "fn foo() {}",
+        "type_context": null
+    }"#;
+    assert!(
+        serde_json::from_str::<ConciseContext>(missing_id_json).is_err(),
+        "ConciseContext.id is a required tool payload identity"
+    );
+}
+
+#[test]
+fn serde_roundtrip_get_file_metadata_result() {
+    let res = GetFileMetadataResult {
+        ok: true,
+        file_path: "/tmp/file.rs".to_string(),
+        exists: true,
+        byte_len: 1234,
+        modified_ms: Some(1_700_000_000_000),
+        file_hash: Uuid::nil().to_string(),
+        tracking_hash: Uuid::new_v4().to_string(),
+    };
+    let json = serde_json::to_string(&res).expect("serialize");
+    let back: GetFileMetadataResult = serde_json::from_str(&json).expect("deserialize");
+    assert!(back.ok);
+    assert_eq!(back.file_path, "/tmp/file.rs");
+    assert!(back.exists);
+    assert_eq!(back.byte_len, 1234);
+    assert!(back.modified_ms.is_some());
+    assert_eq!(back.file_hash.len(), 36);
+    assert_eq!(back.tracking_hash.len(), 36);
+}
+
+#[test]
+fn serde_roundtrip_apply_code_edit_result() {
+    let res = ApplyCodeEditResult {
+        ok: true,
+        staged: 2,
+        applied: 0,
+        files: vec!["src/lib.rs".to_string(), "src/main.rs".to_string()],
+        preview_mode: "diff".to_string(),
+        auto_confirmed: false,
+    };
+    let json = serde_json::to_string(&res).expect("serialize");
+    let back: ApplyCodeEditResult = serde_json::from_str(&json).expect("deserialize");
+    assert!(back.ok);
+    assert_eq!(back.staged, 2);
+    assert_eq!(back.applied, 0);
+    assert_eq!(back.files.len(), 2);
+    assert_eq!(back.preview_mode, "diff");
+    assert!(!back.auto_confirmed);
+}

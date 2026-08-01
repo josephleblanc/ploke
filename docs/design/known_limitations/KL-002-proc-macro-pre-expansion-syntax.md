@@ -28,6 +28,14 @@ KL-006 covers **intentionally non-compilable** template or example sources mixed
 with valid modules. KL-002 covers **compile-valid after macro expansion** source
 that `syn` still cannot parse **before** expansion.
 
+## Distinction from [KL-007](KL-007-macro-wrapped-module-declarations.md)
+
+KL-007 covers files that parse successfully as ordinary macro invocations, but
+where important `mod` declarations are hidden inside those macro invocations.
+In that case the visitor runs, but it never sees the hidden declarations as
+`syn::ItemMod` values. KL-002 is earlier and harder: the file itself does not
+parse through `syn::parse_file`.
+
 ## Why macro skipping does not help
 
 Skipping macro bodies in the visitor is too late for this class of failure.

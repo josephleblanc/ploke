@@ -1,15 +1,5 @@
 # User Guide
 
-Status: Draft
+The user guide covers the release-facing TUI path: install, first run, workspace indexing, model and embedding selection, and common commands.
 
-## Purpose
-
-TODO: Describe what this chapter covers.
-
-## Scope
-
-TODO: Define what is in scope and out of scope for this chapter.
-
-## Notes
-
-TODO: Add key references and links.
+Ploke is early alpha software. Expect some rough edges in the UI and indexing workflows. When behavior differs from this book, prefer the live `/help` command and current source over stale notes.

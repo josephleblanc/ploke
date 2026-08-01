@@ -1,0 +1,38 @@
+?[campaign_id, max_generations, max_total_nodes, child_min, child_max, parallel_targets, parallel_cap, schedule_mode, stop_first_keep, require_keep, explore_rejected, generation_source, selection_strategy, selection_evidence, metrics_persist, score_profile, imp_enabled, imp_budget_k, oracle_mode, oracle_gate, oracle_targets, oracle_required, stop_after, observe_stale_secs, broad_max_attempts, fresh_slots, graph_nearest, timeout_secs, control_mode, debug_tools] :=
+  *eval_run_profile_policy{
+    campaign_id,
+    profile_ref_id,
+    max_generations,
+    max_total_nodes,
+    child_min,
+    child_max,
+    parallel_targets,
+    parallel_cap,
+    schedule_mode,
+    stop_first_keep,
+    require_keep,
+    explore_rejected,
+    generation_source,
+    selection_strategy,
+    selection_evidence,
+    metrics_persist,
+    score_profile,
+    imp_enabled,
+    imp_budget_k,
+    oracle_mode,
+    oracle_required,
+    stop_after,
+    observe_stale_secs,
+    broad_max_attempts,
+    fresh_slots,
+    graph_nearest,
+    timeout_secs,
+    control_mode,
+    debug_tools
+  },
+  *eval_oracle_gate{
+    campaign_id,
+    profile_ref_id,
+    gate: oracle_gate,
+    targets: oracle_targets
+  }

@@ -1,0 +1,36 @@
+{
+  "schema_version": "prototype1-checkpoint-manifest.v1",
+  "checkpoint": "F0_setup",
+  "created_by": "test",
+  "campaign_id": "checkpoint-seed-campaign",
+  "parent_id": "checkpoint-seed-parent",
+  "boundary": "campaign/profile admitted; root parent identity ready or init path prepared",
+  "requires_live_api_to_regenerate": false,
+  "files": [
+    {
+      "path": "prototype1/checkpoint.marker",
+      "sha256": "238f7f02fc30c9d6dd77200f1759dace33214428b00198120315284766dd7c21",
+      "required": true,
+      "authority_class": "fixture_marker"
+    },
+    {
+      "path": "prototype1/run-profile.toml",
+      "sha256": "755ec13d8ba72b9731b65dbb7f784fe8193586323c8f89147148f246806de10f",
+      "required": true,
+      "authority_class": "profile_config"
+    },
+    {
+      "path": "prototype1/run-profile.commitment.json",
+      "sha256": "b830b821d3ff26169e8f1dee4d4303f31eb7f1114818ae26f9ab18746b0713f7",
+      "required": true,
+      "authority_class": "profile_commitment"
+    }
+  ],
+  "db_snapshots": [],
+  "authority_surfaces": {
+    "history": [],
+    "channels": [],
+    "message_boxes": [],
+    "artifacts": []
+  }
+}

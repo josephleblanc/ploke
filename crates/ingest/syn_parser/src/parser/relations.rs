@@ -1,8 +1,10 @@
 // Import specific typed IDs AND the new category enums
 use super::nodes::{AnyNodeId, PrimaryNodeIdTrait};
 use crate::parser::nodes::{
-    AssociatedItemNodeId, EnumNodeId, FieldNodeId, ImplNodeId, ImportNodeId, ModuleNodeId,
-    PrimaryNodeId, StructNodeId, TraitNodeId, UnionNodeId, VariantNodeId,
+    AnyGenericParamId, AssociatedItemNodeId, ConstGenericParamNodeId, EnumNodeId, FieldNodeId,
+    GenericParamOwnerId, ImplNodeId, ImportNodeId, ModuleNodeId, OrdinaryTypeSourceId,
+    OrdinaryTypeTargetId, OrdinaryTypeUseId, PrimaryNodeId, StructNodeId, TraitNodeId,
+    TraitTypeSourceId, TraitTypeTargetId, TypeGenericParamNodeId, UnionNodeId, VariantNodeId,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -12,6 +14,113 @@ use thiserror::Error;
 pub enum RelationConversionError {
     #[error("Relation kind {0:?} is not applicable for ScopeKind conversion")]
     NotApplicable(SyntacticRelation),
+}
+
+/// Represents a type-safe semantic relation from a structural type source to a
+/// resolved code-graph type target.
+///
+/// Like [`SyntacticRelation`], each variant encodes an admissible subset of a
+/// Cartesian product. Set-theoretically:
+///
+/// ```text
+/// Ordinary ⊆ OrdinaryTypeSourceId × OrdinaryTypeTargetId
+/// Trait    ⊆ TraitTypeSourceId    × TraitTypeTargetId
+/// ```
+///
+/// The relation is constructed only after the resolver has proven both endpoint
+/// memberships. Failed proof belongs at the resolver boundary as unresolved or
+/// ambiguous state; it should not be represented as a broad `AnyNodeId` target
+/// inside this relation.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TypeRelation {
+    /// Ordinary type-position resolution, such as `Foo` resolving to a struct,
+    /// enum, union, type alias, or generic type parameter.
+    Ordinary {
+        source: OrdinaryTypeSourceId,
+        target: OrdinaryTypeTargetId,
+    },
+    /// Trait-position resolution, such as `impl Display for T`,
+    /// `trait T: Display`, or a bound `U: Display`.
+    Trait {
+        source: TraitTypeSourceId,
+        target: TraitTypeTargetId,
+    },
+}
+
+impl TypeRelation {
+    /// Returns the relation kind as a stable string for diagnostics or database
+    /// projection.
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Self::Ordinary { .. } => "Ordinary",
+            Self::Trait { .. } => "Trait",
+        }
+    }
+}
+
+/// Represents type-safe relations around generic parameter declarations and
+/// generic parameter type syntax.
+///
+/// These are not type-resolution edges. They describe where generic parameters
+/// are declared and which structural type occurrences appear in generic bounds,
+/// defaults, or const-generic type declarations.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum GenericRelation {
+    /// A node that may declare generic parameters contains a generic parameter.
+    ///
+    /// ```text
+    /// DeclaresParam ⊆ GenericParamOwnerId × AnyGenericParamId
+    /// ```
+    DeclaresParam {
+        source: GenericParamOwnerId,
+        target: AnyGenericParamId,
+    },
+    /// A type generic parameter has a trait-bound type occurrence, such as
+    /// `T: Display`.
+    ///
+    /// ```text
+    /// TypeBound ⊆ TypeGenericParamNodeId × TraitTypeSourceId
+    /// ```
+    TypeBound {
+        source: TypeGenericParamNodeId,
+        target: TraitTypeSourceId,
+    },
+    /// A type generic parameter has a default type occurrence, such as
+    /// `T = Vec<u8>`.
+    ///
+    /// The target is `OrdinaryTypeUseId` because defaults may be arbitrary
+    /// ordinary type syntax, not only named type-resolution sources.
+    ///
+    /// ```text
+    /// TypeDefault ⊆ TypeGenericParamNodeId × OrdinaryTypeUseId
+    /// ```
+    TypeDefault {
+        source: TypeGenericParamNodeId,
+        target: OrdinaryTypeUseId,
+    },
+    /// A const generic parameter declares the type of the const parameter, such
+    /// as `const N: usize`.
+    ///
+    /// ```text
+    /// ConstParamType ⊆ ConstGenericParamNodeId × OrdinaryTypeUseId
+    /// ```
+    ConstParamType {
+        source: ConstGenericParamNodeId,
+        target: OrdinaryTypeUseId,
+    },
+}
+
+impl GenericRelation {
+    /// Returns the relation kind as a stable string for diagnostics or database
+    /// projection.
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Self::DeclaresParam { .. } => "DeclaresParam",
+            Self::TypeBound { .. } => "TypeBound",
+            Self::TypeDefault { .. } => "TypeDefault",
+            Self::ConstParamType { .. } => "ConstParamType",
+        }
+    }
 }
 
 // ANCHOR: syntactic_relation

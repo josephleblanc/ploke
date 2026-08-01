@@ -3,10 +3,16 @@ pub mod mod_tree_construction;
 pub mod canon_resolver;
 
 pub mod backlink_imports;
+pub mod backlink_imports_spp;
+pub mod backlink_imports_spp_cfg;
 
 pub mod path_attribute;
 
 pub mod prune_unlinked_imports;
+#[cfg(feature = "typed_type_graph")]
+pub mod type_relations_v2;
+#[cfg(not(feature = "typed_type_graph"))]
+pub mod type_use_resolution;
 
 #[cfg(not(feature = "type_bearing_ids"))]
 pub mod shortest_path;

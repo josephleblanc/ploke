@@ -1,7 +1,7 @@
 #![allow(unused_must_use)]
 // Needed to get rid of proc-macro induced warning for `ExpectedData`
 
-use crate::parser::types::GenericParamNode;
+use crate::parser::types::{GenericParamNode, TypeWherePredicate};
 use derive_test_helpers::ExpectedData; // Import ExpectedData
 use ploke_core::TrackingHash;
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,8 @@ pub struct EnumNode {
     pub visibility: VisibilityKind,
     pub variants: Vec<VariantNode>,
     pub generic_params: Vec<GenericParamNode>,
+    #[serde(default)]
+    pub where_predicates: Vec<TypeWherePredicate>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
     pub tracking_hash: Option<TrackingHash>,

@@ -1,0 +1,57 @@
+campaign[count(campaign_id)] := *eval_campaign{campaign_id}
+profile[count(profile_ref_id)] := *eval_profile_commitment{profile_ref_id}
+policy[count(campaign_id)] := *eval_run_profile_policy{campaign_id}
+scheduler[count(node_id)] := *eval_scheduler_node{node_id}
+scheduler_events[count(status_event_id)] := *eval_scheduler_node_status_event{status_event_id}
+runner_requests[count(node_id)] := *eval_runner_request{node_id}
+parent_identity[count(parent_id)] := *eval_parent_identity{parent_id}
+parent_start[count(start_event_id)] := *eval_parent_start{start_event_id}
+transition_events[count(event_id)] := *eval_transition_event{event_id}
+record_refs[count(record_ref_id)] := *eval_record_ref{record_ref_id}
+harness_requests[count(request_id)] := *eval_harness_request{request_id}
+harness_diagnostics[count(request_id)] := *eval_harness_diagnostic{request_id}
+harness_submissions[count(request_id)] := *eval_harness_submission{request_id}
+agent_turns[count(turn_id)] := *eval_agent_turn{turn_id}
+model_exchanges[count(exchange_id)] := *eval_model_exchange{exchange_id}
+tool_events[count(tool_event_id)] := *eval_tool_event{tool_event_id}
+child_plans[count(plan_id)] := *eval_child_plan{plan_id}
+child_plan_children[count(child_node_id)] := *eval_child_plan_child{child_node_id}
+artifacts[count(artifact_id)] := *eval_artifact{artifact_id}
+binaries[count(binary_ref_id)] := *eval_binary_ref{binary_ref_id}
+build_events[count(build_id)] := *eval_build_event{build_id}
+invocations[count(invocation_id)] := *eval_invocation{invocation_id}
+channel_messages[count(channel_message_id)] := *eval_channel_message{channel_message_id}
+runner_results[count(result_path)] := *eval_runner_result{result_path}
+evaluations[count(evaluation_id)] := *eval_evaluation{evaluation_id}
+selection_decisions[count(decision_id)] := *eval_selection_decision{decision_id}
+continuations[count(decision_id)] := *eval_continuation_decision{decision_id}
+walk_events[count(event_id)] := *eval_walk_event{event_id}
+
+?[relation, count] := campaign[count], relation = "eval_campaign"
+?[relation, count] := profile[count], relation = "eval_profile_commitment"
+?[relation, count] := policy[count], relation = "eval_run_profile_policy"
+?[relation, count] := scheduler[count], relation = "eval_scheduler_node"
+?[relation, count] := scheduler_events[count], relation = "eval_scheduler_node_status_event"
+?[relation, count] := runner_requests[count], relation = "eval_runner_request"
+?[relation, count] := parent_identity[count], relation = "eval_parent_identity"
+?[relation, count] := parent_start[count], relation = "eval_parent_start"
+?[relation, count] := transition_events[count], relation = "eval_transition_event"
+?[relation, count] := record_refs[count], relation = "eval_record_ref"
+?[relation, count] := harness_requests[count], relation = "eval_harness_request"
+?[relation, count] := harness_diagnostics[count], relation = "eval_harness_diagnostic"
+?[relation, count] := harness_submissions[count], relation = "eval_harness_submission"
+?[relation, count] := agent_turns[count], relation = "eval_agent_turn"
+?[relation, count] := model_exchanges[count], relation = "eval_model_exchange"
+?[relation, count] := tool_events[count], relation = "eval_tool_event"
+?[relation, count] := child_plans[count], relation = "eval_child_plan"
+?[relation, count] := child_plan_children[count], relation = "eval_child_plan_child"
+?[relation, count] := artifacts[count], relation = "eval_artifact"
+?[relation, count] := binaries[count], relation = "eval_binary_ref"
+?[relation, count] := build_events[count], relation = "eval_build_event"
+?[relation, count] := invocations[count], relation = "eval_invocation"
+?[relation, count] := channel_messages[count], relation = "eval_channel_message"
+?[relation, count] := runner_results[count], relation = "eval_runner_result"
+?[relation, count] := evaluations[count], relation = "eval_evaluation"
+?[relation, count] := selection_decisions[count], relation = "eval_selection_decision"
+?[relation, count] := continuations[count], relation = "eval_continuation_decision"
+?[relation, count] := walk_events[count], relation = "eval_walk_event"

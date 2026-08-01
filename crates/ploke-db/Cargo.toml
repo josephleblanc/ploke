@@ -17,7 +17,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 itertools = { workspace = true }
 uuid = { workspace = true }
-clap = { version = "4.5.17", features = ["derive"] }
+clap = { workspace = true }
 
 # error handling
 ploke-error = { path = "../ploke-error", features = ["serde"] }
@@ -52,3 +52,4 @@ ploke-common = { path = "../common" }
 [features]
 default = []
 type_bearing_ids = []
+typed_type_graph = ["syn_parser/typed_type_graph", "ploke-transform/typed_type_graph"]

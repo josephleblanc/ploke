@@ -4,6 +4,7 @@ mod logging;
 pub mod module_tree;
 mod path_resolver;
 mod relation_indexer;
+pub mod type_resolution_v2;
 
 #[cfg(not(feature = "not_wip_marker"))]
 pub mod traversal;

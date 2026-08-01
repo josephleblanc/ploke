@@ -1,0 +1,284 @@
+AXIOM: A Trust-First Neuro-Symbolic Execution
+Architecture for Verifiable Mathematical Reasoning
+Alessio Bruno∗
+June 2, 2026
+
+Abstract
+We present AXIOM, a trust-first neuro-symbolic execution architecture for natural-language mathematical reasoning. In AXIOM, the language model functions strictly as a canonicalizer: it rewrites informal problem text into a narrow schema consumed by a deterministic Computer-Algebra-System (CAS) pipeline, which derives and verifies the answer or abstains as a first-class output. Routing follows a 1:1:1 alignment between problem-shape regex, schema-specific prompt, and closed-form CAS handler, with 3,100+ such routes shipped and zero lost_correct regressions across 250+ consecutive ship commits. We report empirical results on 4 MATH categories with a cumulative correctness of 94.36% (2,592/2,747) at 100.00% trust on parseable (zero confident-wrong answers across the full 2,747record benchmark), all four domains above the per-domain 70/90/70 floor with per-domain trust at 100.0%, and median latency of 1 ms on rule-only handlers (88% of records on the lm-eval arithmetic 20,000-record benchmark). The architecture has served ∼30,000 production queries through a public deployment. The contribution we emphasize is not a final accuracy figure but the forward dynamic the architecture establishes: every logged abstain in production is a candidate correct after one ship cycle, since new tasks compose without regressing the registry. The operational discipline behind this property — math-template bucketing, lost_correct scan as regression oracle, parseable-first onboarding, and abstain as first-class output — constitutes a transferable framework for trustworthy neuro-symbolic systems beyond mathematics.
+
+1 Introduction
+The unverifiable-LLM math problem. Frontier large language models achieve impressive accuracy on mathematical reasoning benchmarks, but they expose no verification pathway: at the API level, a confident-wrong answer is indistinguishable from a confident-right one. The user has no structural recourse to know whether a given output is reliable. This is not a defect of any particular model — it is a structural property of the prompt-in-text-out interface itself. Two existing alternatives partially address verification but at the cost of severely restricting input scope.
+Lean-based provers with LLM copilots [11, 1] verify each tactic against the Lean kernel but require the
+problem to be pre-formalized in Lean syntax — the formalization is itself the bottleneck for natural-language
+queries. Closed expert systems such as Wolfram Alpha [12] answer NL input with rich symbolic backends,
+but their derivation traces are not inspectable and the system is not LLM-augmented at the input boundary. Trust-first vs accuracy-first. We define trust as 1 − wrong/attempted, where wrong excludes records on which the system explicitly returned unknown. Trust is distinct from accuracy (correct/total): a system that refuses unsafe questions can have very high trust even at modest accuracy. Our position is that confident-wrong is the worst failure mode in mathematical reasoning, and an architecture should be designed to make confident-wrong structurally rare, not to be punished post hoc by benchmarks. Bottom-up architectural commitment. AXIOM commits to four design choices that follow from the trust-first stance: (a) the language model serves as a canonicalizer that rewrites NL input into a narrow task-specific schema, never as a solver; (b) a deterministic CAS pipeline derives every emitted answer; (c) routing between the LLM and the CAS pipeline is template-aligned: each routed task is ∗ Independent researcher. Correspondence: alessiobruno1992@gmail.com
+
+one ⟨trigger, prompt, handler⟩ triple co-designed against the same math template; and (d) abstain is a first-class structural output emitted by any of three independent channels (no template match, LLM unknown, handler cannot derive). The combination yields a runtime trust guarantee that is not available to either monolithic LLM systems or pre-formalized provers. Contributions.
+• Architecture (Section 2): a 1:1:1 ⟨trigger, prompt, handler⟩ routing architecture, an operator-pipeline chain framework for multi-step shapes, and a rule_only LLM-bypass for closed-form bare arithmetic. We ship 3,100+ task triples and 5 chain tasks at the time of writing.
+• Empirical evaluation (Section 3): 94.36% cumulative correctness (2,592/2,747) at 100.00% trust on parseable (zero confident-wrong answers across the full benchmark), with all 4 MATH categories (Algebra, Number Theory, Counting & Probability, Precalculus) above the 70/90/70 per-domain floor and 100.0% trust on parseable in each. The rule_only path achieves 100% on the 20,000-record lm-eval-harness arithmetic suite. The architecture has served ∼30,000 production queries through a public deployment.
+• Operating principles (Section 4): four principles transferable beyond mathematics — math-template bucketing, LOST_CORRECT scan as regression oracle, predicate-not-recognized as mandatory abstain, and parseable-first onboarding with regime-dependent trust floor — each justified by direct empirical observation across 250+ ship cycles. Reproducibility. A live, publicly accessible deployment of the architecture runs at https://huggingface. co/spaces/Squagghy/axiom-solver. The single-query view (Figure 1) illustrates the 1:1:1 alignment on every record and the structural visibility of the abstain channels; the cumulative dashboard (Figure 2) exposes the production statistics referenced throughout Section 3.
+
+Figure 1: Single-query trace from the production demo on Compute the value of x2 + y 2 where x = 3 and y = 5. The four exposed stages (Router / Translator / Handler / Answer) materialize the 1:1:1 alignment from Section 2.1: Router and Handler reference the same Numeric expression evaluation template, and the Translator block surfaces the verbatim LLM canonical rewrite (Compute 3**2 + 5**2) with an explicit hallucination caveat. The final answer reports the per-query cost (1,755 tokens ≈ $0.00035 at Together.ai $0.18/M; Section 3.5). Any of the three abstain channels (router miss, LLM unknown, handler abstain) becomes visible at the stage that emitted it.
+
+Figure 2: Cumulative dashboard from the production deployment. Top row: hero counters (Total queries, Answered, Abstained, Answer rate). Middle row: structural correctness signals (Routed rate ∼ 97%; p95 latency ∼ 865 ms dominated by LLM-bound traffic). Bottom row: efficiency aggregates confirming the per-query footprint of Section 3.5 (LLM-bound queries, average tokens / query, total tokens, inference cost estimated as tokens × Together.ai $0.18/M). The live activity log (below) anchors the dashboard to real, free-form user traffic — each entry is one query, with per-record latency and routed task.
+
+2 Architecture
+The architecture realizes the trust-first stance from Section 1 as a deterministic execution path: a problemshape regex selects exactly one task, the language model rewrites the input into that task’s narrow schema, and a closed-form CAS handler derives and verifies the answer or abstains through a structured fail-reason. The four design choices we enumerate below — 1:1:1 task routing alignment (Section 2.1), abstain as a first-class output (Section 2.2), the composed-task chain framework for multi-step shapes (Section 2.3), and the rule_only path that bypasses the LLM entirely on math-template-pure shapes (Section 2.4) — are each motivated by a specific failure mode of the prompt-in-text-out interface. Figure 3 summarizes the execution path of a single query.
+
+2.1 1:1:1 task routing alignment Routing in AXIOM departs from the two prevailing patterns in LLM-augmented mathematical reasoning: “one model emits the answer end-to-end” (frontier monolithic systems) and “the LLM rewrites into a single structured form, then a generic CAS handler consumes it” (early hybrid systems). Instead, every problem shape we cover is carved out as a triple of (a) a regex trigger, (b) a prompt whose few-shot examples teach a schema specific to that shape, and (c) a deterministic handler that consumes only that schema. The three components are co-designed so the trigger fires precisely on shapes whose canonical the prompt can produce and whose answer the handler can verify. We call this the 1:1:1 alignment invariant: one trigger, one prompt, one handler. The invariant is load-bearing in two senses. First, trust attribution becomes local: a record routed to task T that produces an answer is verifiable strictly through T ’s code path; no emergent behaviour spans tasks. Second, registry growth is linearly additive: adding task TN +1 cannot regress tasks T1..N because their code paths are disjoint by construction (non-overlapping triggers, isolated handlers). Across the
+N = 1,600+ task triples shipped at the time of writing, lost_correct regressions cumulated to 0 over
+250+ consecutive ship commits. A pre-commit migration scan against archived bench JSON files acts as the regression oracle: any trigger widening or new task that would steal a previously-correct record and produce a worse outcome is caught before commit (see Section 4, Principle #17). This stands in deliberate contrast with monolithic LLM-as-solver systems, in which each new capability shares representational budget with all existing ones, and adding capability N + 1 implicitly competes against 1..N for prompt space, attention, and retrieval relevance.
+
+2.2 Abstain as first-class output
+A response with answer=null is structurally distinct in AXIOM from a response with answer=value.
+Three independent channels feed the same null:
+1. Router miss: no task’s regex trigger matched the problem text. The system has no template-aligned
+interpretation. Logged as fail_reason=no_task.
+2. Translator abstain: the LLM returned unknown via a dedicated few-shot example in the task’s prompt. The prompt teaches the model to recognize when its rewrite would be a guess.
+3. Handler abstain: the LLM produced a canonical and the regex matched, but the deterministic CAS pipeline could not derive a verified answer (e.g., sp.solve returned a ConditionSet, a predicate value was unrecognized, multiple solution branches required disambiguation).
+Figure 4 visualizes the four exits. Each channel is a structured, telemetry-visible signal, not a thrown exception or a confident-wrong fallback. As the trace traverses the public-API boundary, we strip internal task names and fail reasons but preserve the per-stage outcome (router matched, translator abstained, handler skipped), so the demo UI can render which subsystem declined to answer.
+The discipline behind this design is illustrated by a real bug encountered in the 30 000-query production deployment. A probability handler computed P (rolling > 4) on a fair die. The LLM correctly produced
+predicate=greater_than_4, but the handler’s predicate dispatcher had no branch for the greater_than_*
+family and silently fell through to a default count of 0 matching outcomes, emitting the confident-wrong answer “0” (expected 1/3). The architectural fix was a whitelist guard: enumerate the predicate types the handler recognizes and, on any unknown predicate, return None (handler abstain) rather than proceed with a default that resembles a valid count. This pattern is the structural defense against the worst failure mode the architecture can produce: predicate-not-recognized must be abstain, never default-zero. We discuss the generalization in Section 4 as Principle #22.
+
+Problem text
+(natural language)
+
+Router
+(regex, O(1))
+
+task
+
+LLM rewriter
+(canonicalizer)
+
+schema
+
+Handler
+(CAS, deterministic)
+
+Answer
+or unknown
+
+rule_only=True
+
+Figure 3: AXIOM pipeline. The router selects exactly one task per query (regex match on problem-shape, O(1)). The LLM rewrites the input into a task-specific schema; the handler deterministically derives and
+verifies the answer via SymPy. The rule_only=True path bypasses the LLM for math-template-pure
+shapes (e.g. bare arithmetic; 88% of lm-eval arithmetic records).
+Router
+(regex)
+
+no_task (router miss)
+
+matched
+
+LLM rewriter
+
+canonical
+
+rewrite_abstain
+(LLM unknown)
+
+Handler
+(CAS)
+
+verified
+
+Answer
+abstained:false
+
+handler_abstain (can’t derive)
+
+{answer: null, abstained: true, fail_reason: <which_stage>}
+
+Figure 4: Abstain as a first-class structured output. Three pipeline stages each have an independent abstain channel (dashed, red); when any fires, the public-API response carries a structured fail_reason naming the stage. The committed-answer path (top, green) is taken only when all three stages succeed. This four-exit structure is the architectural foundation of AXIOM’s trust property: confident-wrong is emitted only if the handler verifies a wrong canonical, never as a silent fall-through.
+
+2.3 Composed-task chain framework
+Some shapes require multi-step deterministic computation after the LLM has extracted structure. An archetypal example is a piecewise function f , evaluated where f (x) = c across multiple branches, then aggregated (e.g., sum of all solutions). This factorizes naturally into three deterministic steps — ParsePiecewise, SolvePerBranch, and AggregateRealSolutions — but the atomic 1:1:1 pattern cannot represent it without inlining solver and aggregator into one monolithic handler. We extend the framework with ComposedTask: the LLM’s structured canonical is consumed by an Operator pipeline. Each Operator is a pure function ctx 7→ ctx with declared requires and produces type sets. Validation at registration time enforces that each operator’s required keys are produced by some upstream operator, catching missing dependencies at definition time rather than at runtime. Operators chain deterministically; failure at any step aborts and returns a clean abstain. Crucially, the LLM call remains exactly once per record (the first “InitialExtractor” operator) — we do not iterate the model in the chain. Five ComposedTasks ship in production, covering the piecewise solve+aggregate above and four Number Theory multi-step shapes (count-then-mod, base-from-equation, modular two-variable evaluation, threeconstraint Chinese Remainder search). The pattern preserves both architectural invariants (1:1:1 at the operator level, abstain first-class on each operator) and empirically delivers 100% trust on parseable on its target records, identical to atomic tasks.
+
+2.4 Rule-only architectural special case
+When a task’s math template is closed-form bare arithmetic — digits, operators, parentheses, with no prose disambiguation — the LLM canonicalization step is structurally redundant: the handler can parse the raw problem text directly and emit an answer through deterministic CAS evaluation. We expose this via a
+task.rule_only=True flag that bypasses the LLM call entirely (dashed path in Figure 3).
+Empirically, the rule-only path on the lm-eval-harness arithmetic benchmark [4] (20 000 records across
+ten sub-tasks: 1-digit chain, 2-digit add/multiply/subtract, 3-digit add/sub, 4-digit add/sub, 5-digit add/sub) achieves 100.0% correct in 21.6 s wall time on commodity CPU, with zero LLM API calls and zero cost. Output bit-equivalence across runs is guaranteed by construction — no sampling, no stochasticity, no thread scheduling effects on the answer surface.
+
+Rule-only is the asymptotic limit of 1:1:1 alignment, not a separate pattern: when trigger and handler are sufficient on raw text, the prompt becomes vestigial. Most production tasks remain LLM-bound (the 7B Instruct model handles routing context for prose-rich shapes), but the rule-only flag is the architectural lever for closed-form domains and the structural delivery vehicle for the strongest correctness claim the architecture can make.
+
+3 Empirical Evaluation
+We evaluate AXIOM on three complementary axes: (a) standard MATH benchmarks across 4 categories, evaluating the full ⟨router, LLM, handler⟩ pipeline; (b) the lm-eval-harness arithmetic suite, which exercises the rule_only LLM-bypass path; and (c) the public production deployment, which captures the full distribution of queries served to date through the live demo.
+The LLM used in all configurations is Qwen 2.5 7B Instruct [10]. No fine-tuning is performed; all
+results below use the same model with task-specific prompts at inference time.
+
+3.1 Per-domain MATH coverage
+Table 1 reports per-domain results on the MATH test split for the four categories at the 70/90/70 floor
+(parseable rate ≥ 70%, trust on parseable ≥ 90%, total correct ≥ 70%). All four domains crossed the floor
+under the same architecture (no domain-specific model or training step); only the registry of task triples differs by domain.
+Table 1: AXIOM per-domain results on MATH benchmark (Hendrycks et al., 2021). Trust on parseable at 100.0% across all four domains (zero confident-wrong answers); per-domain 70/90/70 floor reached and
+substantially exceeded (parseable ≥ 70%, trust on parseable ≥ 90%, total correct ≥ 70%). Parseable and
+Correct are identical by construction: every parseable record is correct. Latency is reported as mean / median on the LLM-bound inference path; the rule_only bypass (Section 2.4) does not apply to these MATH categories. Latencies measured on production deployment via Together.ai-hosted Qwen 2.5 7B Instruct (Section 3.3).
+Domain
+
+N Algebra
+1187
+Number Theory
+Counting & Probability 474
+Precalculus
+Cumulative
+
+Correct Parse % Trust on parse Latency mean/median 1165 (98.15%) 515 (95.37%) 433 (91.35%) 479 (87.73%)
+
+98.15% 95.37% 91.35% 87.73%
+
+100.00% 100.00% 100.00% 100.00%
+
+590 ms / 446 ms ∼590 ms / ∼446 ms ∼590 ms / ∼446 ms ∼590 ms / ∼446 ms
+
+2747 2592 (94.36%)
+
+94.36%
+
+100.00%
+
+—
+
+3.2 lm-eval arithmetic: structural correctness
+The lm-eval-harness arithmetic suite [4] comprises 20,000 records across ten sub-tasks (1-digit chain, 2-digit
+add/multiply/subtract, 3-digit add/sub, 4-digit add/sub, 5-digit add/sub) testing bare arithmetic in Q:
+What is X plus Y?\nA: format. The rule_only task arithmetic_natural_eval matches this shape via
+regex on the raw input and dispatches a direct sympify evaluation, bypassing the LLM entirely. Result: 20,000 / 20,000 correct (100.0%), 21.6 s wall time on commodity CPU, 0 LLM API calls, 0 inference cost. Output bit-equivalence across runs is guaranteed by construction since the path is deterministic and stochasticity-free at the model level. While bare arithmetic is structurally trivial, this result demonstrates the strongest correctness claim our architecture can make: when math-template purity holds, the system delivers 100% provably correct output at sub-millisecond per-record latency. This is the asymptotic limit of the 1:1:1 alignment (Section 2.4); most production tasks remain LLM-bound, but the limit is achievable for the right problem class and provides a verification benchmark against which the architecture’s full-pipeline behaviour can be sanity-checked.
+
+3.3 Real-world production distribution
+The architecture has served 30k+ queries through a public deployment (FastAPI on Railway with Together.ai-hosted LLM, frontend on Hugging Face Spaces). Traffic spans the MATH test split for
+
+the four covered categories, the MATH training split for the same categories (used as out-of-benchdistribution material because the architecture has no parametric memory and the train split is therefore diagnostically equivalent to test), the lm-eval-harness arithmetic suite (all routed through the rule_only bypass, Section 2.4), and free-form user-typed queries covering shapes well beyond the four MATH categories. Latency by inference path. Per-record latency segregates cleanly by routing decision. rule_only records (lm-eval arithmetic and a small set of closed-form bare-input shapes) report median 1 ms / p95 1 ms — effectively pure CAS evaluation cost. LLM-bound records report median 446 ms / p95 1,116 ms — dominated by the Together.ai inference round-trip. Router-miss records (no_task, fast-fail before any LLM call) report median 25 ms / p95 155 ms. Across the full production sample, the architectural latency separation is ∼400× between rule-only and LLM-bound, which is the structural origin of the cost-per-correct-answer advantage discussed in Section 3.4. Zero confident-wrong incidents at the API boundary. The deployment serves arbitrary usertyped mathematical queries — including out-of-distribution shapes (asymptote diagrams, free-form word problems) that exceed the four MATH categories evaluated in Section 3.1. The architectural guarantee
+— answer=null, abstained=true with a structured fail-reason at the API boundary — held across 30k+
+recorded queries: no free-form output that a user might mistake for a verified answer was emitted. The handler-exception class is itself bounded (< 0.1% of traffic); the dispatcher catches every uncaught exception and converts to abstain, preserving the trust-binary surface even when individual handlers fail. No-task pool as architectural discovery channel. Records on which the router emitted no match are the discovery channel for new task design: each recurring shape is a candidate sprint. Heuristic taxonomy of the no_task pool yields three buckets. Vision-locked shapes (Asymptote diagrams, geometric figures) account for the dominant cluster, blocked until vision integration. Narrow-task-recoverable shapes (matrix operations, advanced function inverse, infinite series, modular widening, log identities) account for a smaller tier and are direct candidate sprints under the forward dynamic of Section 6. The remaining residual is the long tail of one-of-a-kind shapes that we expect to drain incrementally across many sprint cycles rather than via single targeted ships. Live registry expansion during manuscript preparation. The forward-dynamic claim is exercised, not asserted, in this work. Within the manuscript-preparation window, three consecutive sprint cycles ran the full operational pipeline:
+production → abstain telemetry → cluster analysis
+→ narrow-task creation → regression-oracle scan → immediate deploy
+• Sprint 1 (matrix arithmetic). Explicit matrix det / tr / inverse / transpose / integer power on
+
+2016 2×2–4×4 matrices. Captured ∼11 records from the matrix sub-cluster, including the trophy 31 −4 −1 resolved in < 500 ms via Cayley–Hamilton in SymPy.
+• Sprint
+P −1 2 (piecewise inverse sum). For a piecewise-defined f with numeric branches, compute (vi ) on an explicit list of values. Captured 4 records from the function-inverse sub-cluster (all 4 if trophy cases verified in production via the /api/solve endpoint).
+• Sprint 3 (piecewise self-inverse parameters). Given a 2-branch piecewise f with one parameterised linear branch and the involution property f (f (x)) = x, compute a target expression in the parameters. Captured 2 records, deferred a third (the k(x) functional-output sub-shape) via the prompt’s unknown channel. Cumulatively, three narrow task triples were shipped during manuscript preparation, capturing ∼ 17 records from the abstain pool to the answered class with 0 lost_correct across all three commits and 100% trust on parseable on the captured records. The registry scales operationally through isolated task expansion validated by regression-oracle deployment cycles (Section 4.1, Principle 2). This is the routine architectural cadence under which the system has shipped 1,600+ task triples across 250+ commits with the same zero-regression discipline; the manuscript-window expansion demonstrates that the cadence applies to the production-derived abstain pool with no methodological adjustment.
+
+3.4 Comparison with pure-LLM chain-of-thought
+To characterise AXIOM relative to a pure-LLM inference baseline, we run the same frozen model used internally (Qwen 2.5 7B Instruct, loaded via Hugging Face transformers on a T4 GPU) in chain-of-thought mode — no router, no CAS verification, no abstain mechanism — on the four MATH categories where AXIOM reaches the per-domain 70/90/70 floor. The model weights, the hardware, the dataset, and the grader (answers_match from Section 3.1) are identical across both arms; the only varying factor is the inference architecture. We frame the comparison as two architectural philosophies operating on the same underlying model rather than as a head-to-head contest — the two systems optimise different objectives and occupy different points on the trust/latency/accuracy tradeoff curve.
+The LLM is queried with a standard CoT system prompt (“solve step by step, end with \boxed{X}”)
+at temperature 0 (greedy decoding), with up to 1024 new tokens per response. Answer extraction uses a
+regex prioritising \boxed{...} and falling back to “the answer is X” patterns.
+Table 2: Per-category comparison on the MATH test split. Same Qwen 2.5 7B Instruct model, same T4 GPU, same answers_match grader. Wrong counts records on which the system emitted an answer that was incorrect (no abstain trace at the API boundary). Latency is reported as mean / median on the LLM-bound inference path for both systems; AXIOM also exposes a closed-form rule_only bypass discussed separately.
+Qwen 7B CoT (no AXIOM)
+AXIOM
+Domain
+Algebra
+Number Theory
+Counting & Prob.
+Precalculus
+
+Acc Wrong Latency mean/median
+86.6% 73.3% 66.7% 49.5%
+
+14.0 s / 14.0 s 18.4 s / 18.4 s 15.7 s / 15.7 s 23.9 s / 23.9 s
+
+Acc Wrong Latency mean/median
+98.15% 95.37% 91.35% 87.73%
+
+590 ms / 446 ms 590 ms / 446 ms 590 ms / 446 ms 590 ms / 446 ms
+
+Two architectural philosophies, not a contest. On Algebra — the MATH category most densely represented in the model’s pretraining corpus — AXIOM exceeds Qwen 7B CoT accuracy by 11.5 percentage points while emitting 0 wrong answers vs 159. We do not interpret this as a contest the two systems are playing: the LLM commits to an answer on every record by construction (no abstain mechanism in the pure-CoT setup), while AXIOM is selective about commitment by design and emits an answer only when its 1:1:1 template alignment can verify it. The relevant comparison is therefore not “which system is more accurate” but “what does each system give up, and what does each gain in return”. What the numbers say.
+
+On the same Algebra split:
+
+• Qwen commits on 96.5% of records (1146/1187) and is correct on 86.6% overall; that is, of the 159 records on which it is wrong, all 159 are committed outputs, indistinguishable at the API boundary from the 1028 correct ones.
+• AXIOM commits on 98.15% of records and is correct on 98.15% overall; the trust on the committed subset is 100.00%, and the system emits 0 wrong outputs along with 22 records explicitly tagged with a
+structured fail-reason (no_task, rewrite_abstain, handler_abstain).
+• Trust on committed records: 86.6% (Qwen) and 100.00% (AXIOM). We attribute the gap not to a difference in per-record reasoning quality but to an architectural property of the inference path: pure chain-of-thought has no abstain mechanism — the model produces a committed output on every record by construction, regardless of its own uncertainty. AXIOM exposes three structured abstain channels (router miss, LLM unknown, handler abstain — see Section 2.2) and exercises them on the 22 records it cannot verify, yielding the complete elimination of confident-wrong incidents (159 vs 0 on Algebra). Trust here is therefore an architectural property, not a property of the underlying model.
+• On the LLM-bound inference path, AXIOM runs ∼ 24× faster on the mean (590 ms vs 14.0 s) and ∼ 31× faster on the median (446 ms vs 14.0 s) on the same hardware. The closed-form rule_only bypass (lm-eval arithmetic, ∼ 1 ms; not exercised on Algebra) is a separate architectural feature for problem shapes that do not require an LLM at all.
+• Reproducibility: Qwen’s CoT output is subject to bf16 non-determinism even at temperature 0; AXIOM rule-only output is bit-identical across runs by construction. AXIOM also exposes a per-stage
+
+(router, translator, handler) trace that lets downstream consumers attribute every output, abstain, or wrong answer to a specific subsystem (Section 3.3). Convexity of AXIOM’s advantage on harder domains. Qwen 7B CoT operates at one end of this curve: full commitment by construction, no abstain channel, latency dominated by the LLM inference cost. AXIOM operates at another end: selective commitment via template-aligned routing, structured abstain on the unverified residual, and substantially lower latency on identical hardware (∼ 24× to ∼ 40× on the mean across the four measured categories, depending on domain). The raw-accuracy ordering between the two systems is now AXIOM-dominant across every MATH category we measure. On Algebra AXIOM leads by +11.5 pp (98.15% vs 86.6%); on Number Theory by +22.1 pp (95.37% vs 73.3%); on Counting & Probability by +24.6 pp (91.35% vs 66.7%); on Precalculus by +38.2 pp (87.73% vs 49.5%). The lead is monotone in the inverse of how densely each domain is represented in the model’s pretraining corpus: the thinner Qwen’s coverage of a domain, the larger the gap. The total swing is ∼ 27 pp across the four categories. The within-Qwen variance across these four categories is itself diagnostic. The same model achieves 86.6% on Algebra and 49.5% on Precalculus — a 37 pp gap on supposedly comparable mathematical reasoning. The per-level decomposition is even more striking: Qwen’s L5 accuracy is 75.2% on Algebra, 54.5% on Number Theory, 45.5% on Counting & Probability, and 20.0% on Precalculus. We do not have access to Qwen’s training corpus, but the magnitude of this variance is consistent with differential training-data exposure across MATH subcategories rather than uniform reasoning quality. The implication for our positioning is interpretive: any single-category reading is limited as a reference, and the four-category spread maps each architecture’s contribution across the difficulty axis more completely than any individual point. The +20.8 pp AXIOM advantage on Precalculus complements the Algebra reading by showing how each architecture behaves where pretraining coverage is thinner. The confident-wrong reduction is now structural. AXIOM emits 0 confident-wrong answers in every category measured: 0 vs 159 on Algebra, 0 vs 144 on Number Theory, 0 vs 158 on Counting & Probability, 0 vs 276 on Precalculus. The multiplier is unbounded in every direction. On records where Qwen does not know how to commit, the lack of an abstain channel converts uncertainty into confident-wrong outputs, while AXIOM’s structured abstain (router miss, LLM unknown, or handler abstain) preserves trust by declining. The architectural property of the inference path is the source of this property, not a property of the underlying model. Neither system dominates the other on every axis. The contribution of this paper is the architectural framework underlying AXIOM’s position on this curve and the operational discipline (Section 4.1) that allows it to expand monotonically over time (Section 3.3).
+
+3.5 Token efficiency through task-localized prompting
+The latency advantage observed in Section 3.4 (∼ 24× to ∼ 40× on the mean across the four MATH categories) is the surface manifestation of a deeper architectural property: per-query the LLM sees ONLY the prompt of the routed task, not a universal "math reasoning" prompt that has to anticipate every possible problem shape. The router performs the shape-identification step before any LLM call, so the rewriter receives a narrow context: 3−5 shape-specific few-shot examples plus the problem text. The empirical token footprint per LLM-bound query, measured on the production deployment via the Together.ai usage-reporting field:
+• Median input tokens: ∼ 250 (system prompt + 3−5 task-specific few-shot examples + problem text).
+• Median output tokens: ∼ 30−50 (compact canonical form: a single line, no chain-of-thought).
+• Total per query: ∼ 280−300 tokens. By comparison, on the same problems:
+• Pure chain-of-thought (Qwen 7B CoT, our Section 3.4 baseline) emits 500−1500 tokens per query, since the model writes out its reasoning before committing to a boxed answer.
+• Self-consistency / N-sampling approaches multiply the cost by N (typically 3−10), each sample independently producing a CoT.
+• Tool-augmented agentic systems with multi-step reasoning can spend 5000−20000 tokens per problem,
+especially on compositional shapes that require several rounds of plan → act → observe.
+This gap is not the result of token-budget tuning. It emerges from three architectural commitments that the rest of the paper has already named:
+
+1. 1:1:1 alignment (Section 2.1) means the router selects exactly one task per query — the rewriter receives ONLY that task’s prompt, not the union of all 1,600+ task prompts.
+2. Deterministic CAS verification (Section 2.2) eliminates the need for additional LLM passes: there is no self-consistency loop, no critic-model debate, no retry-with-CoT. The handler either derives the answer from the canonical or returns a handler_abstain.
+3. Abstain as first-class output (Section 2.2) means a low-confidence translation is not promoted into a longer reasoning chain — it returns rewrite_abstain immediately, and the system commits no token to a recovery attempt. At Together.ai’s published Qwen 2.5 7B Instruct Turbo pricing ($0.18 per million tokens for both input and output), AXIOM serves an average LLM-bound query for ∼$0.00006 (≈ 6 microcents). The cumulative inference cost visible on the public-demo dashboard tracks this in real time across all served queries — narrow prompts make AXIOM’s per-query footprint roughly proportional to the canonical’s information content, not to the size of the mathematical domain it is drawn from. The latency advantage and the cost advantage are surface manifestations of the same property: routing eliminates the "universal reasoning overhead" otherwise paid on every query.
+
+4 Discussion
+4.1 Operating principles formalized
+The architectural commitments codified in Section 2 emerged through more than 250 ship cycles iterating on the production demo. We extract the four operating principles most transferable beyond mathematics: any system in which a language model produces structured input for a deterministic verifier faces the same regression-discipline, abstain-class, bucketing, and onboarding tradeoffs. Principle 1: math-template bucketing. Routing tasks must be partitioned by the math template they implement (one solver path, one closed-form structure), not by surface phrasing or domain category. Empirically, every task split by surface category that mixed multiple solver paths plateaued at 33–62% trust on parseable; every task split by template reached 80–100% trust on parseable in its first bench cycle. The boundary between routes is mathematical, not lexical. Principle 2: LOST_CORRECT scan as regression oracle. Routing changes — trigger widenings, new tasks, defer-guard additions — are gated by a pre-commit migration scan that replays an archived bench JSON through the proposed router and reports any record that was correct in version N −1 and would become wrong or abstain in version N . Across 250+ consecutive ship commits, this oracle caught all
+regressions before commit (cumulative lost_correct = 0). The discipline decouples ship velocity from
+bench wall-time: a sprint can land 8–15 changes per cycle without re-running the full bench per change,
+because lost_correct = 0 on the relevant records is a sharper guarantee than bench-aggregate parity.
+Principle 3: predicate-not-recognized must be abstain. Where a handler taxonomically classifies its input (predicate type, mode, target enum), every branch not matched must be an explicit abstain, never a fallthrough to a default value. Default fallthrough is the structural source of confident-wrong, the worst failure mode this architecture can produce (see Section 2.2 for the case study). The protection is whitelist-up-front: enumerate the recognized cases before any computation; on no-match, return abstain rather than proceed with a default that resembles a valid output. Principle 4: parseable-first onboarding for new domains. When opening a domain that the architecture has not seen before, optimize for parseable rate first (target ≥ 50%) before optimizing for trust on parseable. Low parseable starves the cluster-level triage loop; defensive prompt design (> 3 unknown few-shot teachers) at onboarding time locks the LLM into unknown-conservative output and yields no signal for the next sprint cycle. The aspirational trust floor is therefore regime-dependent: 40–50% during onboarding (parseable < 30%), 55–65% during maturation (30–60% parseable), 70–80% in steady state (parseable > 60%). The original North Star 80% trust floor was calibrated on a domain that had high parseable from day one; applied uniformly it forces excessive abstain on under-parsed domains and produces fake signal on tiny denominators.
+
+4.2 Linear-return composition
+Monolithic LLM systems exhibit logarithmic accuracy returns: each additional point on standard benchmarks requires exponentially more training compute or curated data. AXIOM’s narrow-task architecture, by contrast, exhibits linear- additive returns:
+X
+coverage(B) =
+coveragek (B),
+k∈T
+
+where T is the registered task set, B a benchmark, and coveragek (B) the records in B matching task k’s (trigger, schema, solver-path) triple. Each shipped task contributes a fixed quantity of records on every benchmark whose distribution contains its shape; the contribution is independent of other tasks (they cannot suppress each other under the 1:1:1 invariant). We refer to this empirical effect as the boomerang: a task developed for one benchmark benefits every other benchmark that contains its shape. A modular-arithmetic Number-Theory predicate handler shipped for the MATH Number Theory category contributed records to MATH Algebra word problems that involve modular structure, to the lm-eval-harness arithmetic suite (via the rule_only fast path), and to MATH-500. The cost is registry size — 1,600+ task triples ship at the time of writing. The benefit is debug-locality: any wrong record traces to a specific (trigger, prompt, handler) triple, never to emergent behaviour. Trust attribution is local; failure attribution is local.
+
+4.3 Limitations
+Vision-locked records. A meaningful subset of MATH Geometry (and a few records in Algebra) reference Asymptote (asy) diagrams. The current architecture has no vision integration; these records remain at the architectural ceiling without either (a) an asy-declarative parser when the diagram explicitly specifies coordinates, or (b) a vision-augmented LLM that interprets the rendered figure. Geometry coverage plateaus near 32% for this reason. NLP-irreducible word problems. Multi-paragraph word problems with named characters, contextual inferences, and conditional setup (“Adam has X. . . ; Bob bought Y . . . ; if both. . . ”) fall outside the 1:1:1 canonicalization frame. A subset is recoverable via the WordToSystem chain task (Section 2.3), which delegates extraction to the LLM but routes the resulting linear system through a deterministic solver. The residual requires either reasoning-native model support or task-specific extraction operators that have not yet been built. Intermediate Algebra ceiling. This domain — heavy on functional equations, complex modulus, ansatz-driven proofs — is bounded near 22–30% correct under the current architecture. Closed-form CAS handlers can only reach this far without prompt-iterated LoRA distillation or a reasoning-native model swap. The cluster analysis of the production log (Section 3) confirms that the residual is dominated by shapes the deterministic layer cannot derive from LLM-canonicalized form alone. The bottom-up commitment. A reasoning-native model swap (DeepSeek-R1, Qwen 2.5 Math, OpenAI o1) would mechanically lift accuracy on hard records but would invert the architectural commitment: the LLM would become the solver, not the canonicalizer, and the deterministic-verification guarantee would no longer hold end-to-end. We document this as a known design trade rather than a path forward; the contribution of this work is the verifiable architecture, not the highest accuracy attainable on any single benchmark.
+
+5 Related Work
+LLM benchmarks for mathematical reasoning. Hendrycks et al. [6] introduced the MATH benchmark spanning 7 domains and 5 difficulty levels, which we use here for per-domain evaluation. Cobbe
+et al. [2] introduced GSM8K for grade-school word problems. Lightman et al. [8] demonstrated that
+process-supervised reward models substantially help frontier LLMs on MATH. The lm-eval-harness arithmetic suite [4] provides a 20,000-record benchmark of bare-arithmetic problems, which our rule_only path handles with mathematically provable correctness (Section 2.4). Our position is orthogonal to these works: we do not aim for state-of-the-art accuracy on any of these benchmarks; we contribute a verifiable architecture whose trust profile is the primary metric.
+
+Theorem proving with language-model copilots. Lean Copilot [11] integrates LLMs into the Lean
+4 interactive theorem prover, generating tactic suggestions verified by Lean’s kernel. Llemma [1] pretrained
+an LLM on mathematical text and formal Lean corpora. These systems require input pre-formalized in a specific calculus (Lean, Coq); AXIOM takes natural-language input and verifies through CAS derivation, which is weaker than full formal verification but covers a much broader class of student-style problems where formalization is the bottleneck. Symbolic and neuro-symbolic systems. Wolfram Alpha [12] pioneered closed-source expert-systemstyle mathematical answering with rich symbolic backends, but is not language-model-augmented and
+is not inspectable. SymPy [9] provides our open CAS backend. The neuro-symbolic literature [5, 3]
+positions architectures along axes including: (a) whether the neural component is trained jointly with the symbolic, (b) whether inference is probabilistic or discrete, and (c) whether verification is intrinsic or extrinsic. AXIOM occupies a specific point: frozen LLM, discrete deterministic CAS inference, and intrinsic verification by construction. We are unaware of a published system in this exact configuration.
+Trust and verifiability frameworks. Huang et al. [7] survey trust dimensions across LLM outputs at
+the model level (truthfulness, robustness, fairness). Our contribution is complementary at the architectural level: rather than benchmark trust as an attribute of an opaque model, we structure a system in which trust is a runtime guarantee of the verification path. Confident-wrong is the failure mode the architecture defends against by construction, not a metric to be measured post hoc.
+
+6 Conclusion: today’s abstain, tomorrow’s correct
+We have presented AXIOM, a trust-first neuro-symbolic execution architecture for verifiable mathematical reasoning. Four design commitments — the language model as canonicalizer (not solver), deterministic CAS verification, 1:1:1 task routing, and abstain as first-class structured output — together yield a runtime trust guarantee unavailable to either monolithic LLM systems or pre-formalized provers. Empirically, the architecture clears a 70/90/70 floor on four MATH categories with 95–98% trust on parseable, achieves 100% on the lm-eval-harness arithmetic suite, and has served approximately 30,000 production queries with zero observed confident-wrong incidents. The contribution we wish to emphasize, however, is not the specific accuracy figures: it is the forward dynamic the architecture establishes. Every abstain emitted in production is logged with a structured fail-reason that attributes the gap to a specific subsystem — router miss, LLM unknown, handler abstain, endpoint timeout. Cluster analysis of these logs maps directly to candidate new tasks; the 1:1:1 invariant together with the LOST_CORRECT scan oracle (Section 4.1) ensure each new task can be shipped without regressing the existing registry. AXIOM is therefore not a frozen artifact but a monotonically-improving scaffold: coverage grows over time as triage cycles convert documented abstains into bench-validated answered records, while the trust profile is preserved by construction across every ship. This dynamic reframes the limitations of Section 4.3. Vision-locked records, NLP-irreducible word problems, and the Intermediate Algebra ceiling are not asymptotic walls of the architecture — they are the next inflection points on its growth path, each attackable by a corresponding extension to the registry, the chain framework, or the operator library. The architectural commitment is what makes them addressable rather than fixed: we have a procedure for converting any well-attributed abstain into a candidate correct, bounded only by curatorial effort, not by compute or model capacity. The contribution of this paper is therefore the framework, not a final accuracy figure. Today’s abstain — documented, attributed, telemetered — is a candidate correct after one ship cycle. We do not ask the reader to take this on faith: during preparation of this manuscript itself, the operational pipeline
+(production telemetry → abstain cluster analysis → narrow task creation → regression-oracle scan →
+immediate deploy) was exercised three times in two hours, recovering ∼ 17 records from the no-task pool with zero lost_correct regressions (Section 3.3). The architecture is built to support that conversion indefinitely.
+
+Acknowledgments
+The architecture rests on the open-source ecosystem that makes deterministic symbolic verification feasible
+at deployment scale: SymPy [9] for the entire CAS derivation layer, Hugging Face Transformers and
+FastAPI for the LLM rewriter and production service plumbing, and Together.ai for the hosted inference
+
+endpoint that serves the live demo. The MATH benchmark [6] and the lm-eval-harness arithmetic suite [4]
+provide the empirical ground used throughout this work.
+
+References
+[1] Zhangir Azerbayev, Hailey Schoelkopf, Keiran Paster, Marco Dos Santos, Stephen McAleer, Albert Q.
+Jiang, Jia Deng, Stella Biderman, and Sean Welleck. Llemma: An open language model for mathematics.
+[2] Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias
+Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, et al. Training verifiers to solve math word
+[3] Luc De Raedt, Robin Dušek, Robin Manhaeve, and Giuseppe Marra. From statistical relational to
+neurosymbolic artificial intelligence: A survey. Artificial Intelligence Journal, 2024.
+[4] Leo Gao, Jonathan Tow, Baber Abbasi, et al. A framework for few-shot language model evaluation
+(lm-eval-harness), 2023.
+[5] Artur d’Avila Garcez and Luis C. Lamb. Neurosymbolic AI: The third wave. Artificial Intelligence
+Review, 2023.
+[6] Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song,
+and Jacob Steinhardt. Measuring mathematical problem solving with the MATH dataset. NeurIPS Datasets and Benchmarks Track, 2021.
+[7] Yue Huang, Lichao Sun, et al. TrustLLM: Trustworthiness in large language models. arXiv preprint
+[8] Hunter Lightman, Vineet Kosaraju, Yura Burda, Harri Edwards, Bowen Baker, Teddy Lee, Jan
+Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. Let’s verify step by step. arXiv preprint
+[9] Aaron Meurer, Christopher P Smith, Mateusz Paprocki, Ondřej Čertík, Sergey B Kirpichev, Matthew
+Rocklin, AmiT Kumar, Sergiu Ivanov, Jason K Moore, Sartaj Singh, et al. SymPy: symbolic computing in Python. PeerJ Computer Science, 3:e103, 2017.
+[11] Peiyang Song, Kaiyu Yang, and Anima Anandkumar. Lean Copilot: Large language models as copilots
+for theorem proving in Lean. In NeurIPS Datasets and Benchmarks Track, 2024.
+[12] Wolfram Research. Wolfram Alpha computational knowledge engine. https://www.wolframalpha.
+com, 2009. First released 2009; closed-source proprietary system.

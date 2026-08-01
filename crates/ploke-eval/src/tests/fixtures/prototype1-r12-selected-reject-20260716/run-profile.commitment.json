@@ -1,0 +1,7 @@
+{
+  "schema_version": "prototype1-run-profile-commitment.v1",
+  "profile_path": "/home/brasides/.ploke-eval/campaigns/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301/prototype1/run-profile.toml",
+  "sha256": "7a92bef48096e563b4b1287207a006b320029f0bf88ca5314caa102900340275",
+  "source_path": "/home/brasides/.ploke-eval/profiles/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301.toml",
+  "admitted_at": "2026-07-17T01:54:30.108+00:00"
+}

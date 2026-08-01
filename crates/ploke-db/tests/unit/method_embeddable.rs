@@ -24,7 +24,7 @@ fn method_with_vector_join_returns_non_empty_vector() {
     use ploke_core::embeddings::{
         EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
     };
-    use ploke_db::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
+    use ploke_db::multi_embedding::db_ext::EmbeddingExt;
     use std::ops::Deref;
 
     let db = fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL)
@@ -376,9 +376,7 @@ fn method_fixture_count_nonzero() {
 // Phase 1: METHOD_NODE_ANCESTOR_RULE + embeddable set union tests
 // ============================================================================
 
-use ploke_db::multi_embedding::{
-    db_ext::METHOD_NODE_ANCESTOR_RULE, hnsw_ext::HnswExt, schema::EmbeddingSetExt,
-};
+use ploke_db::multi_embedding::{db_ext::METHOD_NODE_ANCESTOR_RULE, hnsw_ext::HnswExt};
 
 /// Phase 1 validation test: Verify METHOD_NODE_ANCESTOR_RULE is well-formed CozoScript.
 ///
@@ -723,8 +721,6 @@ fn search_similar_for_set_finds_method_node() {
     let query_vector: Vec<f32> = test_vector.iter().map(|&v| v as f32).collect();
 
     // Attempt to search for the method node
-    // Note: Currently this will likely fail because search_similar_for_set uses
-    // ANCESTOR_RULES_NOW which doesn't include METHOD_NODE_ANCESTOR_RULE
     let search_result = db.deref().search_similar_for_set(
         &embedding_set,
         ploke_db::NodeType::Method,

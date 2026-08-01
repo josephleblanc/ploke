@@ -12,6 +12,7 @@ use syn_parser::parser::types::TypeNode;
 use syn_parser::parser::{graph::CodeGraph, nodes::TypeDefNode, types::VisibilityKind};
 use syn_parser::resolve::RelationIndexer;
 use syn_parser::resolve::module_tree::ModuleTree;
+use syn_parser::resolve::type_resolution_v2::resolve_type_relations_after_tree;
 use syn_parser::utils::LogStyle;
 
 // ---- local imports ----
@@ -24,6 +25,7 @@ use crate::error::TransformError;
 // -- transforms
 use consts::transform_consts;
 use edges::transform_relations;
+use edges::transform_type_relations;
 use enums::transform_enums;
 use impls::transform_impls;
 use imports::transform_imports;
@@ -35,6 +37,7 @@ use structs::transform_structs;
 use tracing::instrument;
 use traits::transform_traits;
 use type_alias::transform_type_aliases;
+use type_graph::transform_type_graph_edges;
 use type_node::transform_types;
 use unions::transform_unions;
 
@@ -63,6 +66,7 @@ mod type_alias;
 mod unions;
 
 // -- types --
+mod type_graph;
 mod type_node;
 
 // -- primary node transforms
@@ -128,18 +132,23 @@ pub fn transform_parsed_graph(
     parsed_graph: ParsedCodeGraph,
     tree: &ModuleTree,
 ) -> Result<(), TransformError> {
-    // ANCHOR: transform_parsed_graph_methods
+    let type_relation_report =
+        resolve_type_relations_after_tree(&parsed_graph, tree).map_err(|err| {
+            TransformError::Transformation(format!("typed type relation resolution failed: {err}"))
+        })?;
+
     let code_graph = parsed_graph.graph;
     let crate_context = parsed_graph
         .crate_context
         .expect("Invariant: All Code Graphs must have a Crate Context");
 
+    tracing::trace!("{}: Starting", "type_graph_edges".log_step());
+    transform_type_graph_edges(db, &code_graph)?;
     tracing::trace!("{}: Starting", "types".log_step());
     transform_types(db, code_graph.type_graph)?;
     tracing::trace!("{}: Starting", "functions".log_step());
     transform_functions(db, code_graph.functions, tree)?;
 
-    //  TODO: Refactor CodeGraph to split these nodes into their own collections.
     tracing::trace!("{}: Starting", "defined_types".log_step());
     transform_defined_types(db, code_graph.defined_types)?;
 
@@ -159,12 +168,13 @@ pub fn transform_parsed_graph(
     transform_imports(db, code_graph.use_statements)?;
     tracing::trace!("{}: Starting", "relations".log_step());
     transform_relations(db, code_graph.relations)?;
+    tracing::trace!("{}: Starting", "type_relations".log_step());
+    transform_type_relations(db, &type_relation_report)?;
 
     tracing::trace!("{}: Starting", "crate_context".log_step());
     transform_crate_context(db, crate_context)?;
 
     Ok(())
-    // ANCHOR_END: transform_parsed_graph_methods
 }
 
 #[instrument(skip_all)]
@@ -194,8 +204,9 @@ fn transform_defined_types(
 
 #[cfg(test)]
 mod tests {
-    use cozo::{Db, MemStorage};
+    use cozo::{Db, MemStorage, ScriptMutability};
     use ploke_test_utils::test_run_phases_and_collect;
+    use std::collections::BTreeMap;
     use syn_parser::parser::ParsedCodeGraph;
 
     use crate::{error::TransformError, schema::create_schema_all};
@@ -226,6 +237,21 @@ mod tests {
         });
 
         transform_parsed_graph(&db, merged, &tree)?;
+
+        let resolved_type_rows = db.run_script(
+            r#"?[source_id, target_id] :=
+                *type_relation {
+                    source_id,
+                    target_id,
+                    relation_kind: "Ordinary" @ 'NOW'
+                }"#,
+            BTreeMap::new(),
+            ScriptMutability::Immutable,
+        )?;
+        assert!(
+            !resolved_type_rows.rows.is_empty(),
+            "expected resolved type relation edges"
+        );
 
         Ok(())
     }

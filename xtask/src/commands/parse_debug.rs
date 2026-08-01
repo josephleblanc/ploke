@@ -87,7 +87,7 @@ use super::{CommandContext, XtaskError};
 use crate::executor::Command;
 
 const CORPUS_REPRO_REPORT_TEMPLATE_REL_PATH: &str =
-    "docs/active/agents/2026-03-29_corpus-triage/2026-03-30_corpus-repro-report-template.json";
+    "xtask/fixtures/corpus_repro_report_template.json";
 const DEFAULT_CORPUS_ARTIFACT_DIR: &str = "xtask/debug_corpus_runs";
 
 /// `parse debug …` — nested subcommands (manifest, discovery, workspace, pipeline, path diagnostics).

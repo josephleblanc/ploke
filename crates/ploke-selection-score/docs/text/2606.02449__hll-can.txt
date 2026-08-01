@@ -1,0 +1,1003 @@
+HLL: Can Agents Cross Humanity’s Last Line of
+Verification? Xinhao Song1 Su Su2 Sirui Song1 Hongliang Wu1 Wen Shen3
+Zhihua Wei3 Gongshen Liu1 Linfeng Zhang1∗ Dongrui Liu1∗
+
+Shanghai Jiao Tong University
+
+Shandong University
+
+Tongji University
+
+{sxh001}@sjtu.edu.cn
+
+Abstract
+Multimodal agents are increasingly expected to operate interfaces on behalf of users, raising a central deployment question: can they truly substitute for humans in workflows that services deliberately protect against automation? CAPTCHA verification makes this question concrete. It is not merely a visual puzzle, but a humanverification boundary placed before account creation, content access, form submission, and other protected actions. We introduce Humanity’s Last Line of Verification (HLL), a controlled benchmark that uses interactive CAPTCHA verification to evaluate whether agents can cross this boundary through grounded, human-like interaction rather than recognition alone. HLL covers diverse CAPTCHA interactions and exposes agents to controlled realism stressors, including cluttered webpages, harder task variants, and trace-conditioned validation of the solving process. We evaluate eight frontier multimodal agents in a closed-loop GUI environment. The results show that current agents remain brittle at this human-substitution boundary: performance varies sharply across verification types, degrades under realistic interface conditions, and drops further when correct answers must be supported by valid action traces. By exposing gaps in localization, action calibration, state tracking, and process consistency, HLL provides a concrete testbed for measuring how close multimodal agents are to acting as human substitutes in protected real-world workflows. Our code is available at https://github.com/XinhaoS0101/HLL.
+
+Introduction
+
+Multimodal agents are beginning to occupy a role that was previously reserved for human users: operating graphical interfaces to complete open-ended tasks. Systems such as OpenClaw and native
+GUI agents [40, 58] point to agents that can act through browsers and mobile apps. However,
+completing user workflows in the wild requires more than navigation, screen understanding, or prediction of the final-answer. Agents must also cross the verification boundaries that real services place before account creation, content access, form submission, and transactions. This paper studies that human-substitution boundary: whether general agents can pass the verification steps that real services use to decide who is allowed to proceed? CAPTCHAs make this boundary concrete. Without a human-verification step, automated programs can create fake accounts, scrape protected content, submit spam forms, abuse promotions, or repeatedly query services in ways that ordinary interface design cannot reliably prevent. For example, a website may insert a CAPTCHA before search, login, signup, or checkout when the traffic pattern resembles a crawler, so that access is conditioned on evidence of human presence rather than on the ∗ Corresponding authors.
+
+mere ability to send requests. CAPTCHAs were introduced for this purpose [46] and have since
+evolved from distorted text and image recognition [4, 41] toward visual reasoning, clicking, dragging,
+and behavioral verification [18, 16]. For general-purpose agents, CAPTCHA solving is therefore not
+a niche recognition problem. It is a last-mile verification barrier and a compact stress test for whether general agents can pass a defense explicitly designed to separate humans from bots. This last-mile verification barrier is largely missCAPTCHA as the What is CAPTCHA? ing from current agent evaluation. Existing web last line of defence
+and GUI benchmarks measure progress on navigation and application control [38, 15], browsing
+Real
+Automated
+and web-game capabilities [48, 45], or general
+CAPTCHA
+users agents Please complete the task below to continue
+task completion [29], but verification steps are
+Prevent bot attacks often filtered out or treated as incidental obstax
+I amxhuman
+cles rather than central capabilities. CAPTCHAStop large-scale scraping oriented work has a complementary limitation: many evaluations have largely treated verificaSecure user interactions tion either as an incidental obstacle in broader
+web tasks [32] or as a CAPTCHA-specific recognition and pass-rate problem [50, 14]. Neither
+setting fully captures the realistic interaction process. To assess whether agents are ready to act as Figure 1: CAPTCHA as the final frontier: securhuman substitutes, verification should instead be ing web services by testing interactive, humanevaluated as an end-to-end deployment bottleneck. level reasoning against automated agents. Such an evaluation must test the full perception-action loop required to proceed through protected interfaces, expose agents to controlled realism factors such as task difficulty, surrounding webpage distraction, and interaction-dependent validation, and diagnose whether success is supported by a valid solving process rather than a lucky final response. Figure 2 illustrates why this matters: a visually compact challenge can require perception, localization, grounded action, state tracking, and final validation, and the same final answer can mask very different failure modes along this pipeline. Block malicious logins, credential stuffing, and abuse
+
+Protect content, data, and intellectual property
+
+Ensure fair access and trusted transactions
+
+To address this gap, we introduce Humanity’s Toward controlled and CAPTCHA remains a major bottleneck
+reproducible CAPTCHA
+for agents evaluation Last Line of Verification (HLL), a controlled benchmark for evaluating interactive verification as a core capability of general multimodal agents. HLL spans ten CAPTCHA families with heterogeneous interaction requirements and organizes evaluation along three orthogonal realism axes: intrinsic task difficulty, webpage distraction, and dynamic interaction validation. In dynamic settings, the benchmark moves beyond semantic correctness by collecting structured telemetry through a unified submission payload and applying family- Figure 2: Limitations of existing benchmarks: specific rules that test whether the final answer is current static tasks fail to capture the complex, supported by sufficient interaction evidence. This grounded interactions required in realistic envifactorized design turns CAPTCHA solving from ronments. a single success flag into a diagnostic probe: it allows controlled comparisons between clean and cluttered environments, static and dynamic verification settings, and simpler versus harder task variants, revealing which component of the end-to-end interaction pipeline breaks first. Beyond task design, HLL is implemented as a lightweight, agentagnostic environment layer that can be integrated into both web-agent and mobile-agent evaluation pipelines with minimal adaptation.
+Web navigation
+and Web search
+
+Please complete the task below I amx human
+
+Form filling
+and booking
+
+x
+
+Controlled
+
+Reproducible Composable
+
+Systematic
+and standardized evaluation
+
+Deterministic
+and repeatable instances
+
+Built from
+composable components
+
+Mobile
+Interaction tasks
+
+The resulting benchmark is meant to make the web’s last line of human verification measurable rather than anecdotal. By framing CAPTCHA solving as a factorized, end-to-end agent benchmark, HLL provides a concrete testbed for studying how multimodal agents behave when perception, grounding, interface interaction, and anti-automation constraints are tightly coupled. In this sense, CAPTCHA solving becomes a lens for analyzing whether multimodal agents are ready to act as human substitutes in the wild. In summary, this work makes the following core contributions:
+
+• Formalization of Verification Bottlenecks: We formalize interactive CAPTCHA solving as an end-to-end evaluation paradigm for testing the last-mile verification barrier faced by general agents acting on behalf of users.
+• Factorized Benchmark Design: We introduce HLL, featuring ten task families, a protocol that factorizes realism along three orthogonal axes: difficulty, distraction, and dynamic interaction validation, and a lightweight integration layer that supports both web-agent and mobile-agent evaluation.
+• Empirical Analysis and Failure Taxonomy: We provide a systematic empirical study and a fine-grained failure taxonomy, showing that frontier agents suffer systematic degradation under realistic interaction and consistency constraints.
+
+Related Work
+
+2.1
+
+Multimodal and GUI Agents
+
+Recent multimodal agents increasingly operate in realistic interfaces, from web environments such as
+WebArena, VisualWebArena, Mind2Web, and WebCanvas [61, 26, 15] to desktop and mobile settings
+such as OSWorld and AppAgent [52, 58]. Native GUI agents further improve screen perception and
+action generation [23, 40, 12]. Existing benchmarks mainly evaluate general navigation, application
+control, or task completion [29, 38, 48, 45], while CAPTCHA-protected pages are often filtered out
+or treated as incidental obstacles. As a result, they provide limited evidence about whether agents can handle verification bottlenecks that require fine-grained perception, spatial grounding, action execution, and final submission under anti-automation constraints. 2.2
+
+CAPTCHA Benchmarks and Automated Solving
+
+CAPTCHAs were introduced as human verification mechanisms based on problems that were expected to be easy for humans but difficult for automated programs [46]. Early work studied textbased CAPTCHA usability and security [9, 4, 41], while later attacks and defenses extended to image
+recognition [10, 43, 36], visual reasoning [18, 47, 54], adversarial examples [42, 21], and deployed
+reCAPTCHA-style systems [39]. Recent benchmarks further broaden CAPTCHA evaluation: Open
+CaptchaWorld tests multimodal agents on diverse web-based CAPTCHA puzzles [32], MCA-Bench
+studies multimodal CAPTCHA robustness [50], and LLM-enhanced solvers highlight the importance
+of spatial reasoning and multi-step inference [14, 44]. However, these works still largely emphasize
+recognition accuracy, attack success, or final-answer pass rates, which can obscure whether failures arise from perception, grounding, action execution, or process inconsistency. 2.3
+
+Interactive Verification as Perception-Action Evaluation
+
+Interactive CAPTCHA solving differs from static multimodal understanding benchmarks, where
+models often produce textual answers from fixed images, including VQA and text-aware tasks [20, 60]
+as well as broader multimodal reasoning suites [31, 56, 30, 55]. In a browser loop, an agent must
+locate the verification region, ground actions to interface elements, adapt to intermediate state changes, and submit an answer supported by the solving process. Existing CAPTCHA benchmarks have begun
+to consider reasoning depth, action traces, or grounding annotations [32, 14, 50], while visual-spatial
+reasoning benchmarks expose related reasoning gaps [28, 13, 24, 33]. However, they do not fully
+factorize the realism conditions that make web verification difficult in practice. HLL therefore evaluates heterogeneous CAPTCHA families under controlled axes of intrinsic difficulty, webpage distraction, and dynamic interaction validation. 2.4
+
+Robustness and Process-Level Validation
+
+A parallel line of work studies GUI-agent robustness under cluttered, adversarial, or dynamically changing environments. Agents can be misled by visual distractions and environmental injection [34,
+11, 27], by pop-ups or adversarial web interfaces [59, 53], and by broader multimodal or cross-modal
+attacks [49, 7]. CAPTCHA systems are also process-oriented: many verification mechanisms rely
+on behavioral signals [2, 3], mouse or touch dynamics [25, 17], and continuous authentication
+signals [1, 57] rather than final answers alone. HLL does not reproduce full production-side bot
+
+Factorized Realism Axes
+
+HLL Benchmark
+Format of instances
+
+� =
+
+�∈�
+
+� × �� × � × �
+
+Task Families
+Recognition &
+Ordered Selection
+
+Task Family
+10 representative task families
+
+Difficulty
+easy / normal / hard
+
+Dynamic Validation
+
+Distraction
+
+Dynamic Validation
+
+clean / contextual / deceptive
+
+dynamic validation over simulator traces
+
+Closed-Loop Evaluation Protocol
+
+Trajectory Continuity
+
+Agent
+Target-Centered Spatial Consistency
+
+Verification Page
+
+Action
+
+Answer Correctness
+
+Action Trace
+
+Verification
+
+Dynamic Verification
+
+Spatial Alignment
+
+Failure modes: Perceptual Decoding Errors
+Repeated Wrong Loops
+
+Reasoning-Guide
+Semantic Interaction
+
+Failed
+
+Instruction : Click on the icons in the order shown above.
+
+User
+
+expected
+
+selected
+
+State Legality
+
+Agent
+wrong selection
+
+Figure 3: Overview of the HLL benchmark structure. The benchmark combines heterogeneous CAPTCHA task families with controlled realism axes, including intrinsic task difficulty, environmental distraction, and dynamic interaction validation, to expose where multimodal agents fail along the end-to-end verification pipeline.
+detection, but introduces trace-conditioned dynamic validation to test whether an agent’s answer is supported by task-consistent interaction evidence.
+
+Benchmark
+
+In this section, we introduce HLL as a controlled benchmark for measuring verification bottlenecks in multimodal agents. Rather than treating CAPTCHA solving as a narrow recognition problem, HLL formulates it as an end-to-end interaction task in which an agent must perceive the challenge, localize the correct verification region, execute grounded interface actions, and satisfy anti-automation constraints under progressively more realistic web conditions. To make these bottlenecks measurable, HLL organizes evaluation along factorized realism dimensions and supports fine-grained analysis of where the interaction pipeline breaks down. We first describe the benchmark design goals and formalize the benchmark unit, and then present the task families, realism axes, and evaluation protocol. 3.1
+
+Design Goals and Benchmark Formulation
+
+The design of HLL follows five goals: evaluate end-to-end verification beyond semantic recognition, cover heterogeneous interaction patterns, factorize realism into controllable dimensions, remain reproducible for closed-loop agents, and support interpretable failure analysis beyond a single success flag. Following these design goals, we define the benchmark over a family set F, a family-dependent
+difficulty domain Df , a distraction-level set L, a dynamic-validation flag z ∈ {0, 1}, and a sample
+index set S. One benchmark instance is a factorized tuple [
+x = (f, d, ℓ, z, s) ∈ X =
+{f } × Df × L × {0, 1} × S.
+f ∈F
+
+Here, f specifies the semantic type of CAPTCHA challenge, d controls the intrinsic hardness of the task when supported, ℓ determines how much irrelevant or deceptive webpage content is introduced around the CAPTCHA, z indicates whether the task additionally enforces interaction-consistency validation, and s indexes repeated instances under the same configuration. This formulation separates the core challenge type from the realism conditions under which it is evaluated. We further associate each family with a dominant capability group through a mapping g : F → G,
+G = {Recognition, Spatial, Stateful, Reasoning},
+where g(f ) is used for coarse-grained analysis rather than as a claim that the required capabilities are disjoint.
+
+As summarized in Figure 3, this factorization enables controlled comparisons across clean and cluttered pages, static and dynamic validation, and easy versus hard variants. It shifts evaluation from whether a model solves a CAPTCHA to where and under which realism conditions the interaction pipeline fails. Task family coverage
+
+Figure 4 further summarizes the benchmark composition across task families and realism-axis settings.
+
+Cat. 4
+
+3.2
+
+Text 2
+ImgSeq 3
+
+Task Families and Capability Taxonomy
+
+Logic 2
+
+The semantic backbone of HLL consists of ten base task families. These ten families define the benchmark itself; later realism dimensions such as difficulty, distraction, and dynamic validation are layered on top of them and do not constitute new task families.
+
+IconSeq 3
+Board 3
+
+cells
+Slider 4
+
+Tile 4
+
+Jigsaw 4
+
+Missing 4
+At a coarse level, the benchmark covers four capability groups. Recognition and ordered selection tasks
+Recognition 8
+Stateful 7
+test whether an agent can correctly perceive targets
+Spatial 12
+Reasoning 6
+and interact with them in sequence, including text transcription, icon sequence selection, and naturalimage sequence selection. Spatial alignment and Figure 4: Distribution of benchmark instances local patch reasoning tasks emphasize geometric pre- across CAPTCHA task families and realismcision and low-level action fidelity, including slider axis settings. alignment, jigsaw alignment, and missing-patch selection. Stateful puzzle restoration tasks require the agent to reason over intermediate state changes, including board reconfiguration and tile restoration. Finally, reasoning-guided semantic interaction tasks stress structured interpretation and coordinated selection, including logic-and-arithmetic interaction and category-guided image selection.
+
+Many task families involve overlapping mixtures of perception, grounding, reasoning, and execution, and HLL does not claim a perfectly disjoint decomposition of capabilities. Instead, the grouping identifies the dominant bottleneck each family is most likely to expose. Detailed task descriptions for all ten base families are deferred to Appendix A.1. 3.3
+
+Realism Axes and Dynamic Interaction Validation
+
+Beyond task-family coverage, HLL is designed to evaluate agents under progressively more realistic verification conditions. To this end, the benchmark factorizes realism along three axes: intrinsic task difficulty, environmental distraction, and dynamic interaction validation. For an instance x = (f, d, ℓ, z, s), we write its realism configuration as ρ(x) = (d, ℓ, z), where d varies task-internal complexity, ℓ varies environmental clutter, and z switches traceconditioned validation on or off. These axes are layered on top of the same base task families so that the benchmark can compare agent behavior under controlled changes in realism rather than across entirely different tasks. At the level of benchmark composition, each family contributes a set of supported evaluation cells. Let Fhard denote families with harder variants and Fdyn denote families with dynamic validation. The number of evaluation cells contributed by family f is
+X
+m(f ) = 2 + 1[f ∈ Fhard ] + 1[f ∈ Fdyn ],
+M=
+m(f ) = 33,
+f ∈F
+
+where the two base cells correspond to the clean static and distracted static settings. Intrinsic Task Difficulty. For task families that naturally admit hardness control, HLL varies the internal complexity of the challenge while preserving its semantic type. This allows us to ask whether a failure is caused by the core recognition-and-action problem itself or only emerges once ambiguity and precision requirements increase.
+
+Table 1: Static benchmark results on the ten base task families under clean webpages and default task configurations. Abbreviations: SA (Slider Align.), ImS (Image Seq.), JA (Jigsaw Align.), LA (Logic-Arith.), CS (Category Select.), MP (Missing Patch), IcS (Icon Seq.), TR (Tile Rest.), BR (Board Reconf.). Entries report instance-level success rates (%). Bold indicates the best performance, and underline indicates the second best.
+Model
+
+Text
+
+SA
+
+GPT-5.4
+Gemini-3.1-Pro
+Claude-Sonnet-4.6
+Claude-Opus-4.6
+Grok-4
+
+100.00 100.00 100.00 100.00 97.75
+
+68.50 92.25 48.25 98.25 34.25
+
+GLM-5V
+MiniMax-M2.7
+Qwen-Max
+
+42.25 82.50 55.75
+
+ImS
+
+JA
+
+LA
+
+CS
+
+Leading Frontier Models
+43.50 96.25 73.75 98.00 85.75 76.50 67.50 72.75 23.75 36.50 17.50 62.75 96.50 97.75 96.25 98.00 78.50 87.50 76.25 45.75
+Other Evaluated Models
+75.50 0.00 2.50 37.50 0.00 11.50 16.25 47.75 24.25 1.75 4.25 0.00 0.00 32.50 0.00
+
+MP
+
+IcS
+
+TR
+
+BR
+
+Avg.
+
+96.75 73.25 15.25 98.25 52.25
+
+25.25 28.25 22.25 55.50 32.50
+
+36.50 53.75 0.00 96.50 15.25
+
+61.50 88.00 27.75 63.00 62.00
+
+70.00 73.80 35.40 90.00 58.20
+
+0.00 18.00 1.50
+
+4.25 0.00 0.00
+
+0.00 0.00 0.00
+
+0.00 0.00 0.00
+
+16.20 20.20 9.40
+
+Environmental Distraction. HLL also varies the amount of irrelevant or deceptive webpage content surrounding the true verification region. This axis is intended to capture a realistic gap between clean benchmark interfaces and real deployment settings, where an agent must first localize the relevant interaction region and avoid being diverted by unrelated controls or decoys. Dynamic Interaction Validation. Finally, HLL distinguishes between static correctness and dynamic interaction-grounded correctness. In static settings, success depends only on the final submitted answer. In dynamic settings, an answer is accepted only if it is accompanied by interaction evidence consistent with the intended solving process. The goal is to verify that the submitted answer is supported by a valid sequence of task-relevant interface actions. Viewed together, these mechanisms provide interpretable anti-automation signals rather than a single opaque score. They capture whether the agent actually interacted with the page, whether a drag or click pattern looks behaviorally plausible, whether the agent falls into repeated erroneous loops, and whether state changes remain legally grounded under task rules. Detailed per-family rules, mechanism support, and failure categories are deferred to Appendix A.3, Appendix A.2, and Appendix A.4. 3.4
+
+Evaluation Protocol
+
+HLL evaluates agents in a closed-loop interactive setting. For each instance x, a policy π observes the page and emits GUI actions until submission, budget exhaustion, or timeout. We represent one rollout as τπ (x) = (o0 , a0 , o1 , a1 , . . . , oT , aT ),
+
+at ∼ π(· | o≤t , a<t ),
+
+where ot is the simulator observation and at is the grounded GUI action. This preserves the endto-end nature of CAPTCHA solving: agents must infer, localize, manipulate, and submit under the designated realism conditions.
+Let ŷ(τ ) be the final submitted answer, yx the ground truth, and Vf (τ ) ∈ {0, 1} the family-specific
+dynamic validator. Static success is
+Sstatic (x, τ ) = 1[ŷ(τ ) = yx ],
+while dynamic success additionally requires trace-conditioned validation:
+
+1, z = 0, S(x, τ ) = Sstatic (x, τ ) ·
+Vf (τ ), z = 1. Thus, dynamic evaluation adds simulator-observable interaction evidence while remaining agnostic to the model’s internal reasoning.
+
+Experiments
+
+This section uses HLL to study how current multimodal agents behave under interactive verification workloads. Our evaluation is designed to answer the following research questions: RQ1 How well do frontier agents solve the base static CAPTCHA tasks, and which capability gaps persist even without additional realism stress? RQ2 How does performance change when controlled realism factors—webpage distraction and increased intrinsic difficulty—are introduced? RQ3 To what extent does trace-conditioned dynamic validation further degrade agent success beyond static correctness? RQ4 What failure patterns recur across task families, and how do they relate to the capability dimensions exposed by the benchmark? 4.1
+
+Experimental Setup
+Text
+
+Evaluated Agents. We evaluate a diverse set of frontier multimodal agents spanning multiple model families. The proprietary systems include OpenAI’s GPT-5.4 [37], Google’s Gemini-3.1-Pro [19], Anthropic’s Claude-Sonnet-4.6 [6] and Claude-Opus4.6 [5], xAI’s Grok-4 [51], GLM-5V [22], MiniMaxM2.7 [35], and Qwen-Max [8]. All models are deployed as closed-loop GUI agents in the HLL evaluation environment: at each step, the agent observes a rendered verification page, issues interface actions, receives updated simulator observations, and continues interacting until it submits an answer, reaches the maximum interaction budget, or times out. Detailed model specifications and hyperparameter settings are provided in Appendix B.
+
+Board
+
+Slider
+
+Tile
+
+Image
+Seq.
+
+Icon
+Seq.
+
+Jigsaw
+
+Missing
+
+Logic
+Category
+
+GPT-5.4
+
+Claude-Opus-4.6
+
+GLM-5V
+
+Gemini-3.1-Pro
+Grok-4
+Qwen-Max
+Experiments cover three settings: base static tasks on clean webpages, realism stress from webpage dis- Figure 5: Static performance across the ten traction or higher intrinsic difficulty, and dynamic CAPTCHA task families. variants that additionally require trace-conditioned validation. These settings separate failures from base task understanding, realism stress, and interaction-grounded validation.
+
+Metrics. The primary metric is instance-level success rate as defined in Section 3.4. In the static and realism-stress settings, success is determined by semantic correctness of the submitted answer. In the dynamic setting, success additionally requires passing all applicable dynamic validation checks. We report per-family and aggregate results for each setting, and provide detailed analyses and case studies in Appendix B. 4.2
+
+Static Results on Base Tasks
+
+We begin with the base static setting, where agents are evaluated on the ten base task families under clean webpages and default task configurations. Table 1 summarizes the corresponding results. Even in this simplified setting, interactive CAPTCHA solving remains uneven: the strongest model reaches high overall performance, but success still varies sharply across task families, and most agents remain far from robust across the full benchmark. Three observations stand out. First, the leading model is strong but not fully saturated. ClaudeOpus-4.6 obtains the highest average success rate, followed by Gemini-3.1-Pro and GPT-5.4. However, even Claude-Opus-4.6 does not solve all task families perfectly, with residual errors on ordered icon selection and board reconfiguration. This suggests that clean-page static success is already bottlenecked by nontrivial perception–action coordination rather than by simple visual recognition alone.
+
+Table 2: Results under webpage distraction. Entries report instance-level success rates (%). Bold indicates the best performance, and underline indicates the second best.
+Model
+GPT-5.4
+Gemini-3.1-Pro
+Claude-Sonnet-4.6
+Claude-Opus-4.6
+Grok-4
+GLM-5V
+MiniMax-M2.7
+Qwen-Max
+
+Text
+
+SA
+
+ImS
+
+JA
+
+LA
+
+CS
+
+MP
+
+IcS
+
+TR
+
+BR
+
+Avg.
+
+Leading Frontier Models
+100.00 100.00 64.25 100.00 53.75 100.00 100.00 22.25 37.75 26.00 70.40 100.00 85.75 92.25 46.25 67.75 56.50 58.00 13.50 44.50 93.50 65.80 100.00 28.25 23.75 12.50 15.50 46.25 17.75 0.00 2.50 13.50 26.00 100.00 83.75 84.25 81.75 94.50 85.75 75.50 38.25 100.00 48.25 79.20 100.00 32.50 55.50 68.25 64.50 51.50 38.25 14.00 17.75 45.75 48.80
+Other Evaluated Models
+77.75 0.00 2.25 0.00 75.75 4.50 0.00 1.75 0.00 0.00 16.20 74.50 33.50 18.25 56.50 21.75 2.25 0.00 0.00 0.00 1.25 20.80 73.75 0.00 0.00 2.25 8.50 1.50 0.00 0.00 0.00 0.00 8.60
+
+Second, task difficulty is highly uneven across Table 3: Results on hard variants. Bold: best, families. Text transcription is the easiest fam- underline: second best. ily overall, with several models achieving nearSA
+JA
+CS MP TR Avg. perfect or perfect performance. By contrast, or- Model dered icon selection and tile restoration remain
+Leading Frontier Models
+much harder on average, even though individual GPT-5.4 40.25 20.25 24.75 79.75 20.00 37.00 0.00 20.25 34.75 45.00 20.00 24.00 models can perform well on them. These fami- Gemini-3.1-Pro lies require tighter coupling between recognition Claude-Sonnet-4.6 0.00 10.25 9.75 10.00 0.00 6.00 and control: the agent must not only identify Claude-Opus-4.6 65.25 74.75 70.00 60.00 40.00 62.00 10.25 14.75 20.00 0.00 0.00 9.00 the target correctly, but also maintain sequential Grok-4
+Other Evaluated Models
+consistency, geometric precision, or state-aware GLM-5V 20.00 0.00 0.00 0.00 0.00 4.00 manipulation throughout the interaction.
+MiniMax-M2.7
+20.00 20.00 0.00 10.00 0.00 10.00 0.00 0.00 0.00 0.00 0.00 0.00 Third, aggregate averages conceal strong Qwen-Max cross-family specialization. The leading agents show complementary strengths across recognition, alignment, ordered selection, and stateful tasks, indicating that static CAPTCHA solving is not a single capability but a composition of partially separable skills. Figure 5 and Figure 6 visualize these family-wise and cross-setting differences, with extended comparisons deferred to Appendix B.2.
+
+Static failure patterns. The static traces show that failures are not reducible to visual recognition errors. Instead, they arise along the full interaction chain: weaker models misread distorted text or category cues, middle-performing models often identify the correct target but click or drag at imprecise coordinates, and stronger models mainly fail on ordered selection or stateful restoration tasks that require maintaining a structured interface state across multiple actions. Detailed trace-level examples are provided in Appendix B.2.1. 4.3
+
+Robustness under Realism Stress
+
+We next evaluate how agent performance changes when the clean base setting is made more realistic. We consider two complementary stressors introduced in Section 3.3: webpage distraction and increased intrinsic task difficulty. Webpage distraction amplifies existing grounding and control weaknesses rather than introducing a uniform failure mode. Table 2 shows that most agents degrade under irrelevant or deceptive surrounding content, but the degradation is uneven. Claude-Opus-4.6 remains the strongest model overall, while GPT-5.4 and Gemini-3.1-Pro retain competitive average performance. In contrast, weaker models degrade to near-zero performance on many non-text families. Increased intrinsic difficulty causes broad performance drops even for the strongest models. Unlike distraction, which stresses page-level localization, difficulty stresses the task itself through tighter alignment tolerances, more ambiguous candidates, stronger visual confusion, or more complex restoration states. Table 3 reports results on the hard variants. Claude-Opus-4.6 remains the most robust under hard settings, while GPT-5.4 and Gemini-3.1-Pro fall sharply, especially on alignment and visual-restoration families. These results separate failures caused by environmental clutter from failures caused by the underlying CAPTCHA operation becoming intrinsically harder. Detailed stress analyses are provided in Appendix B.3 and Appendix B.4.
+
+Table 4: Dynamic validation results. The Static Avg. column (blue) reports the matched static baseline averaged over the same eight dynamic-supported task families. Entries report instance-level success rates (%). Bold: best, underline: second best.
+Model
+
+SA
+
+JA
+
+TR
+
+BR
+
+IcS
+
+ImS
+
+CS
+
+MP
+
+Leading Frontier Models
+GPT-5.4
+0.00 18.50 50.25 18.75 11.25 38.50 51.50
+Gemini-3.1-Pro
+48.25 12.50 49.75 90.25 19.75 50.50 38.75 Claude-Sonnet-4.6 0.00 0.00 0.00 0.00 0.00 0.00 0.00 Claude-Opus-4.6 10.00 29.75 0.00 60.25 20.25 8.75 21.00
+Grok-4
+0.00 0.00 18.50 48.75 0.00 11.25 11.50
+Other Evaluated Models
+GLM-5V
+10.00 0.00 0.00 0.00 0.00 0.00 0.00
+MiniMax-M2.7
+0.00 0.00 0.00 0.00 0.00 0.00 0.00
+Qwen-Max
+0.00 0.00 0.00 0.00 0.00 20.00 0.00
+
+4.4
+
+Static Avg. Dyn. Avg.
+
+21.25 50.25 40.00 40.00 0.00
+
+65.8 71.3 29.6 88.0 51.0
+
+26.3 45.0 5.0 23.8 11.3
+
+0.00 20.00 0.00
+
+10.3 11.9 0.7
+
+1.3 2.5 2.5
+
+Dynamic Interaction Validation
+
+We finally evaluate dynamic variants, where a semantically correct answer must additionally satisfy trace-conditioned validation rules over simulatorobservable interaction traces and committed page states. Table 4 reports success rates on the eight task families with dynamic validation support. Compared with the static setting, the dynamic setting introduces a much stricter requirement: agents must not only infer the correct final answer, but also produce an interaction process that is consistent with the intended solving procedure. Three observations stand out. First, dynamic validation substantially lowers success even for models that perform well in the static setting. Gemini-3.1Pro achieves the best dynamic average at 45.0, while GPT-5.4 and Claude-Opus-4.6 drop to 26.3 and 23.8.
+
+Slider
+
+Missing
+
+Jigsaw
+
+Category
+
+Tile
+
+Image Seq.
+
+Board
+
+Icon Seq.
+
+Gemini-3.1-Pro
+
+Claude-Opus-4.6
+
+GPT-5.4
+Grok-4
+Second, the dynamic setting reshuffles model rankings. Claude-Opus-4.6 is the strongest model in the
+Figure 6: Dynamic performance across the base static and hard settings, but its dynamic perCAPTCHA task families.
+formance is lower than that of Gemini-3.1-Pro and GPT-5.4. The largest gap appears on tasks where the final answer can be semantically inferred but the intermediate action sequence must still satisfy task-specific constraints. This suggests that dynamic validation probes a distinct process-level capability rather than simply increasing the perceptual difficulty of the challenge.
+
+Third, failures concentrate in interaction-heavy task families. Ordered icon selection, slider alignment, and jigsaw alignment remain difficult under dynamic validation, reflecting the need for target-centered clicks or continuous drag traces. Board reconfiguration is an exception for Gemini3.1-Pro and Claude-Opus-4.6, suggesting that some models can maintain valid state transitions in structured board-like tasks. Additional dynamic analyses are provided in Appendix B.5.
+
+Conclusion
+
+This paper introduced HLL, a controlled benchmark for evaluating whether multimodal agents can cross the human-verification boundaries that protect real web workflows from automation. By treating interactive CAPTCHA solving as an end-to-end verification bottleneck, HLL separates semantic recognition from localization, grounded action execution, state tracking, and trace-consistent completion. Our experiments show that current frontier agents remain far from uniformly robust at this human-substitution boundary: even clean static tasks expose strong family-level specialization, realism stress amplifies failures in grounding and precision, and dynamic validation reveals cases where plausible final answers are not supported by valid interaction evidence. Although HLL does
+
+not exhaustively cover the full diversity or service-specific policies of production verification systems, these findings suggest that agents are not yet ready to act as reliable human substitutes in protected real-world workflows without stronger spatial grounding, action calibration, state tracking, and recovery under realistic web conditions.
+
+References
+[1] Mohammed Abuhamad, Ahmed Abusnaina, DaeHun Nyang, and David Mohaisen. Sensor-based
+continuous authentication of smartphones’ users using behavioral biometrics: A contemporary survey. IEEE Internet of Things Journal, 8(1):65–84, 2020.
+[2] Alejandro Acien, Aythami Morales, Julian Fierrez, Ruben Vera-Rodriguez, and Ivan Bartolome.
+Becaptcha: Detecting human behavior in smartphone interaction using multiple inbuilt sensors. [3] Alejandro Acien, Aythami Morales, Julian Fierrez, Ruben Vera-Rodriguez, and Oscar DelgadoMohatar. Becaptcha: Behavioral bot detection using touchscreen and mobile sensors benchmarked on humidb. Engineering Applications of Artificial Intelligence, 98:104058, 2021.
+[4] Abdalnaser Muhammad Algwil. A survey on captcha: Origin, applications and classification.
+Journal of Basic Sciences, 36(1):1–37, 2023.
+[5] Anthropic.
+Claude opus 4.6 system card. https://www-cdn.anthropic.com/ 14e4fb01875d2a69f646fa5e574dea2b1c0ff7b5.pdf, 2025.
+[6] Anthropic.
+Claude sonnet 4.6 system card. https://www-cdn.anthropic.com/ bbd8ef16d70b7a1665f14f306ee88b53f686aa75.pdf, 2026.
+[7] Eugene Bagdasaryan, Tsung-Yin Hsieh, Ben Nassi, and Vitaly Shmatikov. Abusing images and
+2023.
+[8] Jinze Bai, Shuai Bai, Shusheng Yang, Shijie Wang, Sinan Tan, Peng Wang, Junyang Lin, Chang
+Zhou, and Jingren Zhou. Qwen-vl: A versatile vision-language model for understanding, [9] Elie Bursztein, Matthieu Martin, and John Mitchell. Text-based captcha strengths and weaknesses. In Proceedings of the 18th ACM conference on Computer and communications security, pages 125–138, 2011. [10] Kumar Chellapilla, Kevin Larson, Patrice Y Simard, and Mary Czerwinski. Building segmentation based human-friendly human interaction proofs (hips). In International Workshop on Human Interactive Proofs, pages 1–26. Springer, 2005.
+[11] Yurun Chen, Xueyu Hu, Keting Yin, Juncheng Li, and Shengyu Zhang. Evaluating the robustness
+of multimodal agents against active environmental injection attacks. In Proceedings of the 33rd ACM International Conference on Multimedia, pages 11648–11656, 2025.
+[12] Pengzhou Cheng, Zheng Wu, Zongru Wu, Tianjie Ju, Aston Zhang, Zhuosheng Zhang, and
+Gongshen Liu. Os-kairos: Adaptive interaction for mllm-powered gui agents. In Findings of the Association for Computational Linguistics: ACL 2025, pages 6701–6725, 2025. [14] Gelei Deng, Haoran Ou, Yi Liu, Jie Zhang, Tianwei Zhang, and Yang Liu. Oedipus: Llmenchanced reasoning captcha solver. In Proceedings of the 2025 ACM SIGSAC Conference on Computer and Communications Security, pages 6–20, 2025.
+[15] Xiang Deng, Yu Gu, Boyuan Zheng, Shijie Chen, Samuel Stevens, Boshi Wang, Huan Sun, and
+Yu Su. Mind2web: Towards a generalist agent for the web. In Advances in Neural Information Processing Systems, volume 36, 2023.
+[16] Ziqi Ding, Gelei Deng, Yi Liu, Junchen Ding, Jieshan Chen, Yulei Sui, and Yuekang Li.
+Illusioncaptcha: A captcha based on visual illusion. In Proceedings of the ACM on Web Conference 2025, pages 3683–3691, 2025.
+[17] Mario Frank, Ralf Biedert, Eugene Ma, Ivan Martinovic, and Dawn Song. Touchalytics: On
+the applicability of touchscreen input as a behavioral biometric for continuous authentication. IEEE transactions on information forensics and security, 8(1):136–148, 2012.
+
+[18] Yipeng Gao, Haichang Gao, Sainan Luo, Yang Zi, Shudong Zhang, Wenjie Mao, Ping Wang,
+Yulong Shen, and Jeff Yan. Research on the security of visual reasoning CAPTCHA. In 30th USENIX Security Symposium (USENIX Security 21), pages 3291–3308, 2021.
+[19] Google DeepMind. Gemini 3.1 pro model card. https://storage.googleapis.com/
+deepmind-media/Model-Cards/Gemini-3-1-Pro-Model-Card.pdf, 2026.
+[20] Yash Goyal, Tejas Khot, Douglas Summers-Stay, Dhruv Batra, and Devi Parikh. Making
+the v in vqa matter: Elevating the role of image understanding in visual question answering. In Proceedings of the IEEE conference on computer vision and pattern recognition, pages 6904–6913, 2017.
+[21] Dorjan Hitaj, Briland Hitaj, Sushil Jajodia, and Luigi V Mancini. Capture the bot: Using
+adversarial examples to improve captcha robustness to bot attacks. IEEE Intelligent Systems, 36(5):104–112, 2020.
+[22] Wenyi Hong, Xiaotao Gu, Ziyang Pan, Zhen Yang, Yuting Wang, Yue Wang, Yuanchang Yue,
+Yu Wang, Yanling Wang, Yan Wang, et al. Glm-5v-turbo: Toward a native foundation model
+[23] Wenyi Hong, Weihan Wang, Qingsong Lv, Jiazheng Xu, Wenmeng Yu, Junhui Ji, Yan Wang,
+Zihan Wang, Yuxiao Dong, Ming Ding, et al. Cogagent: A visual language model for gui agents. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 14281–14290, 2024.
+[24] Justin Johnson, Bharath Hariharan, Laurens Van Der Maaten, Li Fei-Fei, C Lawrence Zitnick,
+and Ross Girshick. Clevr: A diagnostic dataset for compositional language and elementary visual reasoning. In Proceedings of the IEEE conference on computer vision and pattern recognition, pages 2901–2910, 2017.
+[25] Simon Khan, Charles Devlen, Michael Manno, and Daqing Hou. Mouse dynamics behavioral
+biometrics: A survey. ACM Computing Surveys, 56(6):1–33, 2024.
+[26] Jing Yu Koh, Robert Lo, Lawrence Jang, Vikram Duvvur, Ming Lim, Po-Yu Huang, Graham
+Neubig, Shuyan Zhou, Russ Salakhutdinov, and Daniel Fried. Visualwebarena: Evaluating multimodal agents on realistic visual web tasks. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 881–905, 2024.
+[27] Zeyi Liao, Lingbo Mo, Chejian Xu, Mintong Kang, Jiawei Zhang, Chaowei Xiao, Yuan Tian,
+Bo Li, and Huan Sun. Eia: Environmental injection attack on generalist web agents for privacy
+[28] Fangyu Liu, Guy Emerson, and Nigel Collier. Visual spatial reasoning. Transactions of the
+Association for Computational Linguistics, 11:635–651, 2023.
+[29] Xiao Liu, Hao Yu, Hanchen Zhang, Yifan Xu, Xuanyu Lei, Hanyu Lai, Yu Gu, Hangliang
+Ding, Kaiwen Men, Kejuan Yang, et al. Agentbench: Evaluating llms as agents. arXiv preprint
+[30] Yuan Liu, Haodong Duan, Yuanhan Zhang, Bo Li, Songyang Zhang, Wangbo Zhao, Yike Yuan,
+Jiaqi Wang, Conghui He, Ziwei Liu, et al. Mmbench: Is your multi-modal model an all-around player? In European conference on computer vision, pages 216–233. Springer, 2024.
+[31] Pan Lu, Hritik Bansal, Tony Xia, Jiacheng Liu, Chunyuan Li, Hannaneh Hajishirzi, Hao
+Cheng, Kai-Wei Chang, Michel Galley, and Jianfeng Gao. Mathvista: Evaluating mathematical
+[32] Yaxin Luo, Zhaoyi Li, Jiacheng Liu, Jiacheng Cui, Xiaohan Zhao, and Zhiqiang Shen. Open
+captchaworld: A comprehensive web-based platform for testing and benchmarking multimodal
+[33] Wufei Ma, Haoyu Chen, Guofeng Zhang, Yu-Cheng Chou, Jieneng Chen, Celso de Melo, and
+Alan Yuille. 3dsrbench: A comprehensive 3d spatial reasoning benchmark. In Proceedings of the IEEE/CVF International Conference on Computer Vision, pages 6924–6934, 2025.
+
+[34] Xinbei Ma, Yiting Wang, Yao Yao, Tongxin Yuan, Aston Zhang, Zhuosheng Zhang, and Hai
+Zhao. Caution for the environment: Multimodal llm agents are susceptible to environmental
+[35] MiniMax. Minimax m2.7: Early echoes of self-evolution. https://www.minimax.io/news/
+minimax-m27-en, 2026. Accessed: 2026-04-30.
+[36] Zahra Noury and Mahdi Rezaei. Deep-captcha: a deep learning based captcha solver for
+Gpt-5.4 thinking system card. https://openai.com/index/
+[37] OpenAI.
+gpt-5-4-thinking-system-card/, 2026. Accessed: 2026-04-30.
+[38] Yichen Pan, Dehan Kong, Sida Zhou, Cheng Cui, Yifei Leng, Bing Jiang, Hangyu Liu, Yanyi
+Shang, Shuyan Zhou, Tongshuang Wu, et al. Webcanvas: Benchmarking web agents in online
+[39] Andreas Plesner, Tobias Vontobel, and Roger Wattenhofer. Breaking recaptchav2. In 2024
+IEEE 48th Annual Computers, Software, and Applications Conference (COMPSAC), pages 1047–1056. IEEE, 2024.
+[40] Yujia Qin, Yining Ye, Junjie Fang, Haoming Wang, Shihao Liang, Shizuo Tian, Junda Zhang,
+Jiahao Li, Yunxin Li, Shijue Huang, et al. Ui-tars: Pioneering automated gui interaction with
+[41] Andrew Searles, Yoshimichi Nakatsuka, Ercan Ozturk, Andrew Paverd, Gene Tsudik, and
+Ai Enkoji. An empirical study & evaluation of modern {CAPTCHAs}. In 32nd usenix security
+symposium (usenix security 23), pages 3081–3097, 2023.
+[42] Chenghui Shi, Xiaogang Xu, Shouling Ji, Kai Bu, Jianhai Chen, Raheem Beyah, and Ting
+Wang. Adversarial captchas. IEEE transactions on cybernetics, 52(7):6095–6108, 2021.
+[43] Suphannee Sivakorn, Iasonas Polakis, and Angelos D Keromytis. I am robot:(deep) learning to
+break semantic image captchas. In 2016 IEEE European Symposium on Security and Privacy (EuroS&P), pages 388–403. IEEE, 2016.
+[44] Xiwen Teoh, Yun Lin, Siqi Li, Ruofan Liu, Avi Sollomoni, Yaniv Harel, and Jin Song Dong.
+Are {CAPTCHAs} still bot-hard? generalized visual {CAPTCHA} solving with agentic vision
+language model. In 34th USENIX Security Symposium (USENIX Security 25), pages 3747–3766, 2025.
+[45] George Thomas, Alex J Chan, Jikun Kang, Wenqi Wu, Filippos Christianos, Fraser Greenlee,
+Andy Toulis, and Marvin Purtorab. Webgames: Challenging general-purpose web-browsing ai
+[46] Luis von Ahn, Manuel Blum, Nicholas J. Hopper, and John Langford. Captcha: Using hard
+ai problems for security. In Advances in Cryptology—EUROCRYPT 2003, volume 2656 of Lecture Notes in Computer Science, pages 294–311. Springer, 2003.
+[47] Haipeng Wang, Feng Zheng, Zhuoming Chen, Yi Lu, Jing Gao, and Renjia Wei. A captcha
+design based on visual reasoning. In 2018 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP), pages 1967–1971. IEEE, 2018.
+[48] Jason Wei, Zhiqing Sun, Spencer Papay, Scott McKinney, Jeffrey Han, Isa Fulford, Hyung Won
+Chung, Alex Tachard Passos, William Fedus, and Amelia Glaese. Browsecomp: A simple yet
+[49] Chen Henry Wu, Rishi Shah, Jing Yu Koh, Ruslan Salakhutdinov, Daniel Fried, and Aditi
+Raghunathan. Dissecting adversarial robustness of multimodal lm agents. arXiv preprint [50] Zonglin Wu, Yule Xue, Yaoyao Feng, Xiaolong Wang, and Yiren Song. Mca-bench: A multimodal benchmark for evaluating captcha robustness against vlm-based attacks. In Proceedings of the AAAI Conference on Artificial Intelligence, volume 40, pages 38039–38047, 2026.
+
+[51] xAI. Grok-4 model card. https://data.x.ai/2025-08-20-grok-4-model-card.pdf,
+2025.
+[52] Tianbao Xie, Danyang Zhang, Jixuan Chen, Xiaochuan Li, Siheng Zhao, Ruisheng Cao, Toh J
+Hua, Zhoujun Cheng, Dongchan Shin, Fangyu Lei, et al. Osworld: Benchmarking multimodal agents for open-ended tasks in real computer environments. Advances in Neural Information Processing Systems, 37:52040–52094, 2024.
+[53] Chejian Xu, Mintong Kang, Jiawei Zhang, Zeyi Liao, Lingbo Mo, Mengqi Yuan, Huan Sun,
+and Bo Li. Advagent: Controllable blackbox red-teaming on web agents. arXiv preprint
+[54] Tianci Xue, Weijian Qi, Tianneng Shi, Chan Hee Song, Boyu Gou, Dawn Song, Huan Sun,
+and Yu Su. An illusion of progress? assessing the current state of web agents. arXiv preprint
+[55] Weihao Yu, Zhengyuan Yang, Linjie Li, Jianfeng Wang, Kevin Lin, Zicheng Liu, Xinchao Wang,
+and Lijuan Wang. Mm-vet: Evaluating large multimodal models for integrated capabilities.
+[56] Xiang Yue, Yuansheng Ni, Kai Zhang, Tianyu Zheng, Ruoqi Liu, Ge Zhang, Samuel Stevens,
+Dongfu Jiang, Weiming Ren, Yuxuan Sun, et al. Mmmu: A massive multi-discipline multimodal understanding and reasoning benchmark for expert agi. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 9556–9567, 2024.
+[57] Ahmad Zairi Zaidi, Chun Yong Chong, Zhe Jin, Rajendran Parthiban, and Ali Safaa Sadiq.
+Touch-based continuous mobile device authentication: State-of-the-art, challenges and opportunities. Journal of Network and Computer Applications, 191:103162, 2021.
+[58] Chi Zhang, Zhao Yang, Jiaxuan Liu, Yanda Li, Yucheng Han, Xin Chen, Zebiao Huang, Bin Fu,
+and Gang Yu. Appagent: Multimodal agents as smartphone users. In Proceedings of the 2025 CHI Conference on Human Factors in Computing Systems, pages 1–20, 2025.
+[59] Yanzhe Zhang, Tao Yu, and Diyi Yang. Attacking vision-language computer agents via pop-ups.
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 8387–8401, 2025.
+[60] Sheng Zhou, Junbin Xiao, Qingyun Li, Yicong Li, Xun Yang, Dan Guo, Meng Wang, Tat-Seng
+Chua, and Angela Yao. Egotextvqa: Towards egocentric scene-text aware video question answering. In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 3363–3373, 2025.
+[61] Shuyan Zhou, Frank F Xu, Hao Zhu, Xuhui Zhou, Robert Lo, Abishek Sridhar, Xianyi Cheng,
+Tianyue Ou, Yonatan Bisk, Daniel Fried, et al. Webarena: A realistic web environment for
+
+A Detailed Benchmark Specification
+
+This appendix provides detailed benchmark information complementary to Section 3. In particular, we document the ten base task families, the construction of distraction levels, the definition of difficulty settings, the scope and mechanism of dynamic interaction validation, and the detailed benchmark statistics used in the experimental study.
+A.1
+
+Base Task Families
+
+The semantic backbone of HLL consists of ten base task families. These families define the benchmark itself; realism dimensions such as difficulty, distraction, and dynamic validation are layered on top of them and are not counted as new tasks. Recognition and Ordered Selection. This group includes text transcription, icon sequence selection, and natural-image sequence selection. These tasks require the agent to first identify the correct targets and then execute the required sequence of actions in order. Their main purpose is to probe visual recognition, instruction grounding, and ordering fidelity. Spatial Alignment and Local Patch Reasoning. This group includes slider alignment, jigsaw alignment, and missing-patch selection. These tasks stress fine-grained localization, geometric precision, and the ability to transform high-level task understanding into accurate low-level manipulation. Stateful Puzzle Restoration. This group includes board reconfiguration and tile restoration. Unlike single-step alignment tasks, these families require the agent to reason over intermediate state changes and progressively move the interface toward a valid target configuration. Reasoning-Guided Semantic Interaction. This group includes logic-and-arithmetic interaction and category-guided image selection. These tasks place greater emphasis on structured interpretation, semantic reasoning, and coordinated multi-step interaction before submission. Per-family Task Details.
+
+For completeness, the ten base families in the benchmark are:
+
+• Text transcription: read a short visual code and enter it correctly.
+• Natural-image sequence selection: click a sequence of targets in the required order over cluttered visual content.
+• Jigsaw alignment: drag a missing component to its correct geometric position.
+• Slider alignment: continuously drag a control until a visual gap is correctly aligned.
+• Category-guided image selection: select all grid images matching a semantic category.
+• Tile restoration: restore an image by swapping misplaced tiles.
+• Logic-and-arithmetic interaction: solve arithmetic, symbolic, or interface-mediated reasoning challenges and submit the correct result.
+• Missing-patch selection: select the correct local patch that completes an image.
+• Board reconfiguration: manipulate a compact board until a valid five-in-a-row state is formed.
+• Icon sequence selection: click symbolic targets in the specified sequence.
+A.2
+
+Distraction Layer
+
+To simulate more realistic webpage conditions, HLL augments base CAPTCHA tasks with an environment-level distraction layer. This layer is designed to preserve the semantic task while changing the perceptual and interaction context around it. Level 0: Clean Interface. The CAPTCHA is presented without additional webpage clutter. This setting is used as the default clean benchmark condition.
+
+Level 1: Realistic Webpage Context. The CAPTCHA is embedded in a realistic webpage-style environment with background content and a fixed-size verification dialog. This setting increases the need for localization and contextual grounding while keeping the true interaction region stable. Level 2: Deceptive Webpage Context. In addition to the background webpage, the environment introduces decoy controls and trap-like interaction elements outside the true CAPTCHA region. This setting is intended to probe whether agents can distinguish relevant verification controls from misleading interface content.
+A.3
+
+Difficulty Settings
+
+Difficulty is implemented as an intrinsic task-level control and is only enabled for base families whose hardness can be adjusted without changing the semantic nature of the task. In the current benchmark, explicit difficulty control is applied to a subset of families, primarily those involving alignment, candidate ambiguity, or visual confusion. General Principle. Across families, easy reduces ambiguity or precision demand, hard increases intrinsic ambiguity or control difficulty, and normal serves as the default intermediate setting. However, the concrete implementation differs substantially by family. Rather than treating difficulty as a global scalar, HLL instantiates it through family-specific controls that preserve the original task semantics.
+• Easy. Easy settings reduce ambiguity or control precision requirements. Typical mechanisms include fewer distractor candidates, simpler layouts, or looser alignment constraints.
+• Normal. Normal serves as the default benchmark setting and is used whenever no familyspecific difficulty control is enabled.
+• Hard. Hard settings increase intrinsic task complexity while preserving task semantics. Depending on the family, this may involve higher distractor similarity, more candidate options, stricter spatial tolerance, or more ambiguous visual restoration targets. Families with Explicit Difficulty Control. In the current benchmark, explicit difficulty control is used for slider alignment, jigsaw alignment, missing-patch selection, tile restoration, and categoryguided image selection. Other task families are evaluated only under the default normal setting. Slider Alignment. For slider alignment, difficulty is controlled by both geometric precision and manipulation ease. In easy, the slider handle is enlarged and the positional tolerance is relaxed, which makes the target easier to align. In hard, the slider handle is reduced and the acceptance tolerance is tightened, increasing the precision required for success. Jigsaw Alignment. For jigsaw alignment, difficulty is controlled through a combination of placement ambiguity and tolerance. The benchmark estimates the local visual contrast around candidate gap regions and uses this signal to choose where the missing piece is placed. In easy, the target gap is sampled from higher-contrast regions and the effective tolerance is relaxed; in hard, it is sampled from lower-contrast regions and the tolerance is tightened. As a result, harder instances place the missing piece in visually less distinctive regions while simultaneously demanding more precise alignment. Missing-Patch Selection. For missing-patch selection, difficulty is controlled by candidate ambiguity. In easy, the number of candidate patches is reduced. In hard, the number of candidates is increased and distractor candidates are additionally blurred, making local patch discrimination less reliable from coarse texture alone. Normal uses the default candidate count without the extra hard-mode distractor treatment. Tile Restoration. For tile restoration, difficulty is controlled by the number of swaps needed to restore the image. In the current static implementation, hard increases the scramble from one swapped pair to two swapped pairs, which expands the search space of possible corrections.
+
+Category-Guided Image Selection. For category-guided image selection, difficulty is controlled jointly by grid size, the number of correct targets, and the visual specificity of the image query. In easy, the task uses a smaller grid and exactly one correct image, and target retrieval favors close-up, visually salient examples. In hard, the grid becomes larger, the number of correct targets increases, and image retrieval shifts toward more scene-level or distant examples, which makes the target category visually less canonical. This design increases both perceptual ambiguity and the combinatorial burden of selecting all valid tiles.
+A.4
+
+Dynamic Interaction Validation
+
+Dynamic validation is implemented as a task-aware interaction-validation layer on top of semantic correctness. In dynamic settings, an agent must not only produce the correct answer, but also provide sufficient interaction evidence through a structured submission payload containing the final answer and the recorded telemetry stream. Dynamic Validation Scope. Dynamic validation is enabled only for task families where correctness alone is insufficient to characterize a valid interaction and where the benchmark can define a stable family-level trace check. In the current study, dynamic support covers eight base families, while text transcription and logic-and-arithmetic interaction are treated as static-only families. Mechanism Families. Rather than relying on one generic behavior score, HLL organizes dynamic detection into several mechanism families according to the form of interaction evidence exposed by each task:
+• Trajectory-continuity checks.
+• Target-centered spatial-consistency checks.
+• Repeated-wrong-loop checks.
+• State-legality checks. Compositional Use. These mechanism families are not mutually exclusive. A single task may combine, for example, repeated-loop detection with state-legality constraints, or trajectory continuity with other task-specific safeguards. The grouping below therefore reflects recurring validation patterns in the implementation rather than a strict partition of task families. Trajectory-Continuity Checks. This family is used for drag-based tasks such as slider alignment
+and jigsaw alignment. The benchmark records drag events such as drag_start, drag_move,
+and drag_end, and then verifies whether a coherent drag chain actually occurred. The current implementation checks three properties in particular: whether drag interaction is present at all, whether the drag exhibits sufficient net displacement, and whether the motion avoids teleport-like jumps. This family is the clearest expression of continuous interaction validation in the benchmark. Target-Centered Spatial-Consistency Checks. This family is used mainly for point-selection tasks such as natural-image sequence selection and icon sequence selection. Here the goal is not only to verify that clicking occurred, but to detect overly templated spatial behavior. In the current web implementation, the benchmark records target_click events and compares click positions relative to the true target centers. It then checks whether the resulting offset pattern is implausibly consistent across multiple clicks. This design is more faithful than earlier size-normalized heuristics because it operates directly on target-centered relative offsets. In addition to offset-consistency checks, these tasks may still require a minimally plausible click trace. However, the distinctive signal of this family is spatial regularity relative to actual targets rather than generic event presence alone. Repeated-Wrong-Loop Checks. This family captures pathological retry behavior in selection- or control-driven tasks. The benchmark records temporally ordered interaction histories and checks whether the same erroneous operation pattern is repeated multiple times. Such repeated cycles are especially informative in agent evaluation because they reveal failure modes that are not visible from final-answer correctness alone.
+
+Repeated wrong loops are used primarily in selection- or enumeration-style tasks. For category-guided
+image selection, the benchmark records tile_toggle and selection_change events, checks that
+real selection activity occurred, verifies that enough grid cells were actually touched, and detects whether the same wrong selection pattern is repeated multiple times. For missing-patch selection, the
+benchmark records candidate_click and candidate_select events and detects repeated wrong
+candidate patterns. State-Legality Checks. This family is used in board- and puzzle-like tasks where the intermediate state itself carries meaning. For tile restoration, the benchmark records events
+such as tile_drag_start, tile_drag_enter, tile_drop, tile_tap, swap_commit, and
+initial_order. It checks whether each committed swap changed only a legal number of positions.
+For board reconfiguration, the benchmark records cell_click, piece_drag_start, piece_drop,
+and move_commit, then checks whether each state change remained within legal single-step bounds and whether repeated move patterns were detected. Auxiliary Evaluation Safeguards. Some task families additionally include lightweight integrity checks over submitted payloads and simulator-recorded terminal states. We treat these as auxiliary benchmark-side safeguards for agent evaluation and failure analysis, rather than as primary dynamic detection mechanisms, because they help diagnose trace/payload inconsistencies but do not correspond to realistic production-side defenses. These safeguards appear in several forms. For missing-patch selection, the submitted answer can be compared against the last recorded candidate selection. For tile restoration and board reconfiguration, auxiliary checks may compare the final submission against the last recorded swap or move state. We retain these checks because they are useful for agent-side diagnosis and failure attribution, but we do not count them as part of the core dynamic mechanism taxonomy. Representative Dynamic Signals. The benchmark records family-specific telemetry rather than relying on a single generic trajectory metric. Across the mechanism families above, representative signals include:
+• whether a coherent drag chain with sufficient displacement was recorded,
+• whether click offsets are implausibly consistent relative to target centers,
+• whether repeated wrong loops appear in selection or control history,
+• and whether state changes exceed legal single-step bounds. Consistency Checks. These interaction signals are converted into a small set of validation checks that are shared conceptually across task families, even though their concrete thresholds and rules are task-specific:
+• Evidence-presence checks: whether the submission contains the minimum telemetry required for validation.
+• Trajectory-continuity checks: whether drag-based behavior exhibits real movement and avoids teleport-like jumps.
+• Spatial-consistency checks: whether target-centered click offsets are implausibly regular.
+• Loop checks: whether the same wrong interaction pattern is repeated multiple times.
+• State-legality checks: whether intermediate state transitions remain within legal single-step bounds. Dynamic Failure Taxonomy. At a high level, dynamic validation can reject an attempt for at least five reasons:
+• Missing interaction evidence: the submission lacks sufficient telemetry for dynamic verification.
+• Trajectory-continuity violation: drag-based behavior lacks coherent movement evidence or contains teleport-like jumps.
+
+• Target-centered spatial anomaly: click behavior is implausibly regular relative to targetcentered offsets.
+• Repeated wrong loop: the same erroneous interaction pattern is repeated multiple times.
+• Illegal state transition: board or puzzle updates exceed legal single-step changes. Supported Families and Primary Mechanisms. For transparency, we group dynamic-support families by their dominant recurring dynamic mechanisms:
+• Trajectory continuity: slider alignment and jigsaw alignment.
+• Target-centered spatial consistency: natural-image sequence selection and icon sequence selection.
+• Repeated wrong loops: category-guided image selection and missing-patch selection.
+• State legality: tile restoration and board reconfiguration. Per-Family Dynamic Validation Rules. Beyond the abstract mechanism categories above, each dynamic CAPTCHA variant instantiates a concrete set of validation rules. We summarize the effective validation logic of each family below, focusing on what is checked rather than on page-side implementation details.
+• Slider alignment: requires a real drag chain with both start and end events, sufficient net displacement, and no teleport-like jump in the recorded trajectory. A trial fails if the slider appears to move too little or if the path is implausibly discontinuous.
+• Jigsaw alignment: uses the same trajectory-continuity principle as slider alignment. The dynamic check requires a genuine drag trajectory for the puzzle piece, sufficient movement magnitude, and the absence of jump-like discontinuities.
+• Natural-image sequence selection: requires enough recorded clicks to cover the expected sequence, rejects traces whose click positions collapse to too few distinct locations, and then checks whether click offsets relative to the true target centers are implausibly consistent across multiple selections.
+• Icon sequence selection: follows the same target-centered spatial-consistency logic as natural-image sequence selection. The dynamic check requires enough icon clicks, sufficient positional diversity, and rejects unnaturally templated relative offsets around icon centers.
+• Category-guided image selection: requires enough recorded tile toggles to support the submitted selection, checks that the interaction trail touches enough distinct grid cells, and then detects repeated wrong selection loops by testing whether the same erroneous toggle/selection pattern is repeated multiple times.
+• Missing-patch selection: primarily uses repeated-wrong-selection detection. The benchmark checks whether a real candidate selection was recorded and whether the same wrong candidate pattern is repeatedly retried. In addition, auxiliary benchmark-side safeguards may compare the submitted answer against the final recorded candidate selection.
+• Tile restoration: requires that a real swap interaction be observed through either a tapbased or drag-based flow, and then checks state legality by verifying that each committed swap changes only a legal number of positions. Auxiliary benchmark-side safeguards may additionally compare the submitted answer against the last recorded swap state.
+• Board reconfiguration: requires that a real move be observed through click-flow or dragflow, checks that each committed board update remains within legal single-step bounds, and detects repeated move patterns when the same erroneous sequence recurs. Auxiliary safeguards may additionally compare the submitted answer against the final recorded move state. Design Rationale. This organization keeps the dynamic layer analyzable without reducing it to a brittle one-size-fits-all score. It also matches the actual implementation more closely: drag tasks are characterized by trajectory continuity, point-selection tasks by target-centered spatial regularity, some tasks by retry loops, and others by state-legality violations. Auxiliary integrity checks remain available for benchmark-side diagnosis and agent analysis, but they are intentionally separated from
+
+Table 5: Benchmark support matrix across task families and realism settings. “Yes” indicates that the corresponding family is evaluated under that setting in the main study.
+Task family
+Text transcription
+Slider alignment
+Natural-image sequence selection
+Jigsaw alignment
+Logic-and-arithmetic interaction
+Category-guided image selection
+Missing-patch selection
+Icon sequence selection
+Tile restoration
+Board reconfiguration
+Total supported settings
+
+Clean static
+Yes
+Yes
+Yes
+Yes
+Yes
+Yes
+Yes
+Yes
+Yes
+Yes
+
+Webpage distraction
+Yes
+Yes
+Yes
+Yes
+Yes
+Yes
+Yes
+Yes
+Yes
+Yes
+
+Hard variant
+–
+Yes
+–
+Yes
+–
+Yes
+Yes
+–
+Yes
+–
+
+Dynamic validation
+–
+Yes
+Yes
+Yes
+–
+Yes
+Yes
+Yes
+Yes
+Yes
+
+the core dynamic mechanism taxonomy because they do not correspond to realistic deployment-side defenses. As a result, dynamic validation can be analyzed not only by whether an agent passes or fails, but also by which type of anti-automation mechanism it consistently struggles with.
+A.5
+
+Benchmark Statistics and Support Matrix
+
+Table 5 summarizes the benchmark support matrix used in the main experiments. The benchmark contains ten base task families. All families support the clean static setting and the webpagedistraction setting. Five families additionally support explicit hard variants, and eight families support dynamic interaction validation. Counting each supported family–setting cell once yields 33 evaluated settings in total: ten clean static settings, ten distraction settings, five hard settings, and eight dynamic settings.
+The support matrix reflects the benchmark design rather than an arbitrary omission of results. Text transcription is retained as a static recognition baseline and is not assigned a dynamic variant in the main definition. Logic-and-arithmetic interaction is evaluated under clean and distracted webpage conditions, but its heterogeneous subtype structure makes a single hard-setting control or familylevel dynamic mechanism less directly comparable than the controls used for alignment, selection, patch, restoration, and board-manipulation tasks. Board reconfiguration supports dynamic validation through state-legality checks, but its hard-setting extension is not included in the main study to keep the difficulty-controlled comparison aligned across families with explicit and directly comparable hardness parameters.
+
+B Additional Experimental Details and Full Results
+
+This appendix provides supplementary material for Section 4. It collects experimental configuration details and extended qualitative analyses that clarify the failure modes behind those results. Unless otherwise specified, all results in this appendix follow the same evaluation protocol defined in Section 4.1.
+B.1
+
+Detailed Experimental Setup
+
+This subsection summarizes the evaluation configuration used in our experiments, including:
+• the evaluated model and agent list,
+• the step budget, timeout, and attempt limits where applicable,
+• the number of sampled instances per configuration where reported,
+• and any setting-specific implementation notes needed for reproducibility. All experiments are conducted with the same closed-loop evaluation pipeline. In each batch, one or more agents are evaluated on a selected set of CAPTCHA families under a fixed configuration specifying the number of sampled instances per family, the maximum number of interaction steps,
+
+the maximum number of attempts, the per-sample timeout, and the realism controls used in that batch, including difficulty and distraction level when applicable. The experimental study is organized into several batches rather than a single monolithic sweep. The clean static setting evaluates the ten base task families under default task configuration and distraction level 0. For families with explicit difficulty control, we additionally evaluate easy, normal, and hard variants. For webpage-clutter analysis, we evaluate increasing distraction levels. Dynamic experiments are run on the corresponding dynamic task variants and use the same simulator setting, except that a semantically correct answer must additionally satisfy the family-specific traceconditioned dynamic validation rules defined in Section 3.3. Across all batches, the evaluation protocol is consistent: an agent interacts with the rendered verification page in a closed loop until it submits an answer, reaches the step limit, exhausts the allowed attempts, or times out. In the current experiments, the per-sample timeout is set to 1200 seconds, while the interaction budget and the number of sampled instances are fixed within each batch. This batch-wise reporting is important because the present study was collected incrementally across static, difficulty-controlled, distraction-controlled, and dynamic settings. For each evaluated sample, the evaluation pipeline records both aggregate outputs and detailed artifacts. We retain the final result record together with interaction traces and supporting visual evidence such as screenshots when available. Unless otherwise specified, all reported metrics are computed at the instance level. A static trial is counted as successful if the final submitted answer matches the ground-truth solution. A dynamic trial must first satisfy static correctness and then pass the corresponding trace-conditioned dynamic validation rule over simulator-observable interaction traces and committed page states. This shared setup ensures that comparisons across base, distraction, difficulty, and dynamic settings remain directly aligned.
+
+B.2
+
+Full Static Results Analysis
+
+Table 1 reports the complete static results under clean webpages and default task configurations. These results complement the discussion in Section 4.2 by exposing the full cross-model and cross-family structure of performance. Two high-level patterns are immediately visible. First, static performance varies substantially across models: Claude-Opus-4.6 is the strongest model in this setting, while several other agents remain effective only on a subset of families. Second, performance is highly non-uniform across task families, indicating that even without distraction, elevated difficulty, or dynamic validation, CAPTCHA solving still requires a composition of heterogeneous capabilities rather than a single generic perceptual skill.
+At the family level, text transcription is clearly the easiest task in the clean static setting, with a mean success rate of 84.8 across evaluated models. Several families involving direct visual localization or single-step recognition are also moderately solvable on average, including jigsaw alignment, slider alignment, and logic-and-arithmetic interaction. In contrast, icon-sequence selection and tile restoration are the least solved families, with mean success rates of 21.0 and 25.3. This ranking is consistent with the intended capability structure of the benchmark: the easier families are those where recognition dominates, whereas the harder families require stronger sequential control, fine-grained spatial grounding, or persistent manipulation of an evolving interface state. The model-level profiles are similarly heterogeneous. Claude-Opus-4.6 achieves the strongest overall static performance, reaching near-perfect success on most task families and maintaining a macro-average of 90.0. Its remaining errors are concentrated on ordered icon selection and board reconfiguration, suggesting that even the strongest model is not fully saturated on tasks requiring ordered target interaction or stateful layout reasoning. Gemini-3.1-Pro is the most balanced among the remaining models, with consistently competitive performance across almost all families. GPT5.4 exhibits a more polarized profile: it is nearly saturated on text transcription, jigsaw alignment, category-guided image selection, and missing-patch selection, but drops sharply on icon-sequence selection and tile restoration. The lower-performing group, including Claude-Sonnet-4.6, GLM-5V, MiniMax-M2.7, and Qwen-Max, further confirms that strong performance on one or two families does not translate into robust end-to-end capability across the benchmark.
+
+Table 6: Family-wise summary of static results under clean webpages and default task configurations.
+“Mean” denotes the average success rate (%) across all evaluated models in the current static sweep. “Best model” reports the strongest model on that family under the same setting.
+Family
+Text transcription
+Slider alignment
+Image-sequence selection
+Jigsaw alignment
+Logic-arithmetic interaction
+Category-guided image selection
+Missing-patch selection
+Icon-sequence selection
+Tile restoration
+Board reconfiguration
+
+Mean
+84.8 54.0 43.0 55.5 53.3 47.3 44.5 21.0 25.3 38.0
+
+Best model
+GPT-5.4 / Gemini-3.1-Pro / Claude-Sonnet-4.6 / Claude-Opus-4.6
+Claude-Opus-4.6
+Claude-Opus-4.6
+Claude-Opus-4.6
+Claude-Opus-4.6
+GPT-5.4 / Claude-Opus-4.6
+Claude-Opus-4.6
+Claude-Opus-4.6
+Claude-Opus-4.6
+Gemini-3.1-Pro
+
+Perceptual Decoding Errors
+Instruction : Please enter the 4 characters shown in the image.
+
+User
+
+Agent
+
+Failed
+Misrecognition:
+‘U' → ‘0'
+
+wrong input
+
+Figure 7: Representative static failure case for perceptual decoding errors.
+
+B.2.1
+
+Static Failure Cases
+
+We further inspect representative failed traces from the clean static setting. The taxonomy below organizes the observed errors into eight capability-aligned categories. Each category isolates a distinct bottleneck in the static setting, from low-level perception to higher-level state management and recovery. Perceptual decoding errors. These failures correspond to weak fine-grained visual recognition and unstable OCR. The agent misreads distorted text, confuses visually similar characters, or fails to distinguish subtle local image details before any complex interaction is required. Target localization and candidate filtering errors. These failures correspond to inaccurate visual localization and insufficient robustness in target screening. The agent may understand the requested target category or sequence but fail to identify the correct candidate, miss valid targets, or over-select visually similar distractors. Spatial grounding and action mapping errors. These failures correspond to weak visual-to-action spatial mapping. The agent often has the right semantic target in mind, but maps that target to an incorrect click or drag coordinate, producing the common “recognize correctly but act at the wrong location” pattern.
+
+Failed
+
+Figure 8: Representative static failure case for target localization and candidate filtering errors.
+
+Spatial Grounding / Action Mapping Errors
+
+User
+
+Instruction:
+Click on the characters in the specified order.
+
+Agent
+
+Failed
+
+Weak spatial mapping ability for target clicking Insufficient visual-to-action mapping ability
+
+Figure 9: Representative static failure case for spatial grounding and action mapping errors.
+Geometric calibration failures. These failures correspond to insufficient precision in geometric estimation and fine-grained control. Slider and jigsaw-alignment tasks expose this bottleneck most directly: agents often understand the intended operation, but choose an inaccurate drag distance, stop short of the target, overshoot it, or repeat a poorly calibrated movement. Visual structure reconstruction failures. These failures correspond to weak visual structure understanding and limited global-consistency reasoning. Tile restoration, board reconfiguration, missing-patch selection, and puzzle-like tasks require the agent to infer an underlying visual or spatial structure; failed traces often show uncertainty about which element is misplaced or how local changes affect the global configuration. UI affordance and interactive-region misunderstanding. These failures correspond to insufficient UI-structure understanding and weak recognition of interactive regions. The agent may confuse the CAPTCHA region with surrounding controls, misidentify input fields or buttons, or fail to determine which visible elements are actually actionable. State tracking and completion-judgment failures. These failures correspond to weak state management, context isolation, and task-completion judgment. In multi-step tasks, the agent may lose track of which targets have already been selected, repeat completed steps, submit too early, or continue interacting after the task state has already changed.
+
+Geometric Calibration Failures
+Task: Drag the puzzle piece to complete the image.
+
+User
+
+Failed
+
+Agent
+
+Weak geometric calibration causes inaccurate alignment and unstable dragging during puzzle-solving tasks.
+
+Figure 10: Representative static failure case for geometric calibration failures.
+
+Visual Structure Reconstruction Failures
+
+Failed
+
+Figure 11: Representative static failure case for visual structure reconstruction failures.
+
+Recovery and self-correction failures. These failures correspond to weak correction, abnormalinterface handling, and strategy adaptation after feedback. Across several families, agents recognize that an attempt has failed but enter low-value retry loops, refresh repeatedly, resubmit stale answers, repeat old coordinates, or emit malformed actions instead of adapting their next step.
+B.3
+B.3.1
+
+Additional Failure Modes under Distraction
+Distraction Result Interpretation
+
+The complete distraction results are reported in Table 2. Relative to the clean static setting, webpage distraction does not introduce a new CAPTCHA operation. Instead, it adds page-level context that makes the agent first identify the true verification region and suppress irrelevant surrounding content. We therefore focus only on failure modes that are newly exposed by the distracted webpage setting, rather than repeating the static taxonomy.
+B.3.2
+
+New Distraction Failure Modes
+
+Task-region localization and distraction suppression failures. Unlike the clean setting, the distracted setting requires the agent to separate the active CAPTCHA card from ordinary webpage content, background text, decorative elements, and decoy controls. Failed traces often show that the agent either acts on surrounding page elements or spends excessive steps re-reading the page without committing to the true verification region. This failure is distinct from static target localization because the ambiguity occurs at the page level before the CAPTCHA content itself is solved.
+
+h) UI Affordance and Interactive Region Misunderstanding
+Instruction:
+Click on the icons in the specified order.
+
+User
+
+Agent
+
+Failed
+
+Insufficient recognition of interactive regions Insufficient understanding of UI structure
+
+Figure 12: Representative static failure case for UI affordance and interactive-region misunderstanding.
+
+State Tracking and Completion-Judgment Failures
+Instruction : Click on the icons in the order shown above.
+
+User
+
+Only 2/3 icons selected
+
+Failed
+
+Agent
+
+Premature verification
+The agent fails to track task progress and prematurely verifies before selecting all required icons.
+
+Figure 13: Representative static failure case for state tracking and completion-judgment failures.
+
+Layout-shift spatial generalization failures. Distraction also changes the position, scale, and surrounding context of the verification widget. Some agents appear to rely on coordinate priors learned from clean layouts, repeatedly clicking familiar relative positions even when the target has shifted or the card is embedded differently. This newly exposes weak spatial generalization across page layouts: the agent may still know the CAPTCHA task type, but fail to remap its actions after the interface is placed in a more realistic webpage context.
+
+B.4
+B.4.1
+
+Additional Failure Modes under Hard Variants
+Difficulty Result Interpretation
+
+The complete hard-setting results are reported in Table 3. Hard variants mostly amplify the static failures described above: perception errors become more frequent, action calibration has less room for error, and state reconstruction becomes harder. The additional analysis below therefore focuses on the failure modes that become newly salient only when the task is made intrinsically harder.
+
+B.4.2
+
+New or Amplified Hard-Setting Failure Modes
+
+High-similarity discrimination failures. Hard image-selection and missing-patch tasks increase candidate similarity or visual ambiguity. This exposes a sharper form of fine-grained discrimination failure: agents can often identify obvious positives, but fail on borderline candidates, visually similar distractors, or local patches that require comparing subtle texture and shape consistency. Strict-tolerance calibration failures. Hard slider and jigsaw-alignment tasks reduce the acceptable error tolerance. As a result, actions that are semantically correct but slightly imprecise no longer pass. The newly salient issue is not merely that the agent maps a target to the wrong coordinate, but that it cannot reliably produce sufficiently precise movements when the success region becomes narrow. Complex state-search failures. Hard restoration tasks require more complex search over possible intermediate states, such as identifying multiple misplaced tiles instead of a single obvious swap. This setting newly emphasizes the agent’s inability to plan and verify a multi-step correction sequence under a larger state space, even when it can describe the overall puzzle structure.
+B.5
+B.5.1
+
+Dynamic Validation Analysis
+Dynamic Result Interpretation
+
+The dynamic results in Table 4 show that trace-conditioned validation exposes a process-level weakness that is not captured by static correctness. Across the eight dynamic-supported task families, Gemini-3.1-Pro obtains the highest average success rate (45.0), followed by GPT-5.4 (26.3) and Claude-Opus-4.6 (23.8). This ranking differs from the base static setting, where Claude-Opus-4.6 is the strongest overall model. The reversal suggests that dynamic validation is not merely a harder version of static recognition; it tests whether the model can produce an interaction trajectory that remains valid under task-specific evidence checks. The strongest degradation appears on task families whose success depends on the relation between the final answer and the action trace. Slider alignment and jigsaw alignment require coherent drag evidence, ordered clicking tasks require target-centered spatial consistency, and restoration-style tasks require legal state transitions. In these families, an answer can be visually or semantically plausible while still failing dynamic validation because the observed trace does not support the submitted result.
+B.5.2
+
+Mechanism-Level Dynamic Failures
+
+Dynamic failures can be organized into three additional process-level categories that are distinct from the static failure taxonomy. Insufficient interaction evidence. The agent may submit or reach a seemingly correct final answer without producing enough task-relevant evidence in the recorded trace. This occurs when required clicks, selections, drags, or state changes are missing or too sparse to support the final answer. Such cases are especially important because they would be counted as plausible successes under a purely static metric, but fail once the benchmark checks whether the answer is backed by observable interaction. Trajectory-continuity and action-authenticity failures. Drag-based tasks such as slider alignment and jigsaw alignment require a coherent motion trace, not just a final coordinate. Dynamic validation therefore exposes failures where the recorded action sequence lacks a valid drag start–move–end chain, contains teleport-like jumps, or does not show enough continuous displacement. These failures explain why some models that understand the alignment target still obtain low dynamic success on alignment families. Interaction-history and terminal-state inconsistency. For ordered clicking, board reconfiguration, tile restoration, and selection-based tasks, the submitted answer must be consistent with the sequence of previous actions and the final page state. Dynamic failures arise when the action history contains repeated wrong clicks, illegal transitions, incomplete selections, or a final state that does not match the submitted result. This category captures cases where the model appears to know the answer but cannot maintain a valid process from initial observation to terminal submission.
+
+Trajectory-continuity and action-authenticity failures. Task: Drag the puzzle piece to complete the image.
+
+User
+Failed
+Trajectory break
+
+Agent
+
+The agent identifies the correct puzzle position but fails because its drag motion is discontinuous and not recognized as a valid action trajectory.
+
+Figure 14: Representative dynamic failure case for Trajectory-continuity and action-authenticity failures.
+B.6
+
+Responsible Release and Intended Use
+
+We position HLL as a controlled simulator and evaluation harness for studying interactive verification, not as tooling to attack or bypass arbitrary live third-party verification systems. Release materials are intended to reproduce the benchmark episodes, metrics, and validation rules reported in this paper, together with documentation.

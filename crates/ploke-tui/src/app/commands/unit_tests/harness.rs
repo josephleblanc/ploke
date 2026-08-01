@@ -41,26 +41,23 @@
 //! ## Usage Patterns
 //!
 //! ### 1. Minimal Setup (App handle only, no actors)
-//! ```rust,norun
-//! let rt = TestRuntime::new(&fixture_db);  // All params = NotSpawned
-//! let app = rt.into_app(pwd);              // Get App handle, no spawning needed
+//! ```rust,ignore
+//! let rt = TestRuntime::new(&fixture_db); // All params = NotSpawned
+//! let app = rt.into_app(pwd); // Get App handle, no spawning needed
 //! // Use app.state_cmd_tx() to send commands, but nothing processes them
 //! ```
 //!
 //! ### 2. With State Manager (most command tests)
-//! ```rust,norun
-//! let rt = TestRuntime::new(&fixture_db)
-//!     .spawn_state_manager();              // Returns TestRuntime<_, Spawned, _, _, _>
-//!
+//! ```rust,ignore
+//! let rt = TestRuntime::new(&fixture_db).spawn_state_manager();
 //! let events = rt.events_builder().build_app_only();
 //! let mut debug_rx = events.app_actor_events.debug_string_rx.unwrap();
-//!
 //! let app = rt.into_app(pwd);
 //! // Send command, assert on debug_rx.recv()
 //! ```
 //!
 //! ### 3. Full Stack (for integration tests)
-//! ```rust,norun
+//! ```rust,ignore
 //! let rt = TestRuntime::new(&fixture_db)
 //!     .spawn_file_manager()
 //!     .spawn_state_manager()
@@ -73,12 +70,12 @@
 //!
 //! After spawning, `rt.events_builder()` gives you a **type-state builder** for subscribing to channels:
 //!
-//! ```rust,norun
-//! let events = rt.events_builder()
-//!     .build_app_only();           // Just app actor events + debug_string_rx
-//!     .build_app_io();             // App + I/O manager
-//!     .build_app_event_bus();      // App + event bus subscriptions
-//!     .build_all();                 // Everything
+//! ```rust,ignore
+//! // Choose one of these depending on what you want to subscribe to:
+//! let events = rt.events_builder().build_app_only();
+//! let events = rt.events_builder().build_app_io();
+//! let events = rt.events_builder().build_app_event_bus();
+//! let events = rt.events_builder().build_all();
 //! ```
 // AI_DOC:written kimi-k2.5 2026-04-04
 // AI_DOC:checked JL        2026-04-04
@@ -114,27 +111,39 @@ use crate::{
     chat_history::ChatHistory,
     context_plan,
     file_man::FileManager,
-    llm::manager::llm_manager,
+    llm::manager::{SessionCapture, captured_llm_manager, llm_manager},
     observability, run_event_bus,
     user_config::{EmbeddingConfig, UserConfig},
 };
 
 #[derive(Debug, Clone)]
-pub struct DebugStateCommand(String);
+pub struct DebugStateCommand {
+    sequence: u64,
+    debug: String,
+}
+
 impl DebugStateCommand {
-    pub fn debug_string_from_ref(cmd: &StateCommand) -> Self {
+    pub fn debug_string_from_ref(sequence: u64, cmd: &StateCommand) -> Self {
         let debug_string = format!("{:?}", cmd);
-        Self(debug_string)
+        Self {
+            sequence,
+            debug: debug_string,
+        }
     }
 
     /// Returns the debug string representation of the StateCommand.
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.debug
+    }
+
+    pub fn sequence(&self) -> u64 {
+        self.sequence
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ValidationProbeEvent {
+    sequence: u64,
     command: String,
     validation: Option<Result<(), String>>,
     /// User-facing error message (if any)
@@ -152,6 +161,10 @@ pub struct ValidationProbeEvent {
 }
 
 impl ValidationProbeEvent {
+    pub fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
     pub fn command(&self) -> &str {
         &self.command
     }
@@ -221,9 +234,11 @@ impl RelayStateCmd {
             state_cmd_tx,
             debug_string_tx,
         } = self;
+        let mut sequence = 0;
         while let Some(cmd) = state_cmd_rx.recv().await {
+            sequence += 1;
             // 1. Emit debug string first
-            let debug_string = DebugStateCommand::debug_string_from_ref(&cmd);
+            let debug_string = DebugStateCommand::debug_string_from_ref(sequence, &cmd);
             let _ = debug_string_tx
                 .send(debug_string)
                 .await
@@ -262,6 +277,14 @@ impl RelayStateCmd {
                     tokio::spawn(relay_oneshot(scan_tx, proxy_rx));
                     StateCommand::ScanForChange { scan_tx: proxy_tx }
                 }
+                StateCommand::ScanPathsForChange { paths, scan_tx } => {
+                    let (proxy_tx, proxy_rx) = oneshot::channel();
+                    tokio::spawn(relay_oneshot(scan_tx, proxy_rx));
+                    StateCommand::ScanPathsForChange {
+                        paths,
+                        scan_tx: proxy_tx,
+                    }
+                }
                 // EmbedMessage carries Receivers; we cannot proxy those because
                 // the corresponding Senders live in the code that created the command.
                 other => other,
@@ -289,8 +312,10 @@ impl ValidationRelayStateCmd {
         // Subscribe to error events for capturing user-facing errors
         let mut error_rx = event_bus.subscribe(EventPriority::Realtime);
 
+        let mut sequence = 0;
         while let Some(cmd) = state_cmd_rx.recv().await {
-            let debug_string = DebugStateCommand::debug_string_from_ref(&cmd);
+            sequence += 1;
+            let debug_string = DebugStateCommand::debug_string_from_ref(sequence, &cmd);
             let _ = debug_string_tx
                 .send(debug_string)
                 .await
@@ -392,6 +417,7 @@ impl ValidationRelayStateCmd {
             {
                 let _ = validation_tx
                     .send(ValidationProbeEvent {
+                        sequence,
                         command: cmd.discriminant().to_string(),
                         validation,
                         error_message,
@@ -507,11 +533,16 @@ impl MockUserConfig {
 
 pub trait TestAppAccessor {
     fn state_cmd_tx(&self) -> mpsc::Sender<StateCommand>;
+    fn cancel_chat(&self);
 }
 
 impl TestAppAccessor for App {
     fn state_cmd_tx(&self) -> mpsc::Sender<StateCommand> {
         self.cmd_tx.clone()
+    }
+
+    fn cancel_chat(&self) {
+        let _ = self.cancel_tx.send(CancelChatToken::Close);
     }
 }
 
@@ -875,6 +906,33 @@ struct TestRuntimeInner {
     validation_rx: std::sync::Mutex<Option<mpsc::Receiver<ValidationProbeEvent>>>,
     rag_event_tx: mpsc::Sender<RagEvent>,
     cancel_tx: watch::Sender<CancelChatToken>,
+    actor_handles: std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>,
+}
+
+/// Owns background actor tasks spawned by [`TestRuntime`].
+///
+/// Most unit tests intentionally consume `TestRuntime` without this guard and keep
+/// the historical detached-task behavior. Long-lived eval harnesses should keep
+/// the guard with the returned [`App`] so dropping the runtime also terminates
+/// the actor tasks and their `Arc<AppState>`/database holdings.
+pub struct TestRuntimeActorGuard {
+    cancel_tx: watch::Sender<CancelChatToken>,
+    handles: Vec<tokio::task::JoinHandle<()>>,
+}
+
+impl TestRuntimeActorGuard {
+    pub fn handle_count(&self) -> usize {
+        self.handles.len()
+    }
+}
+
+impl Drop for TestRuntimeActorGuard {
+    fn drop(&mut self) {
+        let _ = self.cancel_tx.send(CancelChatToken::Close);
+        for handle in self.handles.iter().rev() {
+            handle.abort();
+        }
+    }
 }
 
 /// Type-state test harness that tracks which background actors have been spawned.
@@ -908,8 +966,7 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
         }
     }
 
-    /// Build the [`App`] handle. This does **not** require any actors to be spawned.
-    pub fn into_app(self, pwd: PathBuf) -> App {
+    fn app(&self, pwd: PathBuf) -> App {
         App::new(
             self.inner.command_style,
             Arc::clone(&self.inner.state),
@@ -922,14 +979,80 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
         )
     }
 
+    fn retain_actor_handle(&self, handle: tokio::task::JoinHandle<()>) {
+        self.inner
+            .actor_handles
+            .lock()
+            .expect("actor_handles mutex poisoned")
+            .push(handle);
+    }
+
+    fn actor_guard(&self) -> TestRuntimeActorGuard {
+        let handles = self
+            .inner
+            .actor_handles
+            .lock()
+            .expect("actor_handles mutex poisoned")
+            .drain(..)
+            .collect();
+        TestRuntimeActorGuard {
+            cancel_tx: self.inner.cancel_tx.clone(),
+            handles,
+        }
+    }
+
+    /// Build the [`App`] handle. This does **not** require any actors to be spawned.
+    pub fn into_app(self, pwd: PathBuf) -> App {
+        self.app(pwd)
+    }
+
+    /// Build the [`App`] handle and retain ownership of spawned actor tasks.
+    pub fn into_app_with_actor_guard(self, pwd: PathBuf) -> (App, TestRuntimeActorGuard) {
+        let app = self.app(pwd);
+        let actor_guard = self.actor_guard();
+        (app, actor_guard)
+    }
+
     /// Build the [`App`] handle after seeding `SystemState.pwd` for fast-path tests.
     pub async fn into_app_with_state_pwd(self, pwd: PathBuf) -> App {
         self.inner.state.system.set_pwd_for_test(pwd.clone()).await;
         self.into_app(pwd)
     }
 
+    /// Build the [`App`] handle and actor guard after seeding `SystemState.pwd`.
+    pub async fn into_app_with_state_pwd_and_actor_guard(
+        self,
+        pwd: PathBuf,
+    ) -> (App, TestRuntimeActorGuard) {
+        self.inner.state.system.set_pwd_for_test(pwd.clone()).await;
+        self.into_app_with_actor_guard(pwd)
+    }
+
+    /// Spawn a real terminal frontend attached to this runtime.
+    #[cfg(feature = "demo")]
+    pub async fn spawn_terminal_app(&self, pwd: PathBuf) -> tokio::task::JoinHandle<()> {
+        self.inner.state.system.set_pwd_for_test(pwd.clone()).await;
+        let app = self.app(pwd);
+        tokio::spawn(async move {
+            let terminal = ratatui::init();
+            let result = app.run(terminal).await;
+            ratatui::restore();
+            if let Err(error) = result {
+                tracing::error!(%error, "demo terminal app exited with error");
+            }
+        })
+    }
+
     pub fn state_arc(&self) -> Arc<AppState> {
         Arc::clone(&self.inner.state)
+    }
+
+    pub fn event_bus_arc(&self) -> Arc<EventBus> {
+        Arc::clone(&self.inner.event_bus)
+    }
+
+    pub fn command_sender(&self) -> mpsc::Sender<StateCommand> {
+        self.inner.cmd_tx.clone()
     }
 
     /// Convenience wrapper that returns the app wrapped in `Arc<Mutex<App>>`.
@@ -1020,14 +1143,59 @@ impl TestRuntime<NotSpawned, NotSpawned, NotSpawned, NotSpawned, NotSpawned> {
     /// Create a lightweight runtime backed by `fixture_db`. No tasks are spawned yet.
     pub fn new(fixture_db: &Arc<ploke_db::Database>) -> Self {
         let config = UserConfig::default();
+        let processor = config
+            .load_embedding_processor()
+            .expect("load embedding processor");
+        Self::new_with_embedding_processor(fixture_db, processor)
+    }
+
+    /// Create a lightweight runtime backed by `fixture_db` using a caller-supplied
+    /// embedding processor. This keeps eval/test harnesses from implicitly
+    /// depending on the default local model configuration.
+    pub fn new_with_embedding_processor(
+        fixture_db: &Arc<ploke_db::Database>,
+        processor: EmbeddingProcessor,
+    ) -> Self {
+        Self::new_with_embedding_processor_and_rag_config(
+            fixture_db,
+            processor,
+            RagConfig::default(),
+        )
+    }
+
+    /// Create a sparse headless runtime with a caller-supplied BM25 timeout.
+    ///
+    /// `RagService` owns this runtime's BM25 lifecycle. Keeping the separate
+    /// dense indexer would let post-apply jobs outlive the eval attempt.
+    pub fn new_with_embedding_processor_and_bm25_timeout(
+        fixture_db: &Arc<ploke_db::Database>,
+        processor: EmbeddingProcessor,
+        bm25_timeout_ms: u64,
+    ) -> Self {
+        let mut rag_config = RagConfig::default();
+        rag_config.bm25_timeout_ms = bm25_timeout_ms;
+        rag_config.strict_bm25_by_default = true;
+        let mut runtime =
+            Self::new_with_embedding_processor_and_rag_config(fixture_db, processor, rag_config);
+        let inner = Arc::get_mut(&mut runtime.inner)
+            .expect("new headless runtime must have unique inner ownership");
+        let state =
+            Arc::get_mut(&mut inner.state).expect("new headless runtime must own its state");
+        state.indexer_task = None;
+        runtime
+    }
+
+    /// Create a lightweight runtime with caller-supplied embedding and RAG settings.
+    fn new_with_embedding_processor_and_rag_config(
+        fixture_db: &Arc<ploke_db::Database>,
+        processor: EmbeddingProcessor,
+        rag_config: RagConfig,
+    ) -> Self {
+        let config = UserConfig::default();
         let runtime_cfg: RuntimeConfig = config.clone().into();
         let tool_verbosity = runtime_cfg.tool_verbosity;
 
         let db_handle = Arc::clone(fixture_db);
-
-        let processor = config
-            .load_embedding_processor()
-            .expect("load embedding processor");
         let embedding_runtime = Arc::new(ploke_embed::runtime::EmbeddingRuntime::from_shared_set(
             Arc::clone(&db_handle.active_embedding_set),
             processor,
@@ -1058,7 +1226,7 @@ impl TestRuntime<NotSpawned, NotSpawned, NotSpawned, NotSpawned, NotSpawned> {
             db_handle.clone(),
             Arc::clone(&embedding_runtime),
             io_handle.clone(),
-            RagConfig::default(),
+            rag_config,
         ) {
             Ok(svc) => Some(Arc::new(svc)),
             Err(_e) => None,
@@ -1096,6 +1264,7 @@ impl TestRuntime<NotSpawned, NotSpawned, NotSpawned, NotSpawned, NotSpawned> {
                 validation_rx: std::sync::Mutex::new(None),
                 rag_event_tx,
                 cancel_tx,
+                actor_handles: std::sync::Mutex::new(Vec::new()),
             }),
             _file_manager: std::marker::PhantomData,
             _state_manager: std::marker::PhantomData,
@@ -1122,7 +1291,8 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
             self.inner.event_bus.realtime_tx.clone(),
             pwd,
         );
-        tokio::spawn(fm.run());
+        let handle = tokio::spawn(fm.run());
+        self.retain_actor_handle(handle);
         self._cast()
     }
 
@@ -1149,13 +1319,15 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
             .lock()
             .expect("debug_string_rx mutex poisoned") = Some(debug_string_rx);
 
-        tokio::spawn(debug_relay.run_relay());
-        tokio::spawn(state_manager(
+        let relay_handle = tokio::spawn(debug_relay.run_relay());
+        self.retain_actor_handle(relay_handle);
+        let state_handle = tokio::spawn(state_manager(
             Arc::clone(&self.inner.state),
             state_cmd_relay_rx,
             Arc::clone(&self.inner.event_bus),
             self.inner.rag_event_tx.clone(),
         ));
+        self.retain_actor_handle(state_handle);
         self._cast()
     }
 
@@ -1189,18 +1361,24 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
             .lock()
             .expect("validation_rx mutex poisoned") = Some(validation_rx);
 
-        tokio::spawn(probe.run_relay());
+        let handle = tokio::spawn(probe.run_relay());
+        self.retain_actor_handle(handle);
         self._cast()
     }
 
     pub fn spawn_event_bus(self) -> TestRuntime<F, S, Spawned, L, O> {
-        tokio::spawn(run_event_bus(Arc::clone(&self.inner.event_bus)));
+        let event_bus = Arc::clone(&self.inner.event_bus);
+        let handle = tokio::spawn(async move {
+            crate::set_global_event_bus(Arc::clone(&event_bus)).await;
+            let _ = run_event_bus(event_bus).await;
+        });
+        self.retain_actor_handle(handle);
         self._cast()
     }
 
     pub fn spawn_llm_manager(self) -> TestRuntime<F, S, E, Spawned, O> {
         let cancel_rx = self.inner.cancel_tx.subscribe();
-        tokio::spawn(llm_manager(
+        let handle = tokio::spawn(llm_manager(
             self.inner.event_bus.subscribe(EventPriority::Realtime),
             self.inner.event_bus.subscribe(EventPriority::Background),
             Arc::clone(&self.inner.state),
@@ -1208,14 +1386,31 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
             Arc::clone(&self.inner.event_bus),
             cancel_rx,
         ));
+        self.retain_actor_handle(handle);
+        self._cast()
+    }
+
+    pub fn spawn_captured_llm(self, capture: SessionCapture) -> TestRuntime<F, S, E, Spawned, O> {
+        let cancel_rx = self.inner.cancel_tx.subscribe();
+        let handle = tokio::spawn(captured_llm_manager(
+            self.inner.event_bus.subscribe(EventPriority::Realtime),
+            self.inner.event_bus.subscribe(EventPriority::Background),
+            Arc::clone(&self.inner.state),
+            self.inner.cmd_tx.clone(),
+            Arc::clone(&self.inner.event_bus),
+            cancel_rx,
+            capture,
+        ));
+        self.retain_actor_handle(handle);
         self._cast()
     }
 
     pub fn spawn_observability(self) -> TestRuntime<F, S, E, L, Spawned> {
-        tokio::spawn(observability::run_observability(
+        let handle = tokio::spawn(observability::run_observability(
             Arc::clone(&self.inner.event_bus),
             Arc::clone(&self.inner.state),
         ));
+        self.retain_actor_handle(handle);
         self._cast()
     }
 }
@@ -1224,7 +1419,7 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
 // Back-compat convenience
 // ---------------------------------------------------------------------------
 
-pub(super) fn setup_test_app_from_db(fixture_db: &Arc<ploke_db::Database>) -> Arc<Mutex<App>> {
+pub fn setup_test_app_from_db(fixture_db: &Arc<ploke_db::Database>) -> Arc<Mutex<App>> {
     let pwd = std::env::current_dir().expect("current dir");
     TestRuntime::new(fixture_db)
         .spawn_file_manager()
@@ -1292,6 +1487,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_runtime_actor_guard_retains_full_stack_handles() {
+        let fixture_db =
+            Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
+        let pwd = std::env::current_dir().expect("current dir");
+        let (_app, actor_guard) = TestRuntime::new(&fixture_db)
+            .spawn_file_manager()
+            .spawn_state_manager()
+            .spawn_event_bus()
+            .spawn_llm_manager()
+            .spawn_observability()
+            .into_app_with_actor_guard(pwd);
+
+        assert_eq!(actor_guard.handle_count(), 6);
+    }
+
+    #[tokio::test]
+    async fn test_runtime_headless_sparse_constructor_provides_rag_service() {
+        let fixture_db =
+            Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
+        let runtime = TestRuntime::new_with_embedding_processor_and_bm25_timeout(
+            &fixture_db,
+            EmbeddingProcessor::new_mock(),
+            250,
+        );
+        let state = runtime.state_arc();
+
+        assert!(
+            state.rag.is_some(),
+            "headless sparse TestRuntime must expose RagService; eval setup depends on bm25_ready"
+        );
+        assert!(
+            state.indexer_task.is_none(),
+            "headless sparse TestRuntime must not launch dense indexing alongside its BM25 service"
+        );
+    }
+
+    #[tokio::test]
     async fn test_relay_intercepts_and_proxies_oneshot() {
         use crate::chat_history::MessageKind;
         use tokio::time::{Duration, timeout};
@@ -1333,7 +1565,8 @@ mod tests {
             .await
             .expect("debug recv timeout")
             .expect("debug channel closed")
-            .0;
+            .as_str()
+            .to_string();
         assert!(
             debug_cmd.contains("AddUserMessage"),
             "Debug should show AddUserMessage, got: {}",
@@ -1399,7 +1632,8 @@ mod tests {
             .await
             .expect("debug recv timeout")
             .expect("debug channel closed")
-            .0;
+            .as_str()
+            .to_string();
         assert!(
             debug_cmd.contains("EmbedMessage"),
             "Debug should show EmbedMessage, got: {}",

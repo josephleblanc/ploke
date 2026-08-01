@@ -111,7 +111,7 @@ impl CompilationUnitDimensionRequest {
 }
 
 fn split_tokens(raw: &str) -> Vec<String> {
-    raw.split(|c| c == ',' || c == ' ')
+    raw.split([',', ' '])
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)

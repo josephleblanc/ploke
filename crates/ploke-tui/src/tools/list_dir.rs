@@ -4,7 +4,7 @@ use std::{borrow::Cow, ops::Deref as _, path::PathBuf, time::UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
-use super::{ToolDescr, ToolError, ToolErrorCode, ToolInvocationError, ToolName};
+use super::{ToolDescription, ToolError, ToolErrorCode, ToolInvocationError, ToolName};
 use crate::{tools::ToolResult, tools::tool_io_error, tools::tool_ui_error, utils::path_scoping};
 
 const DIR_DESC: &str = "Absolute or workspace-root-relative directory path.";
@@ -42,6 +42,7 @@ pub struct ListDirParams<'a> {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "tool_contracts", derive(Deserialize))]
 pub struct ListDirParamsOwned {
     pub dir: String,
     pub include_hidden: bool,
@@ -98,8 +99,8 @@ impl super::Tool for ListDir {
         ToolName::ListDir
     }
 
-    fn description() -> ToolDescr {
-        ToolDescr::ListDir
+    fn description() -> ToolDescription {
+        Self::name().description()
     }
 
     fn schema() -> &'static serde_json::Value {

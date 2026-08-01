@@ -1,0 +1,27 @@
+{
+  "schema_version": "prototype1-treatment-node.v1",
+  "node_id": "node-2f0b3cda4c2c8d89",
+  "parent_node_id": "node-461dba1909fb6cf7",
+  "generation": 1,
+  "instance_id": "9b501512-bcf6-49a6-93a1-1e9fc6fdaae2",
+  "source_state_id": "prototype1-parent-p1-v25-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260717-221126-gen0",
+  "operation_target": {
+    "kind": "artifact",
+    "artifact_id": "artifact:git-commit:bbd328f03f3949134d632eceb7d765abd3e5716d"
+  },
+  "base_artifact_id": "artifact:git-commit:bbd328f03f3949134d632eceb7d765abd3e5716d",
+  "patch_id": "broad-harness:broad-harness-request:node-461dba1909fb6cf7:r3",
+  "derived_artifact_id": "artifact:git-commit:d4d6af3e4e5dab47dd014f0bb3a62a5876373b72",
+  "parent_branch_id": "prototype1-parent-p1-v25-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260717-221126-gen0",
+  "branch_id": "branch-42f0d2c400a40cee",
+  "candidate_id": "broad-harness-g1-03",
+  "target_relpath": "crates/ploke-tui/src/tools/code_item_lookup.rs",
+  "node_dir": "/home/brasides/.ploke-eval/campaigns/p1-v25-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260717-221126/prototype1/nodes/node-2f0b3cda4c2c8d89",
+  "workspace_root": "/home/brasides/.ploke-eval/campaigns/p1-v25-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260717-221126/prototype1/workspaces/edit-harness/node-461dba1909fb6cf7-r3",
+  "binary_path": "/home/brasides/.ploke-eval/campaigns/p1-v25-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260717-221126/prototype1/nodes/node-2f0b3cda4c2c8d89/bin/ploke-eval",
+  "runner_request_path": "/home/brasides/.ploke-eval/campaigns/p1-v25-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260717-221126/prototype1/nodes/node-2f0b3cda4c2c8d89/runner-request.json",
+  "runner_result_path": "/home/brasides/.ploke-eval/campaigns/p1-v25-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260717-221126/prototype1/nodes/node-2f0b3cda4c2c8d89/runner-result.json",
+  "status": "succeeded",
+  "created_at": "2026-07-18T06:03:36.232194902+00:00",
+  "updated_at": "2026-07-18T06:29:27.332281941+00:00"
+}

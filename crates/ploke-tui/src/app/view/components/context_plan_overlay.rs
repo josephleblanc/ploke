@@ -931,9 +931,12 @@ fn build_display_items(
                 let show_snippet_gutter = snippet_visible.contains(&part.part_id);
                 let display_path = display_relative_path(&part.file_path, focus_root);
                 let suffix = format!(
-                    " ({}, score {:.3}) — ~{} tok",
+                    " ({}, score {:.3}{}) — ~{} tok",
                     part.kind.to_static_str(),
                     part.score,
+                    part.type_context
+                        .map(|ctx| format!(", type {}", ctx.relation.to_static_str()))
+                        .unwrap_or_default(),
                     part.estimated_tokens
                 );
                 let title_path =
@@ -951,6 +954,14 @@ fn build_display_items(
                         part.kind.to_static_str()
                     )));
                     details.push(Line::from(format!("    score: {:.3}", part.score)));
+                    if let Some(type_context) = part.type_context {
+                        details.push(Line::from(format!(
+                            "    type_context: {} from {} at distance {}",
+                            type_context.relation.to_static_str(),
+                            truncate_uuid(type_context.seed_id),
+                            type_context.distance
+                        )));
+                    }
                     details.push(Line::from(format!(
                         "    estimated_tokens: {}",
                         part.estimated_tokens

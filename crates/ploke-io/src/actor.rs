@@ -9,7 +9,7 @@ use ploke_core::{
     CreateFileData, CreateFileResult, TrackingHash, WriteResult, WriteSnippetData,
     file_hash::{HashOutcome, LargeFilePolicy, hash_file_blake3_bounded},
 };
-use tracing::error;
+use tracing::{debug, error};
 
 use super::*;
 use std::io::ErrorKind;
@@ -212,15 +212,32 @@ impl IoManager {
                 requests,
                 responder,
             } => {
+                let request_count = requests.len();
+                debug!(
+                    target: "dbg_tools",
+                    request_count,
+                    "IoManager dispatching NsWriteSnippetBatch"
+                );
                 let roots = self.roots.clone();
                 let symlink_policy = self.symlink_policy;
                 #[cfg(feature = "watcher")]
                 let events_tx = self.events_tx.clone();
                 let max_bytes: u64 = Self::FILE_BYTES_LIMIT;
                 tokio::spawn(async move {
+                    debug!(
+                        target: "dbg_tools",
+                        request_count,
+                        "IoManager spawned NsWriteSnippetBatch worker"
+                    );
                     let results =
                         write_snippets_batch_ns(requests.clone(), roots, symlink_policy, max_bytes)
                             .await;
+                    debug!(
+                        target: "dbg_tools",
+                        request_count,
+                        result_count = results.len(),
+                        "IoManager finished NsWriteSnippetBatch worker"
+                    );
                     #[cfg(feature = "watcher")]
                     if let Some(tx) = events_tx {
                         for (req, res) in requests.into_iter().zip(results.iter()) {

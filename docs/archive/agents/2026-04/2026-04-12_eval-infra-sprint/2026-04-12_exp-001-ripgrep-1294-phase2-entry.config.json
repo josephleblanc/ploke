@@ -1,0 +1,100 @@
+{
+  "schema_version": "experiment-config.v0-draft",
+  "experiment_id": "exp-001-ripgrep-1294-phase2-entry",
+  "design_type": "ab_test",
+  "hypothesis_ids": [
+    "H0",
+    "A3",
+    "A4"
+  ],
+  "description": "First formal Phase 2 ripgrep-first entry packet for BurntSushi__ripgrep-1294, scoped to one control/treatment comparison with explicit validity guards and explicit waivers for draft-only reproducibility fields.",
+  "benchmark": {
+    "dataset_kind": "multi_swe_bench",
+    "dataset_version": "rust-v1-source-descriptor-only",
+    "subset_id": "ripgrep-1294-single-instance-entry",
+    "instance_ids": [
+      "BurntSushi__ripgrep-1294"
+    ],
+    "paired_by_instance": true
+  },
+  "frozen_controls": {
+    "model_id": "moonshotai/kimi-k2.5",
+    "provider_policy": "pinned",
+    "provider": "friendli",
+    "temperature": 0.0,
+    "system_prompt_id": "waived-not-harness-frozen",
+    "system_prompt_sha256": "waived-not-harness-frozen",
+    "max_turns": 40,
+    "retry_policy_id": "waived-not-harness-frozen",
+    "timeout_policy_id": "waived-not-harness-frozen"
+  },
+  "arms": [
+    {
+      "arm_id": "control",
+      "tag": "shell-only-planned",
+      "role": "control",
+      "tool_allowlist": [],
+      "tool_overrides": {}
+    },
+    {
+      "arm_id": "treatment-a",
+      "tag": "structured-current-policy-planned",
+      "role": "treatment",
+      "tool_allowlist": [],
+      "tool_overrides": {}
+    }
+  ],
+  "analysis_plan": {
+    "primary_metric": "solve_rate",
+    "secondary_metrics": [
+      "token_cost",
+      "wall_time",
+      "tool_misuse_rate",
+      "recovery_rate"
+    ],
+    "report_effect_sizes": true,
+    "report_confidence_intervals": true,
+    "minimum_attribution_coverage": 0.9
+  },
+  "validity_guards": {
+    "max_provider_failure_rate": 0.05,
+    "max_setup_failure_rate": 0.05,
+    "require_full_telemetry": true,
+    "require_frozen_subset": true
+  },
+  "stop_conditions": {
+    "abort_if_prompt_changes_mid_run": true,
+    "abort_if_provider_unpinned": true,
+    "abort_if_missing_artifacts": true
+  },
+  "artifact_targets": {
+    "edr_id": "EDR-0001",
+    "results_dir": "/home/brasides/.ploke-eval/experiments/exp-001-ripgrep-1294-phase2-entry",
+    "summary_artifact_path": "/home/brasides/.ploke-eval/experiments/exp-001-ripgrep-1294-phase2-entry/summary.json",
+    "doc_updates": [
+      "docs/active/workflow/edr/EDR-0001-ripgrep-1294-phase2-entry.md",
+      "docs/active/workflow/evidence-ledger.md"
+    ]
+  },
+  "waived_fields": [
+    "system_prompt_id",
+    "system_prompt_sha256",
+    "system_prompt_version",
+    "tool_schema_version",
+    "tool_allowlist",
+    "tool_overrides",
+    "retry_policy_id",
+    "timeout_policy_id",
+    "wall_clock_secs",
+    "tool_implementation_version",
+    "container_image",
+    "rust_toolchain",
+    "seed",
+    "host_os",
+    "dataset_version_as_runtime_frozen_claim"
+  ],
+  "execution_readiness": {
+    "status": "blocked_pending_runner_arm_surface",
+    "detail": "The current runner hardcodes the benchmark chat policy and does not yet expose a concrete per-arm shell-only versus structured execution surface."
+  }
+}

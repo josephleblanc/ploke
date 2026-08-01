@@ -1,6 +1,5 @@
-use crate::tools::error::{ToolError, ToolErrorCode};
+use crate::tools::error::{ToolError, ToolErrorCode, ToolRetryContext};
 use ploke_core::tool_types::ToolName;
-use serde_json::json;
 
 /// Validate that a numeric context/token limit does not exceed `max`.
 pub fn validate_context_limit(
@@ -29,19 +28,37 @@ pub fn validate_unified_diff(
     field: &'static str,
     diff: &str,
 ) -> Result<(), ToolError> {
-    let has_headers = diff.contains("---") && diff.contains("+++");
-    let has_hunk = diff.contains("@@");
-    if has_headers && has_hunk {
-        Ok(())
-    } else {
-        Err(ToolError::new(
+    match mpatch::parse_single_patch(diff) {
+        Ok(patch) if !patch.hunks.is_empty() => Ok(()),
+        Ok(_) => Err(ToolError::new(
             tool,
             ToolErrorCode::MalformedDiff,
-            "expected unified diff with ---/+++ headers and @@ hunks",
+            "expected unified diff with at least one ranged @@ hunk",
         )
         .field(field)
-        .expected("unified diff with ---/+++ and @@")
-        .snippet(super::error::truncate_for_error(diff, 512)))
+        .expected("one unified diff with ---/+++ headers and ranged @@ hunks")
+        .snippet(super::error::truncate_for_error(diff, 512))
+        .retry_context(
+            ToolRetryContext::new()
+                .field("field", field)
+                .field("parser_error", "parsed patch contained no hunks")
+                .field("diff_snippet", super::error::truncate_for_error(diff, 512)),
+        )),
+        Err(err) => Err(ToolError::new(
+            tool,
+            ToolErrorCode::MalformedDiff,
+            "expected one valid unified diff with ---/+++ headers and ranged @@ hunks",
+        )
+        .field(field)
+        .expected("one unified diff with ---/+++ headers and ranged @@ hunks")
+        .received(err.to_string())
+        .snippet(super::error::truncate_for_error(diff, 512))
+        .retry_context(
+            ToolRetryContext::new()
+                .field("field", field)
+                .field("parser_error", err.to_string())
+                .field("diff_snippet", super::error::truncate_for_error(diff, 512)),
+        )),
     }
 }
 
@@ -58,10 +75,11 @@ pub fn validate_file_path_basic(
             ToolError::new(tool, ToolErrorCode::InvalidFormat, "file path is empty")
                 .field(field)
                 .retry_hint("Provide a non-empty file path (e.g., \"src/lib.rs\").")
-                .retry_context(json!({
-                    "input_path": path,
-                    "reason": "empty",
-                })),
+                .retry_context(
+                    ToolRetryContext::new()
+                        .field("input_path", path)
+                        .field("reason", "empty"),
+                ),
         );
     }
 
@@ -73,10 +91,11 @@ pub fn validate_file_path_basic(
         )
         .field(field)
         .retry_hint("Use ASCII characters in file paths for portability.")
-        .retry_context(json!({
-            "input_path": path,
-            "reason": "non_ascii",
-        })));
+        .retry_context(
+            ToolRetryContext::new()
+                .field("input_path", path)
+                .field("reason", "non_ascii"),
+        ));
     }
 
     if path.chars().any(|c| c == '\0' || c.is_control()) {
@@ -87,10 +106,11 @@ pub fn validate_file_path_basic(
         )
         .field(field)
         .retry_hint("Remove control characters from the file path.")
-        .retry_context(json!({
-            "input_path": path,
-            "reason": "control_characters",
-        })));
+        .retry_context(
+            ToolRetryContext::new()
+                .field("input_path", path)
+                .field("reason", "control_characters"),
+        ));
     }
 
     let invalid_chars: Vec<char> = path
@@ -105,11 +125,12 @@ pub fn validate_file_path_basic(
         )
         .field(field)
         .retry_hint("Remove invalid characters like <, >, \", |, ?, *.")
-        .retry_context(json!({
-            "input_path": path,
-            "reason": "invalid_characters",
-            "invalid_chars": invalid_chars,
-        })));
+        .retry_context(
+            ToolRetryContext::new()
+                .field("input_path", path)
+                .field("reason", "invalid_characters")
+                .field("invalid_chars", invalid_chars),
+        ));
     }
 
     Ok(())
@@ -129,9 +150,7 @@ pub fn validate_file_extension_allowlist(
         )
         .field(field)
         .retry_hint("Ask the user to configure tooling.create_file_extensions.")
-        .retry_context(json!({
-            "allowlist_len": 0,
-        })));
+        .retry_context(ToolRetryContext::new().field("allowlist_len", 0usize)));
     }
 
     let mut normalized_allowed: Vec<String> = Vec::with_capacity(allowed.len());
@@ -145,9 +164,7 @@ pub fn validate_file_extension_allowlist(
             )
             .field(field)
             .retry_hint("Remove empty entries from tooling.create_file_extensions.")
-            .retry_context(json!({
-                "allowlist": allowed,
-            })));
+            .retry_context(ToolRetryContext::new().field("allowlist", allowed.to_vec())));
         }
         normalized_allowed.push(trimmed.trim_start_matches('.').to_ascii_lowercase());
     }
@@ -167,10 +184,11 @@ pub fn validate_file_extension_allowlist(
             )
             .field(field)
             .retry_hint("Provide a file path with an extension.")
-            .retry_context(json!({
-                "path": path.display().to_string(),
-                "allowed_extensions": normalized_allowed,
-            })));
+            .retry_context(
+                ToolRetryContext::new()
+                    .field("path", path.display().to_string())
+                    .field("allowed_extensions", normalized_allowed),
+            ));
         };
 
         if !normalized_allowed.iter().any(|allowed| allowed == ext) {
@@ -183,11 +201,12 @@ pub fn validate_file_extension_allowlist(
             .expected(normalized_allowed.join(", "))
             .received(ext.to_string())
             .retry_hint("Use an allowed file extension.")
-            .retry_context(json!({
-                "path": path.display().to_string(),
-                "extension": ext,
-                "allowed_extensions": normalized_allowed,
-            })));
+            .retry_context(
+                ToolRetryContext::new()
+                    .field("path", path.display().to_string())
+                    .field("extension", ext)
+                    .field("allowed_extensions", normalized_allowed),
+            ));
         }
     }
 
@@ -215,7 +234,9 @@ mod tests {
             validate_file_path_basic(ToolName::CreateFile, "file_path", "src/<bad>.rs", false)
                 .expect_err("expected invalid char error");
         let ctx = err.retry_context.expect("retry context");
-        let invalid = ctx.get("invalid_chars").and_then(|v| v.as_array());
+        let invalid = ctx
+            .get("invalid_chars")
+            .and_then(|value| value.as_string_list());
         assert!(invalid.is_some());
     }
 

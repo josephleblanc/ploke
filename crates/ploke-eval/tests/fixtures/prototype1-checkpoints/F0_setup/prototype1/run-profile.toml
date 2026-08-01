@@ -1,0 +1,8 @@
+schema_version = "prototype1-run-profile.v1"
+[storage.eval]
+backend = "fs"
+
+[model]
+route_source = "direct-google"
+provider = "google"
+id = "google/gemini-2.5-flash-lite"

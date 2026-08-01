@@ -1,14 +1,14 @@
-use std::ops::Mul;
 use std::{collections::HashMap, fs, sync::Arc, time::Duration};
 
-use crate::user_config::{ChatPolicy, ChatTimeoutStrategy};
+use crate::user_config::{ChatPolicy, ChatTimeoutStrategy, ToolLoopMode};
 use chrono::DateTime;
-use ploke_llm::ChatHttpConfig;
 use ploke_llm::ChatStepOutcome;
-use ploke_llm::manager::ChatStepData;
+use ploke_llm::manager::{ChatStepData, RecordedResponse, RecordedResponseTape};
+use ploke_llm::registry::calibration::{AttemptTimeout, RouterCalibration};
 use ploke_llm::response::ToolCall;
-use ploke_test_utils::workspace_root;
+use ploke_llm::{ChatHttpConfig, ChatStepError, ProviderAttempt, ProviderRetryDecision};
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -23,7 +23,7 @@ use crate::app_state::events::SystemEvent;
 use crate::chat_history::MessageUpdate;
 use crate::chat_history::{ContextTokens, MessageKind};
 use crate::chat_history::{MessageStatus, TokenKind};
-use crate::tracing_setup::{FINISH_REASON_TARGET, TOKENS_TARGET};
+use crate::tracing_setup::{FINISH_REASON_TARGET, FULL_RESPONSE_TARGET, TOKENS_TARGET};
 use crate::utils::consts::TOOL_CALL_TIMEOUT;
 use ploke_llm::RequestMessage;
 use ploke_llm::response::FinishReason;
@@ -35,47 +35,80 @@ use ploke_llm::types::meta::{LLMMetadata, PerformanceMetrics};
 use super::{format_tokens_payload, tokens_logging_enabled};
 use crate::llm::manager::loop_error::{
     ChatSessionReport, CommitPhase, ErrorAudience, ErrorContext, LoopError, RetryAdvice,
-    RetryStrategy, SessionOutcome, Verbosity, build_unknown_tool_error, classify_finish_reason,
-    classify_llm_error, render_error_view,
+    RetryStrategy, SessionOutcome, Verbosity, build_loop_error_from_semantic_spec,
+    build_streak_error, classify_finish_reason, classify_llm_error, mark_repair_budget_exhausted,
+    recovery_from_retry, render_error_view,
 };
-use crate::tools::{ToolError, ToolErrorCode, ToolErrorWire, ToolUiPayload, allowed_tool_names};
+use crate::llm::manager::semantics::{self, RecoveryDecision};
+use crate::tools::{
+    ToolCallPreflightError, ToolError, ToolErrorCode, ToolErrorWire, ToolName, ToolUiPayload,
+    allowed_tool_names, validate_and_sanitize_tool_calls,
+};
 use ploke_llm::LlmError;
+use tokio::time::sleep;
 
-const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json";
-const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
-const OPENROUTER_RESPONSE_LOG_RAW: &str = "logs/openrouter/session/last_response_raw.txt";
+const DEFAULT_REPAIR_ATTEMPTS_PER_SESSION: u32 = 4;
+const REPLAY_LIVE_STEP_LIMIT_REACHED: &str = "replay live step limit reached";
+/// Minimum number of provider HTTP attempts (one retry) for any router. Routers
+/// that calibrate a larger retry budget keep it; others are floored here.
+const MIN_CHAT_HTTP_ATTEMPTS: u32 = 2;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FullResponseTraceRecord {
+    pub assistant_message_id: Uuid,
+    #[serde(flatten)]
+    pub recorded_response: RecordedResponse,
+}
 
-fn check_provider_error(body_text: &str) -> Result<(), LlmError> {
-    // Providers sometimes put errors inside a 200 body
-    match serde_json::from_str::<serde_json::Value>(body_text) {
-        Ok(v) => {
-            if let Some(err) = v.get("error") {
-                let msg = err
-                    .get("message")
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("Unknown provider error");
-                let code = err.get("code").and_then(|c| c.as_u64()).unwrap_or(0);
-                Err(LlmError::Api {
-                    status: code as u16,
-                    message: msg.to_string(),
-                    url: None,
-                    body_snippet: Some(truncate_for_error(body_text, 4_096)),
-                })
-            } else {
-                Err(LlmError::Deserialization {
-                    message: "No choices".into(),
-                    body_snippet: Some(truncate_for_error(body_text, 512)),
-                })
-            }
-        }
-        Err(e) => {
-            let err_msg = format!("Failed to Deserialize to json: {e}");
-            Err(LlmError::Deserialization {
-                message: err_msg,
-                body_snippet: Some(truncate_for_error(body_text, 512)),
-            })
-        }
+fn compact_tool_content_for_llm_replay(content: &str, max_file_lines: usize) -> String {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(content) else {
+        return content.to_string();
+    };
+    let Some(obj) = value.as_object_mut() else {
+        return content.to_string();
+    };
+    if !obj.contains_key("file_path") {
+        return content.to_string();
     }
+    let Some(file_content) = obj.get_mut("content") else {
+        return content.to_string();
+    };
+    let Some(file_text) = file_content.as_str() else {
+        return content.to_string();
+    };
+
+    let mut kept = Vec::new();
+    let mut truncated = false;
+    for (line_count, line) in file_text.lines().enumerate() {
+        if line_count >= max_file_lines {
+            truncated = true;
+            break;
+        }
+        kept.push(line);
+    }
+
+    if !truncated {
+        return content.to_string();
+    }
+
+    let mut truncated_content = kept.join("\n");
+    if file_text.ends_with('\n') && !truncated_content.is_empty() {
+        truncated_content.push('\n');
+    }
+    truncated_content.push_str(&format!(
+        "... [truncated for LLM replay after {max_file_lines} lines]"
+    ));
+
+    *file_content = serde_json::Value::String(truncated_content);
+    obj.insert(
+        "llm_replay_truncated".to_string(),
+        serde_json::Value::Bool(true),
+    );
+    obj.insert(
+        "llm_replay_max_lines".to_string(),
+        serde_json::Value::from(max_file_lines as u64),
+    );
+
+    serde_json::to_string(&value).unwrap_or_else(|_| content.to_string())
 }
 
 /// Generic per-request session over a router-specific ApiRoute.
@@ -102,6 +135,8 @@ where
 pub struct TuiToolPolicy {
     pub tool_call_timeout: ToolCallTimeout,
     pub tool_call_chain_limit: usize,
+    pub tool_streak_limit: Option<usize>,
+    pub tool_loop_mode: ToolLoopMode,
     pub retry_without_tools_on_404: bool,
 }
 
@@ -114,6 +149,8 @@ impl Default for TuiToolPolicy {
             // TODO:ploke-llm 2025-12-14
             // Set to 15 as initial default, experiment to determine the right default to set
             tool_call_chain_limit: 100,
+            tool_streak_limit: None,
+            tool_loop_mode: ToolLoopMode::Auto,
             retry_without_tools_on_404: false,
         }
     }
@@ -188,6 +225,19 @@ pub enum TuiLengthPolicy {
     Strict,
 }
 
+/// Retry policy for a terminal `malformed_function_call` finish reason.
+///
+/// Mirrors [`TuiLengthPolicy`]: a bounded in-session corrective re-prompt for a
+/// model-behavior finish reason that aborts the turn. Unlike length, the
+/// malformed finish reason is surfaced by `parse_chat_outcome` as an
+/// `LlmError::FinishError`, so it is handled in the chat-step error branch of
+/// `run_chat_session` rather than in `handle_finish_reasons`.
+#[derive(Clone, Copy, Debug)]
+pub enum TuiMalformedPolicy {
+    RetryLimit(u32),
+    Strict,
+}
+
 #[derive(Clone, Debug)]
 pub struct FinishPolicy {
     /// Timeout backoff/limit behavior for FinishReason::Timeout.
@@ -198,6 +248,11 @@ pub struct FinishPolicy {
     length: TuiLengthPolicy,
     /// System prompt appended when retrying after FinishReason::Length.
     length_continue_prompt: String,
+    /// Retry policy for FinishReason::MalformedFunctionCall.
+    malformed: TuiMalformedPolicy,
+    /// Corrective system prompt appended when retrying after a malformed
+    /// function call.
+    malformed_retry_prompt: String,
 }
 
 impl Default for TuiErrorPolicy {
@@ -212,6 +267,12 @@ impl Default for TuiLengthPolicy {
     }
 }
 
+impl Default for TuiMalformedPolicy {
+    fn default() -> Self {
+        Self::RetryLimit(1)
+    }
+}
+
 impl Default for FinishPolicy {
     fn default() -> Self {
         Self {
@@ -220,6 +281,11 @@ impl Default for FinishPolicy {
             length: TuiLengthPolicy::default(),
             length_continue_prompt: "Continue from where you left off. Do not repeat prior text."
                 .to_string(),
+            malformed: TuiMalformedPolicy::default(),
+            malformed_retry_prompt:
+                "Respond again with a single valid structured tool call using strict JSON \
+                 arguments. Do not emit Python-style code or `print(...)` wrappers."
+                    .to_string(),
         }
     }
 }
@@ -228,8 +294,36 @@ pub(crate) fn tool_policy_from_chat(cfg: &ChatPolicy) -> TuiToolPolicy {
     TuiToolPolicy {
         tool_call_timeout: Duration::from_secs(cfg.tool_call_timeout_secs),
         tool_call_chain_limit: cfg.tool_call_chain_limit,
+        tool_streak_limit: cfg.tool_streak_limit,
+        tool_loop_mode: cfg.tool_loop_mode,
         retry_without_tools_on_404: cfg.retry_without_tools_on_404,
     }
+}
+
+fn tool_streak_stop(
+    streak: &mut Option<(ToolName, usize)>,
+    calls: &[ToolCall],
+    limit: Option<usize>,
+) -> Option<(ToolName, usize, usize)> {
+    let limit = limit?;
+    for call in calls {
+        let tool = call.function.name;
+        match streak {
+            Some((previous, count)) if *previous == tool => {
+                *count = count.saturating_add(1);
+            }
+            _ => {
+                *streak = Some((tool, 1));
+            }
+        }
+        let Some((tool, count)) = streak.as_ref() else {
+            continue;
+        };
+        if *count >= limit {
+            return Some((*tool, *count, limit));
+        }
+    }
+    None
 }
 
 pub(crate) fn finish_policy_from_chat(cfg: &ChatPolicy) -> FinishPolicy {
@@ -247,6 +341,8 @@ pub(crate) fn finish_policy_from_chat(cfg: &ChatPolicy) -> FinishPolicy {
         error: TuiErrorPolicy::RetryLimit(cfg.error_retry_limit),
         length: TuiLengthPolicy::RetryLimit(cfg.length_retry_limit),
         length_continue_prompt: cfg.length_continue_prompt.clone(),
+        malformed: TuiMalformedPolicy::RetryLimit(cfg.malformed_retry_limit),
+        malformed_retry_prompt: cfg.malformed_retry_prompt.clone(),
     }
 }
 
@@ -282,6 +378,56 @@ fn should_retry_length(policy: TuiLengthPolicy, retried_lengths: &mut u32) -> bo
     }
 }
 
+fn should_retry_malformed(policy: TuiMalformedPolicy, retried_malformed: &mut u32) -> bool {
+    match policy {
+        TuiMalformedPolicy::RetryLimit(limit) => {
+            if *retried_malformed < limit {
+                *retried_malformed += 1;
+                true
+            } else {
+                false
+            }
+        }
+        TuiMalformedPolicy::Strict => false,
+    }
+}
+
+/// True only for a terminal `malformed_function_call` finish reason surfaced as
+/// an `LlmError::FinishError`. Used to scope the bounded malformed re-prompt to
+/// that exact model-behavior failure and nothing else in the chat-step error
+/// branch.
+fn is_malformed_finish_error(err: &LlmError) -> bool {
+    matches!(
+        err,
+        LlmError::FinishError {
+            finish_reason: FinishReason::MalformedFunctionCall,
+            ..
+        }
+    )
+}
+
+fn repair_budget_exhausted(state: &ChatLoopState, limit: u32) -> bool {
+    // Keep repair bounded independently from generic request retries and from the broader
+    // tool-call chain cap so repeated provider/model repair loops cannot dominate the turn.
+    state.repair_attempts >= limit
+}
+
+fn consume_repair_budget(
+    state: &mut ChatLoopState,
+    loop_error: &mut LoopError,
+    limit: u32,
+) -> bool {
+    if !matches!(loop_error.recovery, RecoveryDecision::Repair { .. }) {
+        return true;
+    }
+    if repair_budget_exhausted(state, limit) {
+        mark_repair_budget_exhausted(loop_error);
+        return false;
+    }
+    state.repair_attempts = state.repair_attempts.saturating_add(1);
+    true
+}
+
 /// Outcome of finish-reason evaluation for a single response.
 ///
 /// Continue variants tell the caller to retry the chat step, optionally with
@@ -306,20 +452,20 @@ enum FinishFailure {
 }
 
 /// Mutable counters for retry behavior within a chat session.
+#[derive(Default, Debug, Clone, Copy)]
 struct ChatLoopState {
     retried_errors: u32,
     retried_lengths: u32,
+    retried_malformed: u32,
     timeout_attempts: usize,
+    request_error_retries: u32,
+    repair_attempts: u32,
 }
 
-impl Default for ChatLoopState {
-    fn default() -> Self {
-        Self {
-            retried_errors: 0,
-            retried_lengths: 0,
-            timeout_attempts: 0,
-        }
-    }
+fn provider_retry_exhausted(attempts: &[ProviderAttempt]) -> bool {
+    attempts
+        .last()
+        .is_some_and(|attempt| attempt.retry_decision == ProviderRetryDecision::Exhausted)
 }
 
 /// Borrowed context required to evaluate finish reasons.
@@ -414,6 +560,31 @@ impl FinishPolicy {
                         "finish reason decision: failure"
                     );
                 }
+                FinishReason::MalformedFunctionCall => {
+                    if failure.is_none() {
+                        failure = Some(FinishFailure::FinishError {
+                            msg: "Provider returned malformed function call.".to_string(),
+                            finish_reason,
+                        });
+                    }
+                    tracing::trace!(
+                        target = FINISH_REASON_TARGET,
+                        "finish reason decision: failure"
+                    );
+                }
+                FinishReason::UnexpectedToolCall => {
+                    if failure.is_none() {
+                        failure = Some(FinishFailure::FinishError {
+                            msg: "Provider invoked an undeclared function (unexpected tool call)."
+                                .to_string(),
+                            finish_reason,
+                        });
+                    }
+                    tracing::trace!(
+                        target = FINISH_REASON_TARGET,
+                        "finish reason decision: failure"
+                    );
+                }
                 // keep looping
                 FinishReason::ToolCalls => {
                     continue_chain = true;
@@ -429,7 +600,7 @@ impl FinishPolicy {
                     if let Some(next_timout) = self.timeout.next_timout_dur(state.timeout_attempts)
                     {
                         // if some, change timout for next loop and ocntinue
-                        ctx.cfg.timeout = next_timout;
+                        ctx.cfg.attempt_timeout = AttemptTimeout::fixed(next_timout);
                         continue_chain = true;
                         if continue_reason.is_none() {
                             continue_reason = Some(finish_reason.clone());
@@ -529,9 +700,385 @@ pub enum CancelChatToken {
     Close,
 }
 
+#[derive(Debug)]
+pub enum ChatStepSource {
+    /// Use the configured provider/client for every chat step.
+    Live,
+    /// Replay only recorded provider envelopes.
+    ///
+    /// This is useful for deterministic replay regressions. The replay still
+    /// flows through the normal session parser and tool execution path, but no
+    /// live provider request is allowed once the tape is exhausted.
+    Recorded(RecordedResponseTape),
+    /// Replay a recorded prefix, then continue with normal live provider calls.
+    ///
+    /// This is the broad smoke-probe mode: it reconstructs the historical
+    /// model-output prefix, lets the current tools handle those calls, and then
+    /// gives the live model the resulting conversation state.
+    RecordedPrefixThenLive(RecordedResponseTape),
+    /// Replay a recorded prefix, then allow a bounded number of live steps.
+    ///
+    /// A "step" here is one provider response envelope, not one tool call. If
+    /// that response requests tools, the normal session loop executes the whole
+    /// batch and appends tool results before the step limit is enforced. The
+    /// next attempted provider request returns the internal replay-limit error,
+    /// which `run_chat_session` turns into a clean completed report. This gives
+    /// CLI probes a stop point just before the model would see the next request.
+    RecordedPrefixThenLiveSteps {
+        tape: RecordedResponseTape,
+        live_steps_remaining: usize,
+    },
+}
+
+impl ChatStepSource {
+    pub fn live() -> Self {
+        Self::Live
+    }
+
+    pub fn recorded(tape: RecordedResponseTape) -> Self {
+        Self::Recorded(tape)
+    }
+
+    pub fn recorded_prefix_then_live(tape: RecordedResponseTape) -> Self {
+        Self::RecordedPrefixThenLive(tape)
+    }
+
+    pub fn recorded_prefix_then_live_steps(
+        tape: RecordedResponseTape,
+        live_steps_remaining: usize,
+    ) -> Self {
+        Self::RecordedPrefixThenLiveSteps {
+            tape,
+            live_steps_remaining,
+        }
+    }
+
+    async fn next_step<R: Router>(
+        &mut self,
+        client: &Client,
+        req: &ChatCompRequest<R>,
+        cfg: &ChatHttpConfig,
+    ) -> Result<ChatStepData, ChatStepError> {
+        capture_request_for_tap(req);
+        match self {
+            Self::Live => ploke_llm::chat_step_with_attempts(client, req, cfg).await,
+            Self::Recorded(tape) => tape.next_chat_step(),
+            Self::RecordedPrefixThenLive(tape) if tape.remaining() > 0 => tape.next_chat_step(),
+            Self::RecordedPrefixThenLive(_) => {
+                ploke_llm::chat_step_with_attempts(client, req, cfg).await
+            }
+            Self::RecordedPrefixThenLiveSteps { tape, .. } if tape.remaining() > 0 => {
+                tape.next_chat_step()
+            }
+            Self::RecordedPrefixThenLiveSteps {
+                live_steps_remaining,
+                ..
+            } if *live_steps_remaining > 0 => {
+                *live_steps_remaining = live_steps_remaining.saturating_sub(1);
+                ploke_llm::chat_step_with_attempts(client, req, cfg).await
+            }
+            Self::RecordedPrefixThenLiveSteps { .. } => Err(ChatStepError::new(
+                LlmError::ChatStep(REPLAY_LIVE_STEP_LIMIT_REACHED.to_string()),
+            )),
+        }
+    }
+}
+
+impl Default for ChatStepSource {
+    fn default() -> Self {
+        Self::Live
+    }
+}
+
+#[cfg(feature = "test_harness")]
+static RECORDED_RESPONSE_TAPE: std::sync::OnceLock<
+    std::sync::Mutex<Option<InstalledChatStepSource>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(feature = "test_harness")]
+static REQUEST_TAP: std::sync::OnceLock<
+    std::sync::Mutex<Option<std::sync::mpsc::Sender<Vec<RequestMessage>>>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(feature = "test_harness")]
+static RESPONSE_TAP: std::sync::OnceLock<
+    std::sync::Mutex<Option<std::sync::mpsc::Sender<RecordedResponse>>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(feature = "test_harness")]
+enum InstalledChatStepSource {
+    Recorded(RecordedResponseTape),
+    RecordedPrefixThenLive(RecordedResponseTape),
+    /// Test-harness installer for branchable replay probes.
+    ///
+    /// This is intentionally keyed in the same global slot as the existing
+    /// recorded tape installers so only one chat-step source can be active for
+    /// a session. `ploke-eval` owns the CLI semantics; this enum only carries
+    /// the session-level source that `take_recorded_chat_step_source` consumes.
+    RecordedPrefixThenLiveSteps {
+        tape: RecordedResponseTape,
+        live_steps: usize,
+    },
+}
+
+#[cfg(feature = "test_harness")]
+pub struct RequestTapGuard;
+
+#[cfg(feature = "test_harness")]
+impl Drop for RequestTapGuard {
+    fn drop(&mut self) {
+        clear_request_tap();
+    }
+}
+
+#[cfg(feature = "test_harness")]
+pub struct ResponseTapGuard;
+
+#[cfg(feature = "test_harness")]
+impl Drop for ResponseTapGuard {
+    fn drop(&mut self) {
+        clear_response_tap();
+    }
+}
+
+#[cfg(feature = "test_harness")]
+pub fn install_recorded_response_tape(tape: RecordedResponseTape) {
+    let lock = RECORDED_RESPONSE_TAPE.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = lock
+        .lock()
+        .expect("recorded response tape lock should not be poisoned");
+    *guard = Some(InstalledChatStepSource::Recorded(tape));
+}
+
+#[cfg(feature = "test_harness")]
+pub fn install_recorded_response_prefix_then_live(tape: RecordedResponseTape) {
+    let lock = RECORDED_RESPONSE_TAPE.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = lock
+        .lock()
+        .expect("recorded response tape lock should not be poisoned");
+    *guard = Some(InstalledChatStepSource::RecordedPrefixThenLive(tape));
+}
+
+#[cfg(feature = "test_harness")]
+pub fn install_recorded_response_prefix_then_live_steps(
+    tape: RecordedResponseTape,
+    live_steps: usize,
+) {
+    // Used by replay probes that need "advance once, report, then stop"
+    // behavior. The recorded prefix preserves historical model output; the
+    // live-step limit prevents the headless TUI attempt from running to a full
+    // terminal edit/retry outcome before the operator can inspect the tools.
+    let lock = RECORDED_RESPONSE_TAPE.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = lock
+        .lock()
+        .expect("recorded response tape lock should not be poisoned");
+    *guard = Some(InstalledChatStepSource::RecordedPrefixThenLiveSteps { tape, live_steps });
+}
+
+#[cfg(feature = "test_harness")]
+pub fn clear_recorded_response_tape() {
+    let lock = RECORDED_RESPONSE_TAPE.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = lock
+        .lock()
+        .expect("recorded response tape lock should not be poisoned");
+    *guard = None;
+}
+
+#[cfg(feature = "test_harness")]
+pub fn install_request_tap(
+    sender: std::sync::mpsc::Sender<Vec<RequestMessage>>,
+) -> RequestTapGuard {
+    let lock = REQUEST_TAP.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = lock
+        .lock()
+        .expect("request tap lock should not be poisoned");
+    *guard = Some(sender);
+    RequestTapGuard
+}
+
+#[cfg(feature = "test_harness")]
+pub fn clear_request_tap() {
+    let lock = REQUEST_TAP.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = lock
+        .lock()
+        .expect("request tap lock should not be poisoned");
+    *guard = None;
+}
+
+#[cfg(feature = "test_harness")]
+pub fn install_response_tap(sender: std::sync::mpsc::Sender<RecordedResponse>) -> ResponseTapGuard {
+    // Captures provider envelopes after parsing, including recorded responses
+    // and live responses. `ploke-eval` converts these back into typed
+    // `RawFullResponseRecord` lines so a live-step probe can be continued by a
+    // later CLI invocation without inventing a second persisted shape.
+    let lock = RESPONSE_TAP.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = lock
+        .lock()
+        .expect("response tap lock should not be poisoned");
+    *guard = Some(sender);
+    ResponseTapGuard
+}
+
+#[cfg(feature = "test_harness")]
+pub fn clear_response_tap() {
+    let lock = RESPONSE_TAP.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = lock
+        .lock()
+        .expect("response tap lock should not be poisoned");
+    *guard = None;
+}
+
+#[cfg(feature = "test_harness")]
+fn capture_request_for_tap<R: Router>(req: &ChatCompRequest<R>) {
+    let lock = REQUEST_TAP.get_or_init(|| std::sync::Mutex::new(None));
+    let guard = lock
+        .lock()
+        .expect("request tap lock should not be poisoned");
+    if let Some(sender) = guard.as_ref() {
+        let _ = sender.send(req.core.messages.clone());
+    }
+}
+
+#[cfg(not(feature = "test_harness"))]
+fn capture_request_for_tap<R: Router>(_req: &ChatCompRequest<R>) {}
+
+#[cfg(feature = "test_harness")]
+fn active_response_tap() -> Option<std::sync::mpsc::Sender<RecordedResponse>> {
+    let lock = RESPONSE_TAP.get_or_init(|| std::sync::Mutex::new(None));
+    let guard = lock
+        .lock()
+        .expect("response tap lock should not be poisoned");
+    guard.clone()
+}
+
+#[cfg(not(feature = "test_harness"))]
+fn active_response_tap() -> Option<std::sync::mpsc::Sender<RecordedResponse>> {
+    None
+}
+
+fn capture_response_for_tap(
+    sender: Option<&std::sync::mpsc::Sender<RecordedResponse>>,
+    response_index: usize,
+    response: &OpenAiResponse,
+) {
+    if let Some(sender) = sender {
+        let _ = sender.send(RecordedResponse::new(response_index, response.clone()));
+    }
+}
+
+fn is_replay_live_step_limit_error(error: &LlmError) -> bool {
+    // This sentinel is not a model failure. It is the intentional breakpoint
+    // used by `RecordedPrefixThenLiveSteps` after the allowed live responses
+    // have been consumed and their tool results are already in the request.
+    matches!(error, LlmError::ChatStep(message) if message == REPLAY_LIVE_STEP_LIMIT_REACHED)
+}
+
+fn is_replay_boundary_error(error: &LlmError) -> bool {
+    // Both cases mean the replay harness reached an operator-chosen boundary:
+    // a recorded-only tape ended, or a live-step probe consumed its allowed
+    // live provider envelope. Neither should enter model-repair handling.
+    is_replay_live_step_limit_error(error) || matches!(error, LlmError::ReplayExhausted(_))
+}
+
+#[cfg(feature = "test_harness")]
+pub(super) fn take_recorded_chat_step_source() -> ChatStepSource {
+    let lock = RECORDED_RESPONSE_TAPE.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = lock
+        .lock()
+        .expect("recorded response tape lock should not be poisoned");
+    guard
+        .take()
+        .map(|source| match source {
+            InstalledChatStepSource::Recorded(tape) => ChatStepSource::recorded(tape),
+            InstalledChatStepSource::RecordedPrefixThenLive(tape) => {
+                ChatStepSource::recorded_prefix_then_live(tape)
+            }
+            InstalledChatStepSource::RecordedPrefixThenLiveSteps { tape, live_steps } => {
+                ChatStepSource::recorded_prefix_then_live_steps(tape, live_steps)
+            }
+        })
+        .unwrap_or_else(ChatStepSource::live)
+}
+
+#[cfg(not(feature = "test_harness"))]
+pub(super) fn take_recorded_chat_step_source() -> ChatStepSource {
+    ChatStepSource::live()
+}
+
+/// Session-owned destinations for provider envelopes and debug steps.
+///
+/// [`SessionCapture::new`] is explicit: an absent destination stays absent and
+/// never falls back to a process-global test hook. [`Default`] retains the
+/// legacy installed-hook behavior for callers that have not migrated yet.
+#[derive(Clone)]
+pub struct SessionCapture {
+    response_tx: Option<std::sync::mpsc::Sender<FullResponseTraceRecord>>,
+    legacy_tx: Option<std::sync::mpsc::Sender<RecordedResponse>>,
+    debug_sink: Option<Arc<dyn ChatDebugSink>>,
+    legacy_fallback: bool,
+}
+
+impl Default for SessionCapture {
+    fn default() -> Self {
+        Self {
+            response_tx: None,
+            legacy_tx: None,
+            debug_sink: None,
+            legacy_fallback: true,
+        }
+    }
+}
+
+impl SessionCapture {
+    pub fn new(
+        response_tx: Option<std::sync::mpsc::Sender<FullResponseTraceRecord>>,
+        debug_sink: Option<Arc<dyn ChatDebugSink>>,
+    ) -> Self {
+        Self {
+            response_tx,
+            legacy_tx: None,
+            debug_sink,
+            legacy_fallback: false,
+        }
+    }
+
+    pub fn uses_legacy_fallback(&self) -> bool {
+        self.legacy_fallback
+    }
+
+    fn resolve(mut self) -> Self {
+        if self.legacy_fallback {
+            if self.response_tx.is_none() && self.legacy_tx.is_none() {
+                self.legacy_tx = active_response_tap();
+            }
+            if self.debug_sink.is_none() {
+                self.debug_sink = active_chat_debug_sink();
+            }
+        }
+        self
+    }
+
+    fn record_response(
+        &self,
+        assistant_message_id: Uuid,
+        response_index: usize,
+        response: &OpenAiResponse,
+    ) {
+        if let Some(response_tx) = self.response_tx.as_ref() {
+            let _ = response_tx.send(FullResponseTraceRecord {
+                assistant_message_id,
+                recorded_response: RecordedResponse::new(response_index, response.clone()),
+            });
+        } else {
+            capture_response_for_tap(self.legacy_tx.as_ref(), response_index, response);
+        }
+    }
+}
+
 pub struct ChatSession<R: Router> {
     pub client: Client,
     pub req: ChatCompRequest<R>,
+    pub chat_step_source: ChatStepSource,
     pub parent_id: Uuid,
     pub assistant_message_id: Uuid,
     pub event_bus: Arc<EventBus>,
@@ -539,6 +1086,89 @@ pub struct ChatSession<R: Router> {
     pub included_message_ids: Vec<Uuid>,
     pub chat_policy: ChatPolicy,
     pub cancel_rx: watch::Receiver<CancelChatToken>,
+    pub capture: SessionCapture,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChatDebugStep {
+    pub session_id: Uuid,
+    pub parent_id: Uuid,
+    pub assistant_message_id: Uuid,
+    pub step_index: usize,
+    pub request_messages: Vec<RequestMessage>,
+    pub response: OpenAiResponse,
+    pub tool_calls: Vec<ToolCall>,
+    pub tool_results: Vec<ChatDebugToolResult>,
+    pub final_messages: Vec<RequestMessage>,
+    pub terminal: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum ChatDebugToolResult {
+    Completed {
+        call_id: ploke_core::ArcStr,
+        tool: Option<String>,
+        content: String,
+        ui_payload: Option<ToolUiPayload>,
+    },
+    Failed {
+        call_id: ploke_core::ArcStr,
+        tool: Option<String>,
+        error: String,
+        ui_payload: Option<ToolUiPayload>,
+    },
+}
+
+pub trait ChatDebugSink: Send + Sync {
+    fn record_step(&self, step: ChatDebugStep) -> Result<(), String>;
+}
+
+#[cfg(feature = "test_harness")]
+static CHAT_DEBUG_SINK: std::sync::OnceLock<std::sync::Mutex<Option<Arc<dyn ChatDebugSink>>>> =
+    std::sync::OnceLock::new();
+
+#[cfg(feature = "test_harness")]
+pub struct ChatDebugSinkGuard;
+
+#[cfg(feature = "test_harness")]
+impl Drop for ChatDebugSinkGuard {
+    fn drop(&mut self) {
+        clear_chat_debug_sink();
+    }
+}
+
+#[cfg(feature = "test_harness")]
+pub fn install_chat_debug_sink(sink: Arc<dyn ChatDebugSink>) -> ChatDebugSinkGuard {
+    let mutex = CHAT_DEBUG_SINK.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = Some(sink);
+    ChatDebugSinkGuard
+}
+
+#[cfg(feature = "test_harness")]
+pub fn clear_chat_debug_sink() {
+    if let Some(mutex) = CHAT_DEBUG_SINK.get() {
+        let mut guard = mutex
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = None;
+    }
+}
+
+#[cfg(feature = "test_harness")]
+fn active_chat_debug_sink() -> Option<Arc<dyn ChatDebugSink>> {
+    let mutex = CHAT_DEBUG_SINK.get()?;
+    let guard = mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.clone()
+}
+
+#[cfg(not(feature = "test_harness"))]
+fn active_chat_debug_sink() -> Option<Arc<dyn ChatDebugSink>> {
+    None
 }
 
 async fn wait_for_cancel_signal(cancel_rx: &mut watch::Receiver<CancelChatToken>) {
@@ -592,13 +1222,14 @@ async fn abort_for_user_cancel(
 /// - handle tool calls (if any), update UI, append tool results
 /// - handle finish reasons to decide return vs retry
 // Optionally: set tool_choice=Auto if tools exist, etc.
-pub async fn run_chat_session<R: Router>(
+pub async fn run_chat_session<R: Router + RouterCalibration>(
     session: ChatSession<R>,
     llm_timeout_secs: u64,
 ) -> ChatSessionReport {
     let ChatSession {
         client,
         mut req,
+        mut chat_step_source,
         parent_id,
         assistant_message_id,
         event_bus,
@@ -606,18 +1237,17 @@ pub async fn run_chat_session<R: Router>(
         included_message_ids,
         chat_policy,
         mut cancel_rx,
+        capture,
     } = session;
     let policy = tool_policy_from_chat(&chat_policy);
     let finish_policy = finish_policy_from_chat(&chat_policy);
+    let repair_attempt_limit = chat_policy.repair_attempt_limit.max(1);
     let http_timeout = Duration::from_secs(llm_timeout_secs);
-
-    // TODO:ploke-llm 2025-12-14
-    // placeholder default config for now, fix up later
-    let mut cfg = ChatHttpConfig::default();
-    cfg.timeout = http_timeout;
     let mut loop_state = ChatLoopState::default();
     let model_key = req.model_key.clone();
     let session_id = Uuid::new_v4();
+    let capture = capture.resolve();
+    let debug_sink = capture.debug_sink.clone();
     let mut report = ChatSessionReport::new(
         session_id,
         assistant_message_id,
@@ -626,6 +1256,7 @@ pub async fn run_chat_session<R: Router>(
     );
     let mut commit_phase = CommitPhase::PreCommit;
     let mut attempts = 0_u32;
+    let mut tool_streak = None;
 
     let mut initial_message_updated = false;
     for chain_index in 0..policy.tool_call_chain_limit {
@@ -658,11 +1289,22 @@ pub async fn run_chat_session<R: Router>(
                 "Outgoing chat request (truncated when large)"
             );
         }
+        let request_snapshot = req.core.messages.clone();
+        let calibration_input = R::calibration_input(&req);
+        let mut provider_timing = R::resolve_provider_timing(calibration_input);
+        provider_timing.attempt_timeout = AttemptTimeout::fixed(http_timeout);
+        // Honor the router-calibrated HTTP attempt budget (e.g. the direct-Google
+        // path opts into a larger exponential-backoff budget to ride out Vertex
+        // DSQ 429s) while keeping a floor of one retry for routers that do not
+        // customize it. The per-attempt timeout stays statically session-driven.
+        provider_timing.max_attempts = provider_timing.max_attempts.max(MIN_CHAT_HTTP_ATTEMPTS);
+        let mut cfg = ChatHttpConfig::from(&provider_timing);
         let ChatStepData {
             outcome,
             full_response,
+            provider_attempts,
         } = match tokio::select! {
-            res = ploke_llm::chat_step(&client, &req, &cfg) => res,
+            res = chat_step_source.next_step(&client, &req, &cfg) => res,
             _ = wait_for_cancel_signal(&mut cancel_rx) => {
                 return abort_for_user_cancel(
                     &mut report,
@@ -677,22 +1319,50 @@ pub async fn run_chat_session<R: Router>(
             }
         } {
             Ok(step) => step,
-            Err(err) => {
-                if let Some(unknown_tool) = extract_unknown_tool_name(&err) {
-                    let allowed = allowed_tool_names();
-                    let context = base_error_context(
-                        attempts,
-                        chain_index,
-                        "parse_response",
-                        &model_key,
-                        assistant_message_id,
-                    );
-                    let loop_error = build_unknown_tool_error(
-                        &unknown_tool,
-                        &allowed,
-                        context,
-                        commit_phase.clone(),
-                    );
+            Err(chat_step_error) => {
+                let provider_attempts = chat_step_error.provider_attempts;
+                let provider_exhausted = provider_retry_exhausted(&provider_attempts);
+                report.record_chat_step(chain_index, provider_timing.clone(), provider_attempts);
+                let err = chat_step_error.source;
+                if is_replay_boundary_error(&err) {
+                    report.outcome = SessionOutcome::Completed;
+                    report.commit_phase = commit_phase;
+                    report.attempts = attempts;
+                    report.final_messages = req.core.messages.clone();
+                    return report;
+                }
+                let allowed = allowed_tool_names();
+                let semantic_context = base_error_context(
+                    attempts,
+                    chain_index,
+                    "parse_response",
+                    &model_key,
+                    assistant_message_id,
+                );
+                if let Some(spec) = semantics::normalize_llm_error(&err, &allowed, semantic_context)
+                {
+                    let mut loop_error =
+                        build_loop_error_from_semantic_spec(spec, commit_phase.clone());
+                    if !consume_repair_budget(
+                        &mut loop_state,
+                        &mut loop_error,
+                        repair_attempt_limit,
+                    ) {
+                        emit_loop_error(
+                            &state_cmd_tx,
+                            assistant_message_id,
+                            &mut initial_message_updated,
+                            &loop_error,
+                        )
+                        .await;
+                        report.record_error(loop_error.clone());
+                        report.outcome = SessionOutcome::Aborted {
+                            error_id: loop_error.error_id,
+                        };
+                        report.commit_phase = commit_phase;
+                        report.attempts = attempts;
+                        return report;
+                    }
                     emit_loop_error(
                         &state_cmd_tx,
                         assistant_message_id,
@@ -711,7 +1381,112 @@ pub async fn run_chat_session<R: Router>(
                     &model_key,
                     assistant_message_id,
                 );
-                let loop_error = classify_llm_error(&err, context, commit_phase.clone());
+                let mut loop_error = classify_llm_error(&err, context, commit_phase.clone());
+                if !provider_exhausted
+                    && matches!(&loop_error.recovery, RecoveryDecision::Retry { .. })
+                    && loop_state.request_error_retries < chat_policy.error_retry_limit
+                {
+                    loop_state.request_error_retries =
+                        loop_state.request_error_retries.saturating_add(1);
+                    report.record_error(loop_error.clone());
+
+                    let retry_delay = match &loop_error.recovery {
+                        RecoveryDecision::Retry {
+                            strategy: RetryStrategy::Fixed,
+                            ..
+                        } => finish_policy
+                            .timeout
+                            .duration
+                            .unwrap_or_else(|| Duration::from_secs(0)),
+                        RecoveryDecision::Retry {
+                            strategy: RetryStrategy::Backoff,
+                            ..
+                        } => finish_policy
+                            .timeout
+                            .next_timout_dur(loop_state.request_error_retries as usize)
+                            .unwrap_or_else(|| {
+                                finish_policy
+                                    .timeout
+                                    .duration
+                                    .unwrap_or_else(|| Duration::from_secs(0))
+                            }),
+                        _ => Duration::from_secs(0),
+                    };
+
+                    tracing::warn!(
+                        target = "chat-loop",
+                        error = %err,
+                        retried_request_errors = loop_state.request_error_retries,
+                        retry_delay_secs = retry_delay.as_secs_f32(),
+                        ?model_key,
+                        "chat_step failed; retrying"
+                    );
+
+                    tokio::select! {
+                        _ = sleep(retry_delay) => {}
+                        _ = wait_for_cancel_signal(&mut cancel_rx) => {
+                            return abort_for_user_cancel(
+                                &mut report,
+                                &state_cmd_tx,
+                                assistant_message_id,
+                                &mut initial_message_updated,
+                                attempts,
+                                chain_index,
+                                &model_key,
+                                commit_phase,
+                            ).await;
+                        }
+                    }
+
+                    continue;
+                }
+
+                // Bounded in-session corrective re-prompt for a residual
+                // `malformed_function_call` (provider emitted Python-style
+                // `print(default_api...)` instead of a structured tool call).
+                // Mirrors the length-retry policy: append a corrective prompt and
+                // retry up to the configured limit. On exhaustion we fall through
+                // to the terminal abort below, preserving the MALFORMED_FUNCTION_CALL
+                // / ModelBehavior classification (no success masking).
+                if is_malformed_finish_error(&err)
+                    && should_retry_malformed(
+                        finish_policy.malformed,
+                        &mut loop_state.retried_malformed,
+                    )
+                {
+                    apply_prompt_hint(
+                        &mut loop_error,
+                        finish_policy.malformed_retry_prompt.clone(),
+                    );
+                    if !matches!(loop_error.retry, RetryAdvice::Yes { .. }) {
+                        let retry = RetryAdvice::Yes {
+                            strategy: RetryStrategy::Fixed,
+                            reason: ploke_core::ArcStr::from(
+                                "Retrying malformed function call within session",
+                            ),
+                        };
+                        loop_error.recovery = recovery_from_retry(&retry);
+                        loop_error.retry = retry;
+                    }
+                    tracing::warn!(
+                        target = "chat-loop",
+                        error = %err,
+                        retried_malformed = loop_state.retried_malformed,
+                        ?model_key,
+                        "malformed function call; retrying with corrective re-prompt"
+                    );
+                    emit_loop_error(
+                        &state_cmd_tx,
+                        assistant_message_id,
+                        &mut initial_message_updated,
+                        &loop_error,
+                    )
+                    .await;
+                    push_llm_payload(&mut req, &loop_error);
+                    report.record_error(loop_error);
+                    continue;
+                }
+
                 emit_loop_error(
                     &state_cmd_tx,
                     assistant_message_id,
@@ -728,8 +1503,21 @@ pub async fn run_chat_session<R: Router>(
                 return report;
             }
         };
+        report.record_chat_step(chain_index, provider_timing, provider_attempts);
+        emit_full_response_trace(
+            session_id,
+            parent_id,
+            assistant_message_id,
+            &model_key,
+            chain_index,
+            &full_response,
+        );
+        capture.record_response(assistant_message_id, chain_index, &full_response);
 
         let token_usage = full_response.usage;
+        let mut debug_calls = Vec::new();
+        let mut debug_results = Vec::new();
+        let mut streak_stop = None;
         if let Some(resp_tokens) = token_usage {
             state_cmd_tx
                 .send(StateCommand::UpdateContextTokens {
@@ -748,6 +1536,55 @@ pub async fn run_chat_session<R: Router>(
                 reasoning,
                 ..
             } => {
+                let calls = match validate_and_sanitize_tool_calls(&calls) {
+                    Ok(validated) => validated,
+                    Err(preflight_error) => {
+                        let context = base_error_context(
+                            attempts,
+                            chain_index,
+                            "tool_call_preflight",
+                            &model_key,
+                            assistant_message_id,
+                        );
+                        let spec = semantics::normalize_tool_call_preflight_error(
+                            preflight_error,
+                            provider_slug_from_response(&full_response),
+                            context,
+                        );
+                        let mut loop_error =
+                            build_loop_error_from_semantic_spec(spec, commit_phase.clone());
+                        if !consume_repair_budget(
+                            &mut loop_state,
+                            &mut loop_error,
+                            repair_attempt_limit,
+                        ) {
+                            emit_loop_error(
+                                &state_cmd_tx,
+                                assistant_message_id,
+                                &mut initial_message_updated,
+                                &loop_error,
+                            )
+                            .await;
+                            report.record_error(loop_error.clone());
+                            report.outcome = SessionOutcome::Aborted {
+                                error_id: loop_error.error_id,
+                            };
+                            report.commit_phase = commit_phase;
+                            report.attempts = attempts;
+                            return report;
+                        }
+                        emit_loop_error(
+                            &state_cmd_tx,
+                            assistant_message_id,
+                            &mut initial_message_updated,
+                            &loop_error,
+                        )
+                        .await;
+                        push_llm_payload(&mut req, &loop_error);
+                        report.record_error(loop_error);
+                        continue;
+                    }
+                };
                 let assistant_msg = if content.as_ref().is_some_and(|c| !c.is_empty()) {
                     content.as_ref().map(|s| s.to_string())
                 } else if reasoning.as_ref().is_some_and(|r| !r.is_empty()) {
@@ -755,6 +1592,8 @@ pub async fn run_chat_session<R: Router>(
                 } else {
                     None
                 };
+                debug_calls = calls.clone();
+                streak_stop = tool_streak_stop(&mut tool_streak, &calls, policy.tool_streak_limit);
                 req.core
                     .messages
                     .push(RequestMessage::new_assistant_with_tool_calls(
@@ -788,6 +1627,7 @@ pub async fn run_chat_session<R: Router>(
                     step_request_id,
                     calls,
                     policy.tool_call_timeout,
+                    policy.tool_loop_mode,
                 );
                 let results = tokio::select! {
                     result = results => result,
@@ -804,26 +1644,32 @@ pub async fn run_chat_session<R: Router>(
                         ).await;
                     }
                 };
+                debug_results = debug_tool_results(&results, &call_name_by_id);
 
                 // 3) append tool results into req.core.messages for the next step
                 for (call_id, tool_json_result) in results.into_iter() {
                     let call_id_for_state = call_id.clone();
                     match tool_json_result {
                         Ok(tool_result) => {
-                            req.core.messages.push(RequestMessage::new_tool(
-                                tool_result.content.clone(),
-                                call_id.clone(),
-                            ));
-                            state_cmd_tx
-                                .send(StateCommand::AddMessageTool {
+                            let replay_content = compact_tool_content_for_llm_replay(
+                                &tool_result.content,
+                                chat_policy.tool_replay.max_file_lines,
+                            );
+                            req.core
+                                .messages
+                                .push(RequestMessage::new_tool(replay_content, call_id.clone()));
+                            let _ = send_state_command_or_warn(
+                                &state_cmd_tx,
+                                StateCommand::AddMessageTool {
                                     new_msg_id: Uuid::new_v4(),
                                     msg: tool_result.content,
                                     kind: MessageKind::Tool,
                                     tool_call_id: call_id_for_state,
                                     tool_payload: tool_result.ui_payload,
-                                })
-                                .await
-                                .expect("state manager must be running");
+                                },
+                                "tool_result_message",
+                            )
+                            .await;
                             commit_phase = CommitPhase::ToolResultsCommitted;
                         }
                         Err(tool_error) => {
@@ -838,16 +1684,18 @@ pub async fn run_chat_session<R: Router>(
                                 .messages
                                 .push(RequestMessage::new_tool(content.clone(), call_id.clone()));
 
-                            state_cmd_tx
-                                .send(StateCommand::AddMessageTool {
+                            let _ = send_state_command_or_warn(
+                                &state_cmd_tx,
+                                StateCommand::AddMessageTool {
                                     new_msg_id: Uuid::new_v4(),
                                     msg: content,
                                     kind: MessageKind::Tool,
                                     tool_call_id: call_id_for_state,
                                     tool_payload: tool_error.ui_payload,
-                                })
-                                .await
-                                .expect("state manager must be running");
+                                },
+                                "tool_error_message",
+                            )
+                            .await;
                             commit_phase = CommitPhase::ToolResultsCommitted;
                             let mut context = base_error_context(
                                 attempts,
@@ -936,7 +1784,7 @@ pub async fn run_chat_session<R: Router>(
             } => {
                 let x = "";
                 let msg = format!(
-                    "{x:-^10} Reasoning {x:-^10}\n 
+                    "{x:-^10} Reasoning {x:-^10}\n
                     {reasoning_msg}\n
                     {x:^20}
                     {content_msg}"
@@ -952,6 +1800,48 @@ pub async fn run_chat_session<R: Router>(
                 commit_phase = CommitPhase::MessageCommitted;
             }
         };
+
+        if let Some((tool, count, limit)) = streak_stop {
+            let context = base_error_context(
+                attempts,
+                chain_index,
+                "tool_streak_limit",
+                &model_key,
+                assistant_message_id,
+            );
+            let loop_error =
+                build_streak_error(tool.as_str(), count, limit, context, commit_phase.clone());
+            emit_loop_error(
+                &state_cmd_tx,
+                assistant_message_id,
+                &mut initial_message_updated,
+                &loop_error,
+            )
+            .await;
+            record_chat_debug_step(
+                &debug_sink,
+                ChatDebugStep {
+                    session_id,
+                    parent_id,
+                    assistant_message_id,
+                    step_index: chain_index,
+                    request_messages: request_snapshot,
+                    response: full_response,
+                    tool_calls: debug_calls,
+                    tool_results: debug_results,
+                    final_messages: req.core.messages.clone(),
+                    terminal: true,
+                },
+            );
+            report.record_error(loop_error.clone());
+            report.outcome = SessionOutcome::Exhausted {
+                error_id: loop_error.error_id,
+            };
+            report.commit_phase = commit_phase;
+            report.attempts = attempts;
+            report.final_messages = req.core.messages.clone();
+            return report;
+        }
 
         let mut ctx = ChatLoopContext {
             cfg: &mut cfg,
@@ -975,16 +1865,33 @@ pub async fn run_chat_session<R: Router>(
                         apply_prompt_hint(&mut loop_error, prompt);
                     }
                     if !matches!(loop_error.retry, RetryAdvice::Yes { .. }) {
-                        loop_error.retry = RetryAdvice::Yes {
+                        let retry = RetryAdvice::Yes {
                             strategy: RetryStrategy::Fixed,
                             reason: ploke_core::ArcStr::from("Retrying within session"),
                         };
+                        loop_error.recovery = recovery_from_retry(&retry);
+                        loop_error.retry = retry;
                     }
                     push_llm_payload(&mut req, &loop_error);
                     report.record_error(loop_error);
                 } else if let Some(prompt) = continue_info.system_prompt {
                     req.core.messages.push(RequestMessage::new_system(prompt));
                 }
+                record_chat_debug_step(
+                    &debug_sink,
+                    ChatDebugStep {
+                        session_id,
+                        parent_id,
+                        assistant_message_id,
+                        step_index: chain_index,
+                        request_messages: request_snapshot,
+                        response: full_response.clone(),
+                        tool_calls: debug_calls,
+                        tool_results: debug_results,
+                        final_messages: req.core.messages.clone(),
+                        terminal: false,
+                    },
+                );
                 continue;
             }
             FinishDecision::Return(result) => match result {
@@ -1032,9 +1939,25 @@ pub async fn run_chat_session<R: Router>(
                             })
                             .await;
                     }
+                    record_chat_debug_step(
+                        &debug_sink,
+                        ChatDebugStep {
+                            session_id,
+                            parent_id,
+                            assistant_message_id,
+                            step_index: chain_index,
+                            request_messages: request_snapshot,
+                            response: full_response.clone(),
+                            tool_calls: debug_calls,
+                            tool_results: debug_results,
+                            final_messages: req.core.messages.clone(),
+                            terminal: true,
+                        },
+                    );
                     report.outcome = SessionOutcome::Completed;
                     report.commit_phase = commit_phase;
                     report.attempts = attempts;
+                    report.final_messages = req.core.messages.clone();
                     match state_cmd_tx
                         .send(StateCommand::DecrementChatTtl {
                             included_message_ids: included_message_ids.clone(),
@@ -1073,6 +1996,21 @@ pub async fn run_chat_session<R: Router>(
                         &loop_error,
                     )
                     .await;
+                    record_chat_debug_step(
+                        &debug_sink,
+                        ChatDebugStep {
+                            session_id,
+                            parent_id,
+                            assistant_message_id,
+                            step_index: chain_index,
+                            request_messages: request_snapshot,
+                            response: full_response.clone(),
+                            tool_calls: debug_calls,
+                            tool_results: debug_results,
+                            final_messages: req.core.messages.clone(),
+                            terminal: true,
+                        },
+                    );
                     report.record_error(loop_error.clone());
                     report.outcome = SessionOutcome::Exhausted {
                         error_id: loop_error.error_id,
@@ -1110,6 +2048,81 @@ pub async fn run_chat_session<R: Router>(
     report
 }
 
+fn debug_tool_results(
+    results: &[(
+        ploke_core::ArcStr,
+        Result<ToolCallUiResult, ToolCallUiError>,
+    )],
+    call_name_by_id: &HashMap<ploke_core::ArcStr, ploke_core::ArcStr>,
+) -> Vec<ChatDebugToolResult> {
+    results
+        .iter()
+        .map(|(call_id, result)| {
+            let tool = call_name_by_id
+                .get(call_id)
+                .map(std::string::ToString::to_string);
+            match result {
+                Ok(result) => ChatDebugToolResult::Completed {
+                    call_id: call_id.clone(),
+                    tool,
+                    content: result.content.clone(),
+                    ui_payload: result.ui_payload.clone(),
+                },
+                Err(error) => ChatDebugToolResult::Failed {
+                    call_id: call_id.clone(),
+                    tool,
+                    error: error.error.clone(),
+                    ui_payload: error.ui_payload.clone(),
+                },
+            }
+        })
+        .collect()
+}
+
+fn record_chat_debug_step(debug_sink: &Option<Arc<dyn ChatDebugSink>>, step: ChatDebugStep) {
+    let Some(sink) = debug_sink else {
+        return;
+    };
+    if let Err(error) = sink.record_step(step) {
+        tracing::warn!(
+            target = "chat-loop",
+            error,
+            "chat debug sink failed to persist response checkpoint"
+        );
+    }
+}
+
+fn emit_full_response_trace(
+    session_id: Uuid,
+    parent_id: Uuid,
+    assistant_message_id: Uuid,
+    model_key: &Option<ploke_llm::ModelKey>,
+    chain_index: usize,
+    full_response: &OpenAiResponse,
+) {
+    let trace_record = FullResponseTraceRecord {
+        assistant_message_id,
+        recorded_response: RecordedResponse::new(chain_index, full_response.clone()),
+    };
+
+    match serde_json::to_string(&trace_record) {
+        Ok(response_json) => {
+            tracing::info!(target: FULL_RESPONSE_TARGET, "{response_json}");
+        }
+        Err(error) => {
+            tracing::warn!(
+                target: "ploke_tui",
+                session_id = %session_id,
+                parent_id = %parent_id,
+                assistant_message_id = %assistant_message_id,
+                model = ?model_key,
+                %error,
+                "Failed to serialize full_response for tracing"
+            );
+        }
+    }
+}
+
 async fn add_or_update_assistant_message(
     assistant_message_id: Uuid,
     state_cmd_tx: &mpsc::Sender<StateCommand>,
@@ -1128,14 +2141,16 @@ async fn add_or_update_assistant_message(
         .await;
         *initial_message_updated = is_updated;
     } else {
-        state_cmd_tx
-            .send(StateCommand::AddMessageImmediate {
+        let _ = send_state_command_or_warn(
+            state_cmd_tx,
+            StateCommand::AddMessageImmediate {
                 msg,
                 kind: MessageKind::Assistant,
                 new_msg_id: Uuid::new_v4(),
-            })
-            .await
-            .expect("state manager must be running");
+            },
+            "assistant_message",
+        )
+        .await;
     }
 }
 
@@ -1168,14 +2183,16 @@ async fn emit_loop_error(
         return;
     }
 
-    state_cmd_tx
-        .send(StateCommand::AddMessageImmediate {
+    let _ = send_state_command_or_warn(
+        state_cmd_tx,
+        StateCommand::AddMessageImmediate {
             msg,
             kind: MessageKind::System,
             new_msg_id: Uuid::new_v4(),
-        })
-        .await
-        .expect("state manager must be running");
+        },
+        "loop_error_message",
+    )
+    .await;
 }
 
 fn push_llm_payload<R: Router>(req: &mut ChatCompRequest<R>, error: &LoopError) {
@@ -1239,26 +2256,12 @@ fn base_error_context(
     context
 }
 
-fn extract_unknown_tool_name(err: &LlmError) -> Option<String> {
-    let message = match err {
-        LlmError::Deserialization { message, .. } => message.as_str(),
-        _ => return None,
-    };
-    let needle = "unknown variant `";
-    if let Some(start) = message.find(needle) {
-        let rest = &message[start + needle.len()..];
-        if let Some(end) = rest.find('`') {
-            return Some(rest[..end].to_string());
-        }
-    }
-    let needle = "unknown variant \"";
-    if let Some(start) = message.find(needle) {
-        let rest = &message[start + needle.len()..];
-        if let Some(end) = rest.find('"') {
-            return Some(rest[..end].to_string());
-        }
-    }
-    None
+fn provider_slug_from_response(response: &OpenAiResponse) -> Option<ploke_core::ArcStr> {
+    response
+        .provider
+        .as_ref()
+        .and_then(|name| name.to_slug())
+        .map(|slug| ploke_core::ArcStr::from(slug.as_str()))
 }
 
 /// Placeholder cost estimator using usage counts.
@@ -1280,21 +2283,39 @@ async fn update_assistant_placeholder_once(
     initial_message_updated: bool,
 ) -> bool {
     if !initial_message_updated {
-        state_cmd_tx
-            .send(StateCommand::UpdateMessage {
+        send_state_command_or_warn(
+            state_cmd_tx,
+            StateCommand::UpdateMessage {
                 id: assistant_message_id,
                 update: MessageUpdate {
                     content: Some(content),
                     status: Some(status),
                     ..Default::default()
                 },
-            })
-            .await
-            .inspect_err(|e| tracing::error!("{e:#?}"))
-            .expect("state command must be running");
-        true
+            },
+            "assistant_placeholder_update",
+        )
+        .await
     } else {
         false
+    }
+}
+
+async fn send_state_command_or_warn(
+    state_cmd_tx: &mpsc::Sender<StateCommand>,
+    command: StateCommand,
+    context: &'static str,
+) -> bool {
+    match state_cmd_tx.send(command).await {
+        Ok(()) => true,
+        Err(_) => {
+            tracing::warn!(
+                target: "chat-loop",
+                context,
+                "state manager channel closed while emitting chat session message"
+            );
+            false
+        }
     }
 }
 
@@ -1316,12 +2337,25 @@ pub async fn execute_tools_via_event_bus(
     step_request_id: Uuid,
     calls: Vec<ToolCall>,
     policy_timeout: ToolCallTimeout,
+    tool_loop_mode: ToolLoopMode,
 ) -> Vec<(
     ploke_core::ArcStr,
     Result<ToolCallUiResult, ToolCallUiError>,
 )> {
+    if calls.is_empty() {
+        tracing::info!(
+            request_id = %step_request_id,
+            "execute_tools_via_event_bus received zero tool calls"
+        );
+        return Vec::new();
+    }
+
     // One receiver for the whole batch
     let mut rx = event_bus.realtime_tx.subscribe();
+    let tool_name_by_call = calls
+        .iter()
+        .map(|call| (call.call_id.clone(), call.function.name))
+        .collect::<HashMap<_, _>>();
 
     // Per-call waiters
     let mut waiters: HashMap<
@@ -1379,6 +2413,16 @@ pub async fn execute_tools_via_event_bus(
                     ui_payload,
                     ..
                 })) if request_id == step_request_id => {
+                    let tool_name = tool_name_by_call.get(&call_id).copied();
+                    if should_wait_for_settled_edit(tool_loop_mode, tool_name, ui_payload.as_ref())
+                    {
+                        tracing::debug!(
+                            request_id = %step_request_id,
+                            call_id = %call_id,
+                            "gated tool loop waiting for settled edit result"
+                        );
+                        continue;
+                    }
                     if let Some(tx) = waiters.remove(&call_id) {
                         let _ = tx.send(Ok(ToolCallUiResult {
                             content,
@@ -1440,48 +2484,35 @@ pub async fn execute_tools_via_event_bus(
     results
 }
 
-use tracing::info;
-
-fn log_api_request_json(url: &str, payload: &str, rel_path: &str) -> color_eyre::Result<()> {
-    info!(target: "api_json", "\n// URL: {url}\n// Request\n{payload}\n");
-    write_payload(rel_path, payload);
-    Ok(())
-}
-
-fn log_api_raw_response(url: &str, status: u16, body: &str) -> color_eyre::Result<()> {
-    info!(target: "api_json", "\n// URL: {url}\n// Status: {status}\n{body}\n");
-    write_payload(OPENROUTER_RESPONSE_LOG_RAW, body);
-    Ok(())
-}
-
-async fn log_api_parsed_json_response(
-    url: &str,
-    status: u16,
-    parsed: &OpenAiResponse,
-) -> color_eyre::Result<()> {
-    let payload: String = serde_json::to_string_pretty(parsed)?;
-    info!(target: "api_json", "\n// URL: {url}\n// Status: {status}\n{payload}\n");
-    write_payload(OPENROUTER_RESPONSE_LOG_PARSED, &payload);
-    Ok(())
-}
-
-fn write_payload(rel_path: &str, payload: &str) {
-    let mut path = workspace_root();
-    path.push(rel_path);
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
+fn should_wait_for_settled_edit(
+    mode: ToolLoopMode,
+    tool_name: Option<crate::tools::ToolName>,
+    ui_payload: Option<&ToolUiPayload>,
+) -> bool {
+    if !matches!(mode, ToolLoopMode::Gated) {
+        return false;
     }
-    let _ = fs::write(path, payload);
+    if !tool_name.is_some_and(is_edit_tool) {
+        return false;
+    }
+    ui_payload.is_some_and(is_pending_edit_payload)
 }
 
-fn truncate_for_error(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        let head = &s[..max.saturating_sub(200)];
-        let tail = &s[s.len().saturating_sub(200)..];
-        format!("{head}…<snip>…{tail}")
-    }
+fn is_edit_tool(tool_name: crate::tools::ToolName) -> bool {
+    matches!(
+        tool_name,
+        crate::tools::ToolName::ApplyCodeEdit
+            | crate::tools::ToolName::InsertRustItem
+            | crate::tools::ToolName::CreateFile
+            | crate::tools::ToolName::NsPatch
+    )
+}
+
+fn is_pending_edit_payload(payload: &ToolUiPayload) -> bool {
+    payload
+        .fields
+        .iter()
+        .any(|field| field.name.as_ref() == "status" && field.value.as_ref() == "pending")
 }
 
 #[tracing::instrument]
@@ -1491,14 +2522,16 @@ async fn add_sysinfo_message(
     status_msg: &str,
 ) {
     let completed_msg = format!("Tool call {}: {}", status_msg, call_id.as_ref());
-    cmd_tx
-        .send(StateCommand::AddMessageImmediate {
+    let _ = send_state_command_or_warn(
+        cmd_tx,
+        StateCommand::AddMessageImmediate {
             msg: completed_msg,
             kind: MessageKind::SysInfo,
             new_msg_id: Uuid::new_v4(),
-        })
-        .await
-        .expect("state manager must be running");
+        },
+        "sysinfo_message",
+    )
+    .await;
 }
 
 #[tracing::instrument]
@@ -1508,26 +2541,1965 @@ async fn add_tool_failed_message(
     status_msg: &str,
 ) {
     let completed_msg = format!("Tool call {}: {}", status_msg, call_id.as_ref());
-    cmd_tx
-        .send(StateCommand::AddMessageImmediate {
+    let _ = send_state_command_or_warn(
+        cmd_tx,
+        StateCommand::AddMessageImmediate {
             msg: completed_msg,
             kind: MessageKind::System,
             new_msg_id: Uuid::new_v4(),
-        })
-        .await
-        .expect("state manager must be running");
+        },
+        "tool_failed_message",
+    )
+    .await;
 }
 
 #[cfg(test)]
 mod tests {
-    use ploke_llm::manager::parse_chat_outcome;
+    use std::collections::BTreeMap;
+    use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc as StdArc, Mutex as StdMutex};
     use std::time::Duration;
+
+    use once_cell::sync::Lazy;
+    use ploke_llm::ProviderSlug;
+    use ploke_llm::manager::{
+        ApproxCharTokenizer, RecordedResponse, Role, TokenCounter, parse_chat_outcome,
+    };
+    use ploke_llm::registry::calibration::{AttemptTimeout, ProviderTiming, RouterCalibration};
+    use ploke_llm::request::endpoint::ToolChoice;
+    use ploke_llm::router_only::ChatCompRequest;
+    use ploke_llm::router_only::Router;
+    use ploke_llm::router_only::google::Google;
+    use ploke_llm::router_only::openrouter::ChatCompFields;
+    use ploke_llm::router_only::openrouter::OpenRouter;
+    use ploke_llm::router_only::openrouter::OpenRouterModelId;
+    use ploke_llm::router_only::openrouter::ProviderPreferences;
+    use serde::{Deserialize, Serialize};
+    use serde_json::json;
+    use tracing::Event;
+    use tracing::field::{Field, Visit};
+    use tracing_subscriber::layer::{Context, SubscriberExt};
+    use tracing_subscriber::registry::LookupSpan;
+    use tracing_subscriber::{Layer, Registry};
 
     use super::*;
     use crate::EventBus;
+    use crate::app_state::AppState;
     use crate::event_bus::EventBusCaps;
-    use crate::llm::router_only::openrouter::OpenRouter;
-    use crate::tools::ToolName;
+    use crate::llm::manager::loop_error::LoopErrorKind;
+    use crate::tools::{FunctionMarker, Tool, ToolName};
+    use crate::user_config::ChatPolicy;
+    use ploke_db::Database;
+    use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
+    use ploke_embed::local::{EmbeddingConfig, LocalEmbedder};
+    use ploke_embed::runtime::EmbeddingRuntime;
+    use ploke_llm::response::FunctionCall;
+    use ploke_rag::{RagService, TokenBudget};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio::sync::{Mutex, mpsc, watch};
+    use tokio::time::timeout;
+
+    static TEST_ROUTER_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+    const TEST_ROUTER_URL: &str = "http://127.0.0.1:39181/v1/chat/completions";
+    const TEST_ROUTER_URL_ALT: &str = "http://127.0.0.1:39182/v1/chat/completions";
+
+    fn test_tool_call(name: ToolName) -> ToolCall {
+        ToolCall {
+            call_id: ploke_core::ArcStr::from(format!("call_{}", name.as_str())),
+            call_type: FunctionMarker,
+            function: FunctionCall {
+                name,
+                arguments: "{}".to_string(),
+            },
+            extra_content: None,
+        }
+    }
+
+    #[test]
+    fn tool_streak_stop_resets_when_tool_changes() {
+        let mut streak = None;
+        let repeated = vec![
+            test_tool_call(ToolName::RequestCodeContext),
+            test_tool_call(ToolName::RequestCodeContext),
+        ];
+        assert_eq!(tool_streak_stop(&mut streak, &repeated, Some(3)), None);
+        assert_eq!(
+            tool_streak_stop(&mut streak, &[test_tool_call(ToolName::ListDir)], Some(3)),
+            None
+        );
+        assert_eq!(tool_streak_stop(&mut streak, &repeated, Some(3)), None);
+
+        let (tool, count, limit) = tool_streak_stop(
+            &mut streak,
+            &[test_tool_call(ToolName::RequestCodeContext)],
+            Some(3),
+        )
+        .expect("third repeated call should stop the session");
+        assert_eq!(tool, ToolName::RequestCodeContext);
+        assert_eq!(count, 3);
+        assert_eq!(limit, 3);
+    }
+
+    #[test]
+    fn tool_streak_stop_is_disabled_without_limit() {
+        let mut streak = None;
+        let repeated = (0..20)
+            .map(|_| test_tool_call(ToolName::RequestCodeContext))
+            .collect::<Vec<_>>();
+        assert_eq!(tool_streak_stop(&mut streak, &repeated, None), None);
+        assert_eq!(streak, None);
+    }
+
+    #[test]
+    fn tool_streak_stop_latches_before_later_tool() {
+        let mut streak = Some((ToolName::RequestCodeContext, 2));
+        let mixed = vec![
+            test_tool_call(ToolName::RequestCodeContext),
+            test_tool_call(ToolName::ListDir),
+        ];
+        assert_eq!(
+            tool_streak_stop(&mut streak, &mixed, Some(3)),
+            Some((ToolName::RequestCodeContext, 3, 3))
+        );
+    }
+
+    #[derive(Clone, Default)]
+    struct DebugSteps(StdArc<StdMutex<Vec<ChatDebugStep>>>);
+
+    impl DebugSteps {
+        fn snapshot(&self) -> Vec<ChatDebugStep> {
+            self.0.lock().expect("debug steps lock").clone()
+        }
+    }
+
+    impl ChatDebugSink for DebugSteps {
+        fn record_step(&self, step: ChatDebugStep) -> Result<(), String> {
+            self.0.lock().expect("debug steps lock").push(step);
+            Ok(())
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct TraceLines(StdArc<StdMutex<Vec<String>>>);
+
+    impl TraceLines {
+        fn push(&self, line: String) {
+            self.0.lock().expect("trace lock").push(line);
+        }
+
+        fn snapshot(&self) -> Vec<String> {
+            self.0.lock().expect("trace lock").clone()
+        }
+    }
+
+    #[derive(Default)]
+    struct TraceFields {
+        values: Vec<String>,
+    }
+
+    impl TraceFields {
+        fn push(&mut self, field: &Field, value: impl Into<String>) {
+            self.values
+                .push(format!("{}={}", field.name(), value.into()));
+        }
+
+        fn finish(self) -> String {
+            self.values.join(" ")
+        }
+    }
+
+    impl Visit for TraceFields {
+        fn record_bool(&mut self, field: &Field, value: bool) {
+            self.push(field, value.to_string());
+        }
+
+        fn record_i64(&mut self, field: &Field, value: i64) {
+            self.push(field, value.to_string());
+        }
+
+        fn record_u64(&mut self, field: &Field, value: u64) {
+            self.push(field, value.to_string());
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.push(field, value.to_string());
+        }
+
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            self.push(field, format!("{value:?}"));
+        }
+    }
+
+    struct TraceLayer {
+        lines: TraceLines,
+    }
+
+    impl<S> Layer<S> for TraceLayer
+    where
+        S: tracing::Subscriber + for<'span> LookupSpan<'span>,
+    {
+        fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+            if event.metadata().target() != FULL_RESPONSE_TARGET {
+                return;
+            }
+            let mut fields = TraceFields::default();
+            event.record(&mut fields);
+            self.lines.push(fields.finish());
+        }
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Default, Eq)]
+    struct TestRouter;
+
+    impl Router for TestRouter {
+        type CompletionFields = ChatCompFields;
+        type RouterModelId = OpenRouterModelId;
+
+        const BASE_URL: &str = "http://127.0.0.1:39181/v1";
+        const COMPLETION_URL: &str = TEST_ROUTER_URL;
+        const MODELS_URL: &str = "http://127.0.0.1:39181/v1/models";
+        const ENDPOINTS_TAIL: &str = "endpoints";
+        const API_KEY_NAME: &str = "PLOKE_TEST_ROUTER_API_KEY";
+        const PROVIDERS_URL: &str = "http://127.0.0.1:39181/v1/providers";
+
+        fn resolve_api_key() -> Result<String, ploke_llm::LlmError> {
+            std::env::var(Self::API_KEY_NAME).map_err(LlmError::from)
+        }
+    }
+
+    impl RouterCalibration for TestRouter {
+        type Model = ploke_llm::ModelKey;
+        type Provider = ploke_llm::ProviderKey;
+        type Preferences = ();
+        type Key = ();
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Default, Eq)]
+    struct TestRouterAlt;
+
+    impl Router for TestRouterAlt {
+        type CompletionFields = ChatCompFields;
+        type RouterModelId = OpenRouterModelId;
+
+        const BASE_URL: &str = "http://127.0.0.1:39182/v1";
+        const COMPLETION_URL: &str = TEST_ROUTER_URL_ALT;
+        const MODELS_URL: &str = "http://127.0.0.1:39182/v1/models";
+        const ENDPOINTS_TAIL: &str = "endpoints";
+        const API_KEY_NAME: &str = "PLOKE_TEST_ROUTER_API_KEY";
+        const PROVIDERS_URL: &str = "http://127.0.0.1:39182/v1/providers";
+
+        fn resolve_api_key() -> Result<String, ploke_llm::LlmError> {
+            std::env::var(Self::API_KEY_NAME).map_err(LlmError::from)
+        }
+    }
+
+    impl RouterCalibration for TestRouterAlt {
+        type Model = ploke_llm::ModelKey;
+        type Provider = ploke_llm::ProviderKey;
+        type Preferences = ();
+        type Key = ();
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Default, Eq)]
+    struct CalibratedTestRouter;
+
+    impl Router for CalibratedTestRouter {
+        type CompletionFields = ChatCompFields;
+        type RouterModelId = OpenRouterModelId;
+
+        const BASE_URL: &str = "http://127.0.0.1:39181/v1";
+        const COMPLETION_URL: &str = TEST_ROUTER_URL;
+        const MODELS_URL: &str = "http://127.0.0.1:39181/v1/models";
+        const ENDPOINTS_TAIL: &str = "endpoints";
+        const API_KEY_NAME: &str = "PLOKE_TEST_ROUTER_API_KEY";
+        const PROVIDERS_URL: &str = "http://127.0.0.1:39181/v1/providers";
+
+        fn resolve_api_key() -> Result<String, ploke_llm::LlmError> {
+            std::env::var(Self::API_KEY_NAME).map_err(LlmError::from)
+        }
+    }
+
+    impl RouterCalibration for CalibratedTestRouter {
+        type Model = ploke_llm::ModelKey;
+        type Provider = ploke_llm::ProviderKey;
+        type Preferences = ();
+        type Key = ploke_llm::ModelKey;
+
+        fn calibration_input(req: &ChatCompRequest<Self>) -> ploke_llm::CalibrationInput<Self> {
+            ploke_llm::CalibrationInput {
+                model: req.model_key.clone(),
+                provider: None,
+                provider_preferences: None,
+                key: req.model_key.clone(),
+            }
+        }
+
+        fn resolve_provider_timing(_input: ploke_llm::CalibrationInput<Self>) -> ProviderTiming {
+            ProviderTiming {
+                attempt_timeout: AttemptTimeout::fixed(Duration::from_secs(17)),
+                max_attempts: 3,
+                ..ProviderTiming::default()
+            }
+        }
+    }
+
+    struct ApiKeyGuard {
+        previous: Option<String>,
+    }
+
+    impl ApiKeyGuard {
+        fn set(key: &str) -> Self {
+            let previous = std::env::var(TestRouter::API_KEY_NAME).ok();
+            unsafe {
+                std::env::set_var(TestRouter::API_KEY_NAME, key);
+            }
+            Self { previous }
+        }
+    }
+
+    impl Drop for ApiKeyGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.take() {
+                unsafe {
+                    std::env::set_var(TestRouter::API_KEY_NAME, previous);
+                }
+            } else {
+                unsafe {
+                    std::env::remove_var(TestRouter::API_KEY_NAME);
+                }
+            }
+        }
+    }
+
+    async fn read_http_request(stream: &mut TcpStream) {
+        let mut buf = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        let mut header_end = None;
+        let mut content_length = 0usize;
+
+        loop {
+            let read = stream.read(&mut chunk).await.expect("read request");
+            if read == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..read]);
+
+            if header_end.is_none()
+                && let Some(pos) = buf.windows(4).position(|window| window == b"\r\n\r\n")
+            {
+                let end = pos + 4;
+                header_end = Some(end);
+                let headers = String::from_utf8_lossy(&buf[..end]);
+                content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        if name.eq_ignore_ascii_case("content-length") {
+                            value.trim().parse::<usize>().ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0);
+            }
+
+            if let Some(end) = header_end
+                && buf.len() >= end + content_length
+            {
+                break;
+            }
+        }
+    }
+
+    async fn spawn_test_router_server(
+        bind_addr: &'static str,
+        responses: Vec<String>,
+        request_count: std::sync::Arc<AtomicUsize>,
+    ) -> tokio::task::JoinHandle<()> {
+        let listener = TcpListener::bind(bind_addr)
+            .await
+            .expect("bind test router");
+        tokio::spawn(async move {
+            for body in responses {
+                let Ok(Ok((mut stream, _))) =
+                    timeout(Duration::from_secs(5), listener.accept()).await
+                else {
+                    break;
+                };
+                request_count.fetch_add(1, Ordering::SeqCst);
+                read_http_request(&mut stream).await;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write response");
+                stream.shutdown().await.expect("shutdown");
+            }
+        })
+    }
+
+    async fn spawn_nonresponding_test_router_server(
+        bind_addr: &'static str,
+        request_count: std::sync::Arc<AtomicUsize>,
+    ) -> (
+        tokio::sync::oneshot::Sender<()>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let listener = TcpListener::bind(bind_addr)
+            .await
+            .expect("bind test router");
+        let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel();
+        let handle = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut stop_rx => break,
+                    accepted = listener.accept() => {
+                        let Ok((mut stream, _)) = accepted else {
+                            break;
+                        };
+                        request_count.fetch_add(1, Ordering::SeqCst);
+                        tokio::spawn(async move {
+                            read_http_request(&mut stream).await;
+                            tokio::time::sleep(Duration::from_secs(10)).await;
+                            let _ = stream.shutdown().await;
+                        });
+                    }
+                }
+            }
+        });
+        (stop_tx, handle)
+    }
+
+    fn malformed_tool_call_response(index: usize) -> String {
+        json!({
+            "id": format!("repair-{index}"),
+            "choices": [{
+                "index": 0,
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": format!("call_{index}"),
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": "{\"file\":1}"
+                        }
+                    }]
+                }
+            }],
+            "created": 0,
+            "model": "test/model",
+            "object": "chat.completion"
+        })
+        .to_string()
+    }
+
+    /// A provider envelope whose `finish_reason` is `malformed_function_call`
+    /// and whose message carries the Python-codegen refusal text observed on the
+    /// residual direct-Google incident (a `print(default_api.apply_code_edit(...))`
+    /// against a hallucinated symbol). `parse_chat_outcome` surfaces this as an
+    /// `LlmError::FinishError`, exercising the chat-step error branch.
+    fn malformed_function_call_response(index: usize) -> String {
+        json!({
+            "id": format!("malformed-{index}"),
+            "choices": [{
+                "index": 0,
+                "finish_reason": "malformed_function_call",
+                "message": {
+                    "role": "assistant",
+                    "refusal": "Malformed function call: print(default_api.apply_code_edit(edits=[default_api.ApplyCodeEditEdits(file=\"crates/printer/src/standard.rs\", canon=\"crate::standard::StandardSink::print_replacement\")]))"
+                }
+            }],
+            "created": 0,
+            "model": "test/model",
+            "object": "chat.completion"
+        })
+        .to_string()
+    }
+
+    fn list_dir_tool_call_response(index: usize) -> String {
+        json!({
+            "id": format!("tool-step-{index}"),
+            "choices": [{
+                "index": 0,
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": format!("call_{index}"),
+                        "type": "function",
+                        "function": {
+                            "name": "list_dir",
+                            "arguments": "{\"dir\":\".\",\"max_entries\":3}"
+                        }
+                    }]
+                }
+            }],
+            "created": 0,
+            "model": "test/model",
+            "object": "chat.completion"
+        })
+        .to_string()
+    }
+
+    fn list_dir_batch_response(index: usize, count: usize) -> String {
+        let tool_calls = (0..count)
+            .map(|call| {
+                json!({
+                    "id": format!("call_{index}_{call}"),
+                    "type": "function",
+                    "function": {
+                        "name": "list_dir",
+                        "arguments": "{\"dir\":\".\",\"max_entries\":3}"
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        json!({
+            "id": format!("tool-batch-{index}"),
+            "choices": [{
+                "index": 0,
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": tool_calls
+                }
+            }],
+            "created": 0,
+            "model": "test/model",
+            "object": "chat.completion"
+        })
+        .to_string()
+    }
+
+    fn content_response(content: &str) -> String {
+        json!({
+            "id": "final",
+            "choices": [{
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {
+                    "role": "assistant",
+                    "content": content
+                }
+            }],
+            "created": 0,
+            "model": "test/model",
+            "object": "chat.completion"
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn full_response_trace_record_serializes_recorded_response_in_sidecar_shape() {
+        let assistant_message_id = Uuid::from_u128(0x8e32b33b_6de5_4e1c_9fa1_14bc2059913f);
+        let response = serde_json::from_str(&content_response("final answer"))
+            .expect("content response envelope");
+        let record = FullResponseTraceRecord {
+            assistant_message_id,
+            recorded_response: RecordedResponse::new(3, response),
+        };
+
+        let value = serde_json::to_value(&record).expect("trace record json");
+
+        assert_eq!(
+            value["assistant_message_id"],
+            assistant_message_id.to_string()
+        );
+        assert_eq!(value["response_index"], 3);
+        assert_eq!(value["response"]["id"], "final");
+        assert!(value.get("recorded_response").is_none());
+    }
+
+    #[test]
+    fn explicit_empty_capture_disables_legacy_fallback() {
+        assert!(SessionCapture::default().uses_legacy_fallback());
+        assert!(!SessionCapture::new(None, None).uses_legacy_fallback());
+    }
+
+    async fn run_calibrated_test_router_session() -> ChatSessionReport {
+        let responses = vec![content_response("final answer")];
+        let request_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let server =
+            spawn_test_router_server("127.0.0.1:39181", responses, request_count.clone()).await;
+
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let req = ChatCompRequest::<CalibratedTestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::live(),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id: Uuid::new_v4(),
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+                capture: SessionCapture::default(),
+            },
+            90,
+        )
+        .await;
+
+        server.await.expect("server task");
+        drain.abort();
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            1,
+            "report={report:#?}"
+        );
+        report
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_replays_recorded_response_without_provider_http() {
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let assistant_message_id = Uuid::new_v4();
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        let response = serde_json::from_str(&content_response("recorded final answer"))
+            .expect("recorded response parses");
+        let tape = RecordedResponseTape::new(vec![RecordedResponse::new(0, response)]);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded(tape),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id,
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+                capture: SessionCapture::default(),
+            },
+            1,
+        )
+        .await;
+
+        let mut assistant_update = None;
+        while let Ok(command) = state_cmd_rx.try_recv() {
+            if let StateCommand::UpdateMessage { id, update } = command
+                && id == assistant_message_id
+                && let Some(content) = update.content
+            {
+                assistant_update = Some(content);
+            }
+        }
+
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+        assert_eq!(report.errors.len(), 0);
+        assert_eq!(report.attempts, 1);
+        assert!(
+            report.chat_steps.is_empty(),
+            "recorded replay should not emit provider HTTP attempts"
+        );
+        assert_eq!(assistant_update.as_deref(), Some("recorded final answer"));
+    }
+
+    #[tokio::test]
+    async fn tool_streak_limit_settles_threshold_batch_before_exhaustion() {
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let mut tool_rx = event_bus.subscribe(crate::EventPriority::Realtime);
+        let requested = Arc::new(AtomicUsize::new(0));
+        let completed = Arc::new(AtomicUsize::new(0));
+        let tool_bus = Arc::clone(&event_bus);
+        let requested_a = Arc::clone(&requested);
+        let completed_a = Arc::clone(&completed);
+        let tool_task = tokio::spawn(async move {
+            while let Ok(event) = tool_rx.recv().await {
+                if let AppEvent::System(SystemEvent::ToolCallRequested {
+                    tool_call,
+                    request_id,
+                    parent_id,
+                }) = event
+                {
+                    requested_a.fetch_add(1, Ordering::SeqCst);
+                    tool_bus.send(AppEvent::System(SystemEvent::ToolCallCompleted {
+                        request_id,
+                        parent_id,
+                        call_id: tool_call.call_id,
+                        content: r#"{"ok":true,"entries":[]}"#.to_string(),
+                        ui_payload: None,
+                    }));
+                    completed_a.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        });
+
+        let responses = vec![
+            list_dir_batch_response(0, 1),
+            list_dir_batch_response(1, 1),
+            list_dir_batch_response(2, 2),
+            content_response("sentinel response must remain unconsumed"),
+        ];
+        let tape = RecordedResponseTape::new(
+            responses
+                .into_iter()
+                .enumerate()
+                .map(|(index, response)| {
+                    RecordedResponse::new(
+                        index,
+                        serde_json::from_str(&response).expect("recorded response parses"),
+                    )
+                })
+                .collect(),
+        );
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_message(RequestMessage::new_user(
+                "Inspect the current directory.".to_string(),
+            ))
+            .with_tools(Some(vec![crate::tools::list_dir::ListDir::tool_def()]))
+            .with_tool_choice(Some(ToolChoice::Auto));
+        let debug_steps = DebugSteps::default();
+        let chat_policy = ChatPolicy {
+            tool_streak_limit: Some(3),
+            ..ChatPolicy::default()
+        };
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded(tape),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id: Uuid::new_v4(),
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy,
+                cancel_rx,
+                capture: SessionCapture::new(None, Some(StdArc::new(debug_steps.clone()))),
+            },
+            1,
+        )
+        .await;
+
+        tool_task.abort();
+        drain.abort();
+        assert!(matches!(report.outcome, SessionOutcome::Exhausted { .. }));
+        assert_eq!(report.attempts, 3, "sentinel response must not be consumed");
+        let error = report.last_error().expect("typed streak error");
+        assert_eq!(error.code.as_ref(), "TOOL_STREAK_LIMIT");
+        assert_eq!(
+            error.context.tool_name.as_ref().map(AsRef::as_ref),
+            Some("list_dir")
+        );
+        assert_eq!(requested.load(Ordering::SeqCst), 4);
+        assert_eq!(completed.load(Ordering::SeqCst), 4);
+
+        let steps = debug_steps.snapshot();
+        assert_eq!(steps.len(), 3);
+        assert!(!steps[0].terminal);
+        assert!(!steps[1].terminal);
+        assert!(steps[2].terminal);
+        assert_eq!(steps[2].response.id, "tool-batch-2");
+        assert_eq!(steps[2].tool_calls.len(), 2);
+        assert_eq!(steps[2].tool_results.len(), 2);
+        assert_eq!(
+            report
+                .final_messages
+                .iter()
+                .filter(|message| message.role == Role::Tool)
+                .count(),
+            4
+        );
+    }
+
+    async fn run_captured_session(
+        response_id: &str,
+        response_tx: std::sync::mpsc::Sender<FullResponseTraceRecord>,
+        debug_sink: StdArc<dyn ChatDebugSink>,
+    ) -> ChatSessionReport {
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, _state_cmd_rx) = mpsc::channel(128);
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        let mut response: OpenAiResponse =
+            serde_json::from_str(&content_response("recorded final answer"))
+                .expect("recorded response parses");
+        response.id = response_id.to_string();
+        let tape = RecordedResponseTape::new(vec![RecordedResponse::new(0, response)]);
+
+        run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded(tape),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id: Uuid::new_v4(),
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+                capture: SessionCapture::new(Some(response_tx), Some(debug_sink)),
+            },
+            1,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn concurrent_chat_sessions_keep_capture_provenance() {
+        let (left_tx, left_rx) = std::sync::mpsc::channel();
+        let (right_tx, right_rx) = std::sync::mpsc::channel();
+        let left_steps = DebugSteps::default();
+        let right_steps = DebugSteps::default();
+
+        let (left, right) = tokio::join!(
+            run_captured_session("left-response", left_tx, StdArc::new(left_steps.clone())),
+            run_captured_session("right-response", right_tx, StdArc::new(right_steps.clone())),
+        );
+
+        assert!(matches!(left.outcome, SessionOutcome::Completed));
+        assert!(matches!(right.outcome, SessionOutcome::Completed));
+
+        let left_responses = left_rx.try_iter().collect::<Vec<_>>();
+        let right_responses = right_rx.try_iter().collect::<Vec<_>>();
+        assert_eq!(left_responses.len(), 1);
+        assert_eq!(right_responses.len(), 1);
+        assert_eq!(
+            left_responses[0].recorded_response.response.id,
+            "left-response"
+        );
+        assert_eq!(
+            right_responses[0].recorded_response.response.id,
+            "right-response"
+        );
+        assert_eq!(
+            left_responses[0].assistant_message_id,
+            left.assistant_message_id
+        );
+        assert_eq!(
+            right_responses[0].assistant_message_id,
+            right.assistant_message_id
+        );
+
+        let left_steps = left_steps.snapshot();
+        let right_steps = right_steps.snapshot();
+        assert_eq!(left_steps.len(), 1);
+        assert_eq!(right_steps.len(), 1);
+        assert_eq!(left_steps[0].response.id, "left-response");
+        assert_eq!(right_steps[0].response.id, "right-response");
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_replays_recorded_tool_arg_repair_without_provider_http() {
+        let trace_lines = TraceLines::default();
+        let subscriber = Registry::default().with(TraceLayer {
+            lines: trace_lines.clone(),
+        });
+        let trace_guard = tracing::subscriber::set_default(subscriber);
+
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let assistant_message_id = Uuid::new_v4();
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        let malformed_response = serde_json::from_str(&malformed_tool_call_response(1))
+            .expect("malformed tool response envelope still parses as provider response");
+        let final_response = serde_json::from_str(&content_response("recovered after repair"))
+            .expect("recorded final response parses");
+        let tape = RecordedResponseTape::new(vec![
+            RecordedResponse::new(0, malformed_response),
+            RecordedResponse::new(1, final_response),
+        ]);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded(tape),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id,
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+                capture: SessionCapture::default(),
+            },
+            2,
+        )
+        .await;
+        drop(trace_guard);
+
+        let mut assistant_updates = Vec::new();
+        while let Ok(command) = state_cmd_rx.try_recv() {
+            match command {
+                StateCommand::UpdateMessage { id, update } if id == assistant_message_id => {
+                    if let Some(content) = update.content {
+                        assistant_updates.push(content);
+                    }
+                }
+                StateCommand::AddMessageImmediate {
+                    msg,
+                    kind: MessageKind::Assistant,
+                    ..
+                } => assistant_updates.push(msg),
+                _ => {}
+            }
+        }
+
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+        assert_eq!(report.attempts, 2);
+        assert_eq!(report.errors.len(), 1);
+        assert_eq!(report.errors[0].code.as_ref(), "TOOL_ARGS_REPAIR_REQUIRED");
+        assert!(
+            report.chat_steps.is_empty(),
+            "recorded replay should not emit provider HTTP attempts"
+        );
+        assert!(
+            assistant_updates
+                .iter()
+                .any(|content| content.contains("recovered after repair")),
+            "expected final assistant update after recorded repair, got {assistant_updates:?}"
+        );
+        let traces = trace_lines.snapshot();
+        assert_eq!(
+            traces.len(),
+            2,
+            "recorded repair replay should trace both provider envelopes, got {traces:?}"
+        );
+        assert!(
+            traces
+                .iter()
+                .any(|line| line.contains("\"id\":\"repair-1\"")),
+            "expected malformed tool-call provider envelope in full-response trace, got {traces:?}"
+        );
+        assert!(
+            traces.iter().any(|line| line.contains("\"id\":\"final\"")),
+            "expected final provider envelope in full-response trace, got {traces:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_retries_malformed_function_call_then_aborts_terminally() {
+        // Default policy allows a single malformed retry. With two consecutive
+        // malformed responses the session must: (1) retry once with a corrective
+        // re-prompt, then (2) abort terminally with the MALFORMED_FUNCTION_CALL
+        // classification once the retry budget is exhausted — never silently
+        // succeed.
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let assistant_message_id = Uuid::new_v4();
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        let first = serde_json::from_str(&malformed_function_call_response(0))
+            .expect("malformed envelope parses as provider response");
+        let second = serde_json::from_str(&malformed_function_call_response(1))
+            .expect("malformed envelope parses as provider response");
+        let tape = RecordedResponseTape::new(vec![
+            RecordedResponse::new(0, first),
+            RecordedResponse::new(1, second),
+        ]);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded(tape),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id,
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+                capture: SessionCapture::default(),
+            },
+            2,
+        )
+        .await;
+        drain.abort();
+
+        // One retry (corrective re-prompt) then a terminal abort: two recorded
+        // errors, both classified as MALFORMED_FUNCTION_CALL / ModelBehavior.
+        assert!(
+            matches!(report.outcome, SessionOutcome::Aborted { .. }),
+            "expected terminal abort after malformed retry budget exhausted, got {:?}",
+            report.outcome
+        );
+        assert_eq!(report.errors.len(), 2, "errors={:#?}", report.errors);
+        for error in &report.errors {
+            assert_eq!(error.code.as_ref(), "MALFORMED_FUNCTION_CALL");
+            assert!(matches!(error.kind, LoopErrorKind::ModelBehavior));
+        }
+        let SessionOutcome::Aborted { error_id } = report.outcome else {
+            unreachable!("checked above");
+        };
+        assert_eq!(
+            report.errors[1].error_id, error_id,
+            "terminal abort must point at the final malformed error"
+        );
+
+        // The retried error must carry a corrective re-prompt instructing a
+        // structured tool call, and must advertise the retry as allowed.
+        let retried = &report.errors[0];
+        assert!(matches!(retried.retry, RetryAdvice::Yes { .. }));
+        let llm_action = retried
+            .llm_action
+            .as_ref()
+            .expect("retried malformed error carries an llm_action");
+        assert!(
+            llm_action.next_steps.iter().any(|step| {
+                step.details
+                    .as_ref()
+                    .is_some_and(|d| d.contains("STRUCTURED tool call"))
+            }),
+            "corrective re-prompt should instruct a structured tool call, got {:?}",
+            llm_action.next_steps
+        );
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_aborts_malformed_immediately_when_retry_disabled() {
+        // With the malformed retry budget set to zero, a single malformed
+        // response must abort terminally on the first attempt (no masking, no
+        // wasted retry).
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let assistant_message_id = Uuid::new_v4();
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        let only = serde_json::from_str(&malformed_function_call_response(0))
+            .expect("malformed envelope parses as provider response");
+        let tape = RecordedResponseTape::new(vec![RecordedResponse::new(0, only)]);
+
+        let chat_policy = ChatPolicy {
+            malformed_retry_limit: 0,
+            ..ChatPolicy::default()
+        };
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded(tape),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id,
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy,
+                cancel_rx,
+                capture: SessionCapture::default(),
+            },
+            2,
+        )
+        .await;
+        drain.abort();
+
+        assert!(
+            matches!(report.outcome, SessionOutcome::Aborted { .. }),
+            "expected immediate terminal abort, got {:?}",
+            report.outcome
+        );
+        assert_eq!(report.errors.len(), 1, "errors={:#?}", report.errors);
+        assert_eq!(report.errors[0].code.as_ref(), "MALFORMED_FUNCTION_CALL");
+        assert!(matches!(
+            report.errors[0].kind,
+            LoopErrorKind::ModelBehavior
+        ));
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_stops_cleanly_when_recorded_tape_exhausted() {
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let assistant_message_id = Uuid::new_v4();
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        let malformed_response = serde_json::from_str(&malformed_tool_call_response(1))
+            .expect("malformed tool response envelope still parses as provider response");
+        let tape = RecordedResponseTape::new(vec![RecordedResponse::new(0, malformed_response)]);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded(tape),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id,
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+                capture: SessionCapture::default(),
+            },
+            2,
+        )
+        .await;
+
+        let mut assistant_updates = Vec::new();
+        while let Ok(command) = state_cmd_rx.try_recv() {
+            match command {
+                StateCommand::UpdateMessage { id, update } if id == assistant_message_id => {
+                    if let Some(content) = update.content {
+                        assistant_updates.push(content);
+                    }
+                }
+                StateCommand::AddMessageImmediate {
+                    msg,
+                    kind: MessageKind::Assistant,
+                    ..
+                } => assistant_updates.push(msg),
+                _ => {}
+            }
+        }
+
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+        assert_eq!(report.attempts, 2);
+        assert_eq!(report.errors.len(), 1);
+        assert_eq!(report.errors[0].code.as_ref(), "TOOL_ARGS_REPAIR_REQUIRED");
+        assert!(
+            report.chat_steps.is_empty(),
+            "recorded replay should not emit provider HTTP attempts"
+        );
+        assert!(
+            assistant_updates
+                .iter()
+                .all(|content| !content.contains("INVALID_MODEL_RESPONSE")),
+            "recorded tape exhaustion should not surface as invalid model output: {assistant_updates:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    async fn live_google_chat_session_executes_list_dir_tool_call_success_or_quota() {
+        let db = Arc::new(Database::new_init().expect("database initializes"));
+        let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            EmbeddingProcessor::new(EmbeddingSource::Local(
+                LocalEmbedder::new(EmbeddingConfig::default()).expect("local embedder initializes"),
+            )),
+        ));
+        let rag = Arc::new(
+            RagService::new(Arc::clone(&db), Arc::clone(&embedder))
+                .expect("rag service initializes"),
+        );
+        let (rag_tx, _rag_rx) = mpsc::channel(16);
+        let state = Arc::new(AppState::new(
+            db,
+            embedder,
+            ploke_io::IoManagerHandle::new(),
+            rag,
+            TokenBudget::default(),
+            rag_tx,
+        ));
+        let workspace_root = std::env::current_dir().expect("current dir is available");
+        state
+            .with_system_txn(|txn| {
+                txn.set_loaded_workspace(
+                    workspace_root.clone(),
+                    vec![workspace_root.clone()],
+                    Some(workspace_root),
+                );
+            })
+            .await;
+
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let mut tool_rx = event_bus.subscribe(crate::EventPriority::Realtime);
+        let requested_tools = Arc::new(AtomicUsize::new(0));
+        let completed_tools = Arc::new(AtomicUsize::new(0));
+        let tool_state = Arc::clone(&state);
+        let tool_event_bus = Arc::clone(&event_bus);
+        let requested_tools_for_task = Arc::clone(&requested_tools);
+        let completed_tools_for_task = Arc::clone(&completed_tools);
+        let tool_dispatcher = tokio::spawn(async move {
+            while let Ok(event) = tool_rx.recv().await {
+                if let AppEvent::System(SystemEvent::ToolCallRequested {
+                    tool_call,
+                    request_id,
+                    parent_id,
+                }) = event
+                {
+                    requested_tools_for_task.fetch_add(1, Ordering::SeqCst);
+                    let ctx = crate::tools::Ctx {
+                        state: Arc::clone(&tool_state),
+                        event_bus: Arc::clone(&tool_event_bus),
+                        request_id,
+                        parent_id,
+                        call_id: tool_call.call_id.clone(),
+                    };
+                    if crate::tools::process_tool(tool_call, ctx).await.is_ok() {
+                        completed_tools_for_task.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            }
+        });
+
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let model = std::env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL")
+            .unwrap_or_else(|_| "google/gemini-2.5-flash".to_string());
+        let req = ChatCompRequest::<Google>::default()
+            .with_model_str(&model)
+            .expect("Google model id parses")
+            .with_message(RequestMessage::new_user(
+                "Call the list_dir tool exactly once with dir \".\" and max_entries 3. After the tool result, reply with the word listed."
+                    .to_string(),
+            ))
+            .with_max_tokens(160)
+            .with_temperature(0.0)
+            .with_tools(Some(vec![crate::tools::list_dir::ListDir::tool_def()]))
+            .with_tool_choice(Some(ToolChoice::Auto));
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::live(),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id: Uuid::new_v4(),
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+                capture: SessionCapture::default(),
+            },
+            90,
+        )
+        .await;
+
+        tool_dispatcher.abort();
+        drain.abort();
+
+        assert!(
+            matches!(report.outcome, SessionOutcome::Completed),
+            "expected completed Google TUI session, got {report:#?}"
+        );
+        assert!(
+            report.errors.is_empty(),
+            "Google TUI session recorded errors: {:#?}",
+            report.errors
+        );
+        assert_eq!(
+            requested_tools.load(Ordering::SeqCst),
+            1,
+            "expected exactly one list_dir request, report={report:#?}"
+        );
+        assert_eq!(
+            completed_tools.load(Ordering::SeqCst),
+            1,
+            "expected exactly one completed list_dir execution, report={report:#?}"
+        );
+        assert_eq!(
+            report.chat_steps.len(),
+            2,
+            "tool session should include Google tool-call and final-response steps: {report:#?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_can_replay_recorded_prefix_then_continue_live() {
+        let _router_guard = TEST_ROUTER_LOCK.lock().await;
+        let _api_key = ApiKeyGuard::set("test-key");
+        let responses = vec![content_response("live tail after recorded prefix")];
+        let request_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let server =
+            spawn_test_router_server("127.0.0.1:39181", responses, request_count.clone()).await;
+
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let assistant_message_id = Uuid::new_v4();
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        let malformed_response = serde_json::from_str(&malformed_tool_call_response(1))
+            .expect("malformed tool response envelope still parses as provider response");
+        let tape = RecordedResponseTape::new(vec![RecordedResponse::new(0, malformed_response)]);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded_prefix_then_live(tape),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id,
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+                capture: SessionCapture::default(),
+            },
+            2,
+        )
+        .await;
+
+        server.await.expect("server task");
+        let mut assistant_updates = Vec::new();
+        while let Ok(command) = state_cmd_rx.try_recv() {
+            match command {
+                StateCommand::UpdateMessage { id, update } if id == assistant_message_id => {
+                    if let Some(content) = update.content {
+                        assistant_updates.push(content);
+                    }
+                }
+                StateCommand::AddMessageImmediate {
+                    msg,
+                    kind: MessageKind::Assistant,
+                    ..
+                } => assistant_updates.push(msg),
+                _ => {}
+            }
+        }
+
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+        assert_eq!(report.errors.len(), 1);
+        assert_eq!(report.errors[0].code.as_ref(), "TOOL_ARGS_REPAIR_REQUIRED");
+        assert_eq!(report.attempts, 2);
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            1,
+            "only the live tail should reach the provider"
+        );
+        assert!(
+            assistant_updates
+                .iter()
+                .any(|content| content.contains("live tail after recorded prefix")),
+            "expected live-tail assistant update, got {assistant_updates:?}"
+        );
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn google_live_ready(test_name: &str) -> bool {
+        let has_route = std::env::var_os("GOOGLE_PROJECT_ID").is_some()
+            && std::env::var_os("GOOGLE_REGION").is_some();
+        let has_key = std::env::var_os("PLOKE_GOOGLE_AI_STUDIO_API_KEY").is_some()
+            || std::env::var_os("GEMINI_API_KEY").is_some()
+            || std::env::var_os("GOOGLE_API_KEY").is_some();
+        if has_route || has_key {
+            return true;
+        }
+        eprintln!(
+            "skipping {test_name}: set GOOGLE_PROJECT_ID/GOOGLE_REGION with Google auth or a Google API key"
+        );
+        false
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn live_google_failure_is_classified(report: &ChatSessionReport) -> bool {
+        let text = format!("{report:#?}").to_ascii_lowercase();
+        [
+            "quota",
+            "rate",
+            "429",
+            "401",
+            "403",
+            "auth",
+            "credential",
+            "permission",
+            "provider",
+            "unavailable",
+        ]
+        .iter()
+        .any(|needle| text.contains(needle))
+    }
+
+    #[test]
+    fn compact_tool_content_for_llm_replay_truncates_file_payloads_to_configured_limit() {
+        let file_text = (1..=250)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let payload = json!({
+            "ok": true,
+            "file_path": "/tmp/example.rs",
+            "exists": true,
+            "byte_len": file_text.len(),
+            "truncated": false,
+            "content": file_text,
+        })
+        .to_string();
+
+        let replay = compact_tool_content_for_llm_replay(&payload, 200);
+        let replay_json: serde_json::Value =
+            serde_json::from_str(&replay).expect("replay payload must be json");
+        let replay_content = replay_json
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .expect("replay content must be string");
+
+        assert!(replay_json["llm_replay_truncated"].as_bool() == Some(true));
+        assert_eq!(replay_json["llm_replay_max_lines"].as_u64(), Some(200));
+        assert!(replay_content.contains("line 1"));
+        assert!(replay_content.contains("line 200"));
+        assert!(!replay_content.contains("line 201"));
+        assert!(replay_content.contains("truncated for LLM replay after 200 lines"));
+    }
+
+    #[test]
+    fn compact_tool_content_for_llm_replay_leaves_non_file_payloads_unchanged() {
+        let payload = json!({
+            "ok": true,
+            "search_term": "fn build",
+            "context": [
+                {"file_path": "/tmp/example.rs", "snippet": "fn build() {}"}
+            ]
+        })
+        .to_string();
+
+        assert_eq!(compact_tool_content_for_llm_replay(&payload, 200), payload);
+    }
+
+    #[test]
+    fn compact_tool_content_for_llm_replay_respects_custom_line_limit() {
+        let file_text = (1..=20)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let payload = json!({
+            "ok": true,
+            "file_path": "/tmp/example.rs",
+            "exists": true,
+            "byte_len": file_text.len(),
+            "truncated": false,
+            "content": file_text,
+        })
+        .to_string();
+
+        let replay = compact_tool_content_for_llm_replay(&payload, 7);
+        let replay_json: serde_json::Value =
+            serde_json::from_str(&replay).expect("replay payload must be json");
+        let replay_content = replay_json["content"]
+            .as_str()
+            .expect("replay content must be string");
+
+        assert_eq!(replay_json["llm_replay_max_lines"].as_u64(), Some(7));
+        assert!(replay_content.contains("line 7"));
+        assert!(!replay_content.contains("line 8"));
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct CapturedChatRequest {
+        messages: Vec<RequestMessage>,
+    }
+
+    fn summarize_tool_payload(content: &str) -> String {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+            return "non-json tool payload".to_string();
+        };
+        let Some(obj) = value.as_object() else {
+            return format!("json {}", value_type_name(&value));
+        };
+
+        if obj.contains_key("file_path") && obj.contains_key("content") {
+            let file_path = obj
+                .get("file_path")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("<unknown>");
+            let byte_len = obj
+                .get("byte_len")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let content_chars = obj
+                .get("content")
+                .and_then(serde_json::Value::as_str)
+                .map(str::chars)
+                .map(Iterator::count)
+                .unwrap_or(0);
+            let truncated = obj
+                .get("truncated")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            return format!(
+                "file payload path={file_path} byte_len={byte_len} content_chars={content_chars} truncated={truncated}"
+            );
+        }
+
+        if let Some(context) = obj.get("context").and_then(serde_json::Value::as_array) {
+            let snippet_chars: usize = context
+                .iter()
+                .filter_map(|entry| entry.get("snippet"))
+                .filter_map(serde_json::Value::as_str)
+                .map(|snippet| snippet.chars().count())
+                .sum();
+            let search_term = obj
+                .get("search_term")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("<none>");
+            return format!(
+                "context payload search_term={search_term:?} entries={} snippet_chars={snippet_chars}",
+                context.len()
+            );
+        }
+
+        if let Some(error) = obj.get("error") {
+            let preview = error
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| error.to_string());
+            return format!("error payload chars={}", preview.chars().count());
+        }
+
+        let keys = obj.keys().cloned().collect::<Vec<_>>().join(", ");
+        format!("json object keys=[{keys}]")
+    }
+
+    fn value_type_name(value: &serde_json::Value) -> &'static str {
+        match value {
+            serde_json::Value::Null => "null",
+            serde_json::Value::Bool(_) => "bool",
+            serde_json::Value::Number(_) => "number",
+            serde_json::Value::String(_) => "string",
+            serde_json::Value::Array(_) => "array",
+            serde_json::Value::Object(_) => "object",
+        }
+    }
+
+    #[test]
+    #[ignore = "diagnostic: inspect captured large chat request payload"]
+    fn diagnostic_dump_captured_request_blowup() {
+        let path = std::env::var("PLOKE_DIAG_REQUEST_PATH")
+            .unwrap_or_else(|_| "/tmp/request16.json".to_string());
+        let raw = fs::read_to_string(&path).unwrap_or_else(|err| {
+            panic!("failed to read diagnostic request fixture {path}: {err}")
+        });
+        let request: CapturedChatRequest = serde_json::from_str(&raw).unwrap_or_else(|err| {
+            panic!("failed to parse diagnostic request fixture {path}: {err}")
+        });
+
+        let tokenizer = ApproxCharTokenizer::default();
+        let mut role_counts = BTreeMap::<&'static str, usize>::new();
+        let mut role_chars = BTreeMap::<&'static str, usize>::new();
+        let mut indexed = Vec::new();
+
+        for (idx, message) in request.messages.iter().enumerate() {
+            let role = match message.role {
+                Role::User => "user",
+                Role::Assistant => "assistant",
+                Role::System => "system",
+                Role::Tool => "tool",
+            };
+            let chars = message.content.chars().count();
+            *role_counts.entry(role).or_default() += 1;
+            *role_chars.entry(role).or_default() += chars;
+            indexed.push((chars, idx, role, message));
+        }
+
+        indexed.sort_by(|a, b| b.0.cmp(&a.0));
+
+        let total_chars: usize = request
+            .messages
+            .iter()
+            .map(|message| message.content.chars().count())
+            .sum();
+        let total_tokens: usize = request
+            .messages
+            .iter()
+            .map(|message| tokenizer.count(&message.content))
+            .sum();
+
+        println!("diagnostic request path: {path}");
+        println!("message_count: {}", request.messages.len());
+        println!("total_chars: {total_chars}");
+        println!("estimated_tokens: {total_tokens}");
+        println!("role_counts: {role_counts:?}");
+        println!("role_chars: {role_chars:?}");
+        println!();
+        println!("top contributors:");
+
+        for (chars, idx, role, message) in indexed.into_iter().take(15) {
+            let detail = if message.role == Role::Tool {
+                summarize_tool_payload(&message.content)
+            } else {
+                let preview = message
+                    .content
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(120)
+                    .collect::<String>();
+                format!("preview={preview:?}")
+            };
+            println!("[{idx}] role={role} chars={chars} {detail}");
+        }
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_can_converge_after_four_tool_arg_repairs() {
+        let _guard = TEST_ROUTER_LOCK.lock().await;
+        let _api_key = ApiKeyGuard::set("test-key");
+
+        let responses = vec![
+            malformed_tool_call_response(1),
+            malformed_tool_call_response(2),
+            malformed_tool_call_response(3),
+            malformed_tool_call_response(4),
+            content_response("final answer"),
+        ];
+        let request_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let server =
+            spawn_test_router_server("127.0.0.1:39181", responses, request_count.clone()).await;
+
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        assert_eq!(TestRouter::COMPLETION_URL, TEST_ROUTER_URL);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::live(),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id: Uuid::new_v4(),
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+                capture: SessionCapture::default(),
+            },
+            5,
+        )
+        .await;
+
+        server.await.expect("server task");
+        drain.abort();
+
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+        assert_eq!(report.attempts, 5);
+        assert_eq!(request_count.load(Ordering::SeqCst), 5);
+        assert_eq!(report.errors.len(), 4);
+        assert!(
+            report
+                .errors
+                .iter()
+                .all(|error| { error.code.as_ref() == "TOOL_ARGS_REPAIR_REQUIRED" })
+        );
+        assert!(
+            report
+                .errors
+                .iter()
+                .all(|error| error.code.as_ref() != "REPAIR_BUDGET_EXHAUSTED")
+        );
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_uses_static_session_timeout_for_provider_timing() {
+        let _guard = TEST_ROUTER_LOCK.lock().await;
+        let _api_key = ApiKeyGuard::set("test-key");
+
+        let report = run_calibrated_test_router_session().await;
+
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+        assert_eq!(report.attempts, 1);
+        let step = report.chat_steps.first().expect("chat step report");
+        assert_eq!(
+            step.provider_timing.first_timeout(),
+            Duration::from_secs(90)
+        );
+        assert_eq!(
+            step.provider_timing.attempt_timeout.for_attempt(2),
+            Duration::from_secs(90)
+        );
+        // The per-attempt timeout is statically overridden to the session
+        // timeout, but the router-calibrated attempt budget is now honored
+        // (CalibratedTestRouter requests 3, above the floor of 2).
+        assert_eq!(step.provider_timing.max_attempts, 3);
+    }
+
+    #[tokio::test]
+    async fn provider_retry_exhaustion_does_not_outer_retry_chat_step() {
+        let _guard = TEST_ROUTER_LOCK.lock().await;
+        let _api_key = ApiKeyGuard::set("test-key");
+        let request_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let (stop_server, server) =
+            spawn_nonresponding_test_router_server("127.0.0.1:39181", request_count.clone()).await;
+
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        let chat_policy = ChatPolicy {
+            error_retry_limit: 2,
+            timeout_base_secs: 1,
+            ..ChatPolicy::default()
+        };
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::live(),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id: Uuid::new_v4(),
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy,
+                cancel_rx,
+                capture: SessionCapture::default(),
+            },
+            1,
+        )
+        .await;
+
+        let _ = stop_server.send(());
+        server.await.expect("server task");
+        drain.abort();
+
+        assert!(matches!(report.outcome, SessionOutcome::Aborted { .. }));
+        assert_eq!(report.errors.len(), 1);
+        assert_eq!(report.chat_steps.len(), 1);
+        let step = report.chat_steps.first().expect("chat step report");
+        assert_eq!(step.provider_attempts.len(), 2);
+        assert_eq!(
+            step.provider_attempts
+                .last()
+                .map(|attempt| attempt.retry_decision),
+            Some(ProviderRetryDecision::Exhausted)
+        );
+        assert_eq!(request_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    #[ignore = "live OpenRouter API smoke test; requires OPENROUTER_API_KEY"]
+    async fn live_openrouter_agent_turn_records_provider_attempt_report() {
+        if std::env::var(OpenRouter::API_KEY_NAME)
+            .ok()
+            .filter(|key| !key.trim().is_empty())
+            .is_none()
+        {
+            eprintln!(
+                "skipping live_openrouter_agent_turn_records_provider_attempt_report: {} not set",
+                OpenRouter::API_KEY_NAME
+            );
+            return;
+        }
+
+        let model = std::env::var("PLOKE_LIVE_AGENT_MODEL")
+            .ok()
+            .filter(|model| !model.trim().is_empty())
+            .unwrap_or_else(|| "x-ai/grok-4-fast".to_string());
+        let provider = std::env::var("PLOKE_LIVE_AGENT_PROVIDER")
+            .ok()
+            .filter(|provider| !provider.trim().is_empty())
+            .unwrap_or_else(|| "xai".to_string());
+        let provider_slug = ProviderSlug::new(&provider);
+        let provider_preferences = ProviderPreferences::default()
+            .with_order([provider_slug.clone()])
+            .with_only([provider_slug])
+            .with_allow_fallbacks(false);
+        let assistant_message_id = Uuid::new_v4();
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let req = OpenRouter::default_chat_completion()
+            .with_model_str(&model)
+            .expect("live model id")
+            .with_router_bundle(ChatCompFields::default().with_provider(provider_preferences))
+            .with_messages(vec![
+                RequestMessage::new_system(
+                    "You are a live API smoke test. Reply exactly as requested.".to_string(),
+                ),
+                RequestMessage::new_user(
+                    "Reply with exactly: ploke-live-agent-turn-ok".to_string(),
+                ),
+            ])
+            .with_temperature(0.0)
+            .with_max_tokens(32);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::live(),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id,
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+                capture: SessionCapture::default(),
+            },
+            45,
+        )
+        .await;
+
+        let mut assistant_update = None;
+        while let Ok(command) = state_cmd_rx.try_recv() {
+            if let StateCommand::UpdateMessage { id, update } = command
+                && id == assistant_message_id
+                && let Some(content) = update.content
+            {
+                assistant_update = Some(content);
+            }
+        }
+
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+        assert_eq!(report.errors.len(), 0);
+        assert_eq!(report.attempts, 1);
+        assert!(
+            report
+                .chat_steps
+                .iter()
+                .flat_map(|step| &step.provider_attempts)
+                .any(|attempt| attempt
+                    .status
+                    .is_some_and(|status| (200..300).contains(&status))),
+            "expected at least one successful provider attempt, report={report:#?}"
+        );
+        let assistant_update = assistant_update.expect("assistant message should be updated");
+        assert!(
+            assistant_update.contains("ploke-live-agent-turn-ok"),
+            "unexpected assistant content: {assistant_update:?}"
+        );
+
+        let step = report.chat_steps.first().expect("chat step report");
+        assert_eq!(step.provider_timing.max_attempts, 2);
+        assert_eq!(
+            step.provider_timing.first_timeout(),
+            Duration::from_secs(45)
+        );
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_aborts_when_a_fifth_repair_would_be_required() {
+        let _guard = TEST_ROUTER_LOCK.lock().await;
+        let _api_key = ApiKeyGuard::set("test-key");
+
+        let responses = vec![
+            malformed_tool_call_response(1),
+            malformed_tool_call_response(2),
+            malformed_tool_call_response(3),
+            malformed_tool_call_response(4),
+            malformed_tool_call_response(5),
+            content_response("would have recovered"),
+        ];
+        let request_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let server =
+            spawn_test_router_server("127.0.0.1:39182", responses, request_count.clone()).await;
+
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+
+        let req = ChatCompRequest::<TestRouterAlt>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::live(),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id: Uuid::new_v4(),
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+                capture: SessionCapture::default(),
+            },
+            5,
+        )
+        .await;
+
+        server.await.expect("server task");
+        drain.await.expect("drain task");
+
+        assert!(matches!(report.outcome, SessionOutcome::Aborted { .. }));
+        assert_eq!(report.attempts, 5);
+        assert_eq!(request_count.load(Ordering::SeqCst), 5);
+        assert_eq!(report.errors.len(), 5);
+        assert_eq!(
+            report.errors.last().map(|error| error.code.as_ref()),
+            Some("REPAIR_BUDGET_EXHAUSTED")
+        );
+    }
 
     #[test]
     fn parse_chat_outcome_content_message() {
@@ -1614,6 +4586,25 @@ mod tests {
         assert_eq!(retries, 0);
     }
 
+    #[tokio::test]
+    async fn state_command_emit_after_state_manager_close_is_nonfatal() {
+        let (cmd_tx, cmd_rx) = mpsc::channel(1);
+        drop(cmd_rx);
+
+        let emitted = send_state_command_or_warn(
+            &cmd_tx,
+            StateCommand::AddMessageImmediate {
+                msg: "late teardown message".to_string(),
+                kind: MessageKind::System,
+                new_msg_id: Uuid::new_v4(),
+            },
+            "test_closed_state_manager",
+        )
+        .await;
+
+        assert!(!emitted);
+    }
+
     #[test]
     fn error_policy_endless_retry_always_retries() {
         let mut retries = 0_u32;
@@ -1650,5 +4641,290 @@ mod tests {
         let mut retries = 0_u32;
         assert!(!should_retry_length(TuiLengthPolicy::Strict, &mut retries));
         assert_eq!(retries, 0);
+    }
+
+    #[test]
+    fn malformed_policy_retry_limit_stops_after_limit() {
+        let mut retries = 0_u32;
+
+        assert!(should_retry_malformed(
+            TuiMalformedPolicy::RetryLimit(2),
+            &mut retries
+        ));
+        assert_eq!(retries, 1);
+        assert!(should_retry_malformed(
+            TuiMalformedPolicy::RetryLimit(2),
+            &mut retries
+        ));
+        assert_eq!(retries, 2);
+        assert!(!should_retry_malformed(
+            TuiMalformedPolicy::RetryLimit(2),
+            &mut retries
+        ));
+        assert_eq!(retries, 2);
+    }
+
+    #[test]
+    fn malformed_policy_strict_never_retries() {
+        let mut retries = 0_u32;
+        assert!(!should_retry_malformed(
+            TuiMalformedPolicy::Strict,
+            &mut retries
+        ));
+        assert_eq!(retries, 0);
+    }
+
+    #[test]
+    fn is_malformed_finish_error_matches_only_malformed_finish_reason() {
+        use ploke_llm::response::OpenAiResponse;
+
+        let envelope = |finish_reason: FinishReason| LlmError::FinishError {
+            msg: "boom".to_string(),
+            full_response: OpenAiResponse {
+                id: "t".to_string(),
+                choices: vec![],
+                created: 0,
+                model: "test/model".to_string(),
+                object: "chat.completion".to_string(),
+                provider: None,
+                system_fingerprint: None,
+                usage: None,
+                logprobs: None,
+            },
+            finish_reason,
+        };
+
+        assert!(is_malformed_finish_error(&envelope(
+            FinishReason::MalformedFunctionCall
+        )));
+        assert!(!is_malformed_finish_error(&envelope(
+            FinishReason::UnexpectedToolCall
+        )));
+        assert!(!is_malformed_finish_error(&envelope(FinishReason::Length)));
+        assert!(!is_malformed_finish_error(&LlmError::RateLimited));
+    }
+
+    #[test]
+    fn build_preflight_tool_call_repair_error_marks_retryable() {
+        let preflight_error = ToolCallPreflightError {
+            call_id: ploke_core::ArcStr::from("call_preflight"),
+            tool_name: ToolName::NsRead,
+            rejected_arguments: "{\"file\":1}".to_string(),
+            error: ToolError::new(
+                ToolName::NsRead,
+                ToolErrorCode::WrongType,
+                "failed to parse tool arguments: EOF while parsing a value",
+            ),
+        };
+
+        let context = base_error_context(1, 0, "tool_call_preflight", &None, Uuid::new_v4());
+        let spec = semantics::normalize_tool_call_preflight_error(preflight_error, None, context);
+        let loop_error = build_loop_error_from_semantic_spec(spec, CommitPhase::PreCommit);
+
+        assert_eq!(loop_error.code.as_ref(), "TOOL_ARGS_REPAIR_REQUIRED");
+        assert!(matches!(
+            loop_error.recovery,
+            RecoveryDecision::Repair {
+                strategy: RetryStrategy::Fixed,
+                ..
+            }
+        ));
+        assert!(matches!(
+            loop_error.retry,
+            RetryAdvice::Yes {
+                strategy: RetryStrategy::Fixed,
+                ..
+            }
+        ));
+        assert_eq!(loop_error.context.tool_name.as_deref(), Some("read_file"));
+        assert_eq!(
+            loop_error
+                .llm_action
+                .as_ref()
+                .and_then(|action| action.next_steps.first())
+                .map(|step| step.action.as_ref()),
+            Some("repair_tool_args")
+        );
+    }
+
+    #[test]
+    fn repair_budget_is_bounded_locally() {
+        let mut state = ChatLoopState::default();
+        for _ in 0..DEFAULT_REPAIR_ATTEMPTS_PER_SESSION {
+            assert!(!repair_budget_exhausted(
+                &state,
+                DEFAULT_REPAIR_ATTEMPTS_PER_SESSION
+            ));
+            state.repair_attempts = state.repair_attempts.saturating_add(1);
+        }
+        assert!(repair_budget_exhausted(
+            &state,
+            DEFAULT_REPAIR_ATTEMPTS_PER_SESSION
+        ));
+    }
+
+    #[test]
+    fn consume_repair_budget_marks_error_exhausted_after_limit() {
+        let mut state = ChatLoopState::default();
+
+        for _ in 0..DEFAULT_REPAIR_ATTEMPTS_PER_SESSION {
+            let preflight_error = ToolCallPreflightError {
+                call_id: ploke_core::ArcStr::from("call_preflight"),
+                tool_name: ToolName::NsRead,
+                rejected_arguments: "{\"file\":1}".to_string(),
+                error: ToolError::new(
+                    ToolName::NsRead,
+                    ToolErrorCode::WrongType,
+                    "failed to parse tool arguments: EOF while parsing a value",
+                ),
+            };
+
+            let context = base_error_context(1, 0, "tool_call_preflight", &None, Uuid::new_v4());
+            let spec =
+                semantics::normalize_tool_call_preflight_error(preflight_error, None, context);
+            let mut loop_error = build_loop_error_from_semantic_spec(spec, CommitPhase::PreCommit);
+
+            assert!(consume_repair_budget(
+                &mut state,
+                &mut loop_error,
+                DEFAULT_REPAIR_ATTEMPTS_PER_SESSION,
+            ));
+            assert_eq!(loop_error.code.as_ref(), "TOOL_ARGS_REPAIR_REQUIRED");
+        }
+
+        let preflight_error = ToolCallPreflightError {
+            call_id: ploke_core::ArcStr::from("call_preflight"),
+            tool_name: ToolName::NsRead,
+            rejected_arguments: "{\"file\":1}".to_string(),
+            error: ToolError::new(
+                ToolName::NsRead,
+                ToolErrorCode::WrongType,
+                "failed to parse tool arguments: EOF while parsing a value",
+            ),
+        };
+        let context = base_error_context(1, 0, "tool_call_preflight", &None, Uuid::new_v4());
+        let spec = semantics::normalize_tool_call_preflight_error(preflight_error, None, context);
+        let mut loop_error = build_loop_error_from_semantic_spec(spec, CommitPhase::PreCommit);
+
+        assert!(!consume_repair_budget(
+            &mut state,
+            &mut loop_error,
+            DEFAULT_REPAIR_ATTEMPTS_PER_SESSION,
+        ));
+        assert_eq!(loop_error.code.as_ref(), "REPAIR_BUDGET_EXHAUSTED");
+    }
+
+    #[tokio::test]
+    async fn execute_tools_via_event_bus_returns_immediately_for_empty_calls() {
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let result = timeout(
+            Duration::from_millis(100),
+            execute_tools_via_event_bus(
+                event_bus,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                Vec::new(),
+                Duration::from_secs(1),
+                ToolLoopMode::Auto,
+            ),
+        )
+        .await
+        .expect("empty tool call batch should not block");
+
+        assert!(
+            result.is_empty(),
+            "empty tool batch should produce no results"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_tools_via_event_bus_gated_waits_for_settled_edit_result() {
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let parent_id = Uuid::new_v4();
+        let request_id = Uuid::new_v4();
+        let call_id = ploke_core::ArcStr::from("call_gated_ns_patch");
+        let tool_call = ToolCall {
+            call_id: call_id.clone(),
+            call_type: FunctionMarker,
+            function: FunctionCall {
+                name: ToolName::NsPatch,
+                arguments: r#"{"patches":[]}"#.to_string(),
+            },
+            extra_content: None,
+        };
+
+        let mut requested_rx = event_bus.subscribe(crate::EventPriority::Realtime);
+        let mut waiter = tokio::spawn(execute_tools_via_event_bus(
+            event_bus.clone(),
+            parent_id,
+            request_id,
+            vec![tool_call],
+            Duration::from_secs(5),
+            ToolLoopMode::Gated,
+        ));
+
+        loop {
+            let event = timeout(Duration::from_secs(1), requested_rx.recv())
+                .await
+                .expect("tool request event should arrive")
+                .expect("event bus should stay open");
+            if matches!(
+                event,
+                AppEvent::System(SystemEvent::ToolCallRequested {
+                    request_id: seen,
+                    ..
+                }) if seen == request_id
+            ) {
+                break;
+            }
+        }
+
+        let staged_payload = ToolUiPayload::new(ToolName::NsPatch, call_id.clone(), "staged")
+            .with_request_id(request_id)
+            .with_proposal_id(Uuid::new_v4())
+            .with_field("status", "pending")
+            .with_field("staged", "1")
+            .with_field("applied", "0");
+        event_bus.send(AppEvent::System(SystemEvent::ToolCallCompleted {
+            request_id,
+            parent_id,
+            call_id: call_id.clone(),
+            content: r#"{"ok":true,"staged":1,"applied":0}"#.to_string(),
+            ui_payload: Some(staged_payload),
+        }));
+
+        assert!(
+            timeout(Duration::from_millis(100), &mut waiter)
+                .await
+                .is_err(),
+            "gated edit tool loop must not resolve on a pending staged completion"
+        );
+
+        let applied_payload = ToolUiPayload::new(ToolName::NsPatch, call_id.clone(), "applied")
+            .with_request_id(request_id)
+            .with_proposal_id(Uuid::new_v4())
+            .with_field("status", "applied")
+            .with_field("applied", "1");
+        event_bus.send(AppEvent::System(SystemEvent::ToolCallCompleted {
+            request_id,
+            parent_id,
+            call_id: call_id.clone(),
+            content: r#"{"ok":true,"applied":1}"#.to_string(),
+            ui_payload: Some(applied_payload),
+        }));
+
+        let results = timeout(Duration::from_secs(1), &mut waiter)
+            .await
+            .expect("settled edit result should resolve")
+            .expect("tool waiter task should not panic")
+            .into_iter()
+            .collect::<Vec<_>>();
+        assert_eq!(results.len(), 1);
+        let (seen_call_id, result) = &results[0];
+        assert_eq!(seen_call_id.as_ref(), call_id.as_ref());
+        let result = result
+            .as_ref()
+            .expect("settled applied event should be a successful tool result");
+        assert_eq!(result.content, r#"{"ok":true,"applied":1}"#);
     }
 }

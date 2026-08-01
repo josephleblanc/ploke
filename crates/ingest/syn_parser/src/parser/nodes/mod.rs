@@ -16,6 +16,7 @@ mod unresolved;
 mod ids;
 // ----- ids public re-exports -----
 // Does not directly expose any direct access to NodeId
+pub(in crate::parser) use ids::StructuralTypeId;
 pub use ids::*;
 // -----------------------------
 use std::borrow::Borrow;

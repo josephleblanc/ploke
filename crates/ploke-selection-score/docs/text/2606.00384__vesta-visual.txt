@@ -1,0 +1,1382 @@
+VESTA: Visual Exploration with Statistical Tool Agents
+
+William Rudman1 , Abhishek Divekar1 , Kanishk Jain1 , Sebastian Joseph1 , Stella S. R. Offner1 , Matthew Lease1 , Kyle Mahowald1 , Greg Durrett2 , Junyi Jessy Li1
+
+The University of Texas at Austin
+
+New York University
+
+Correspondence: william.rudman@utexas.edu | § https://github.com/wrudman/VESTA
+
+Abstract
+Fitting quantitative models to data is a central step in scientific workflows, yet it remains one of the least automated. Recent agent-based systems leverage language and vision-language models (VLMs) to iteratively propose and refine statistical models, but these systems struggle on more challenging modeling tasks. To address these limitations, we introduce VESTA (Visual Exploration with Statistical Tool Agents), a framework that equips VLMs with a dynamically growing exploration toolkit to guide model refinement through data transformations, hypothesis-driven visualizations, and robust statistical tests. Unlike prior systems that rely on iterative critique alone, VESTA actively explores data before and during refinement by selecting or creating diagnostic tools, which accumulate in the model’s context and can be reused later. We evaluate VESTA against established baselines in three toolkit configurations: no tools, static expert-written tools, and dynamic model-written tools. To support this evaluation, we introduce DAWN (Dataset for Automated Workflows and Numerical Modeling), a benchmark targeting distribution fitting and time series modeling with varying difficulty tiers, and culminating in real-world astronomy tasks including modeling initial mass functions and gravitational-wave chirp signals. We find that VESTA’s dynamic tool creation outperforms prior agentic pipelines, with the largest gains on complex and domain-specific tasks. We further show that dynamically generated tools are substantially more sophisticated than those produced by existing visual tool-creation systems, covering more diagnostic categories per function and strongly preferring visual outputs that the VLM critic can reason over directly.
+
+Introduction
+
+Large Language Model (LLM) and Vision-Language Model (VLM) agents have demonstrated remarkable promise in scientific discovery, with systems capable of forming hypotheses, designing experiments, and synthesizing results. However, failures at different steps impede these models’ abilities to truly accelerate science. This work focuses on the task of fitting quantitative models to data. This step is complex, requiring priors about the domain in question and careful statistical analysis, while being less studied than other quantitative analysis tasks like ML engineering and data
+science [13, 10]. Addressing this gap is particularly important in scientific disciplines like astronomy
+where models struggle to effectively use domain conventions [23].
+We introduce V ESTA1 (Visual Exploration with Statistical Tool Agents), a framework that proposes, refines and evaluates statistical models by analyzing visual representations of data. VESTA operates
+over models defined in PyMC [1], a Bayesian probabilistic programming framework that enables
+model definition and fitting to data using an efficient Markov Chain Monte Carlo (MCMC) method.
+1 VESTA is the second most massive body in the main asteroid belt [32].
+
+Input: data & initial visualization
+Propose
+model(s)
+
+rbf_a = pm.HalfNormal(
+‘rbf_a', sigma=5.0)
+warped_a = pm.HalfNormal(
+[…]
+‘warped_a', sigma=5.0)
+[…]
+
+Models de ned in PyMC Retrieve / create tool (contribution of this work)
+
+The warped kernel does not su ciently cover the initial portion of the signal. Compute residuals to determine how to adjust model.
+
+Model t without visual tools Signal has decaying amplitude, best model uses a warped periodic kernel with AIC of -435.31.
+
+Select best model, summarize results
+
+Model t with visual tools
+
+Diagnostic
+residuals
+
+Evaluate
+
+Figure 1: Overview of VESTA. By effectively using and creating tools, VESTA produces a probabilistic PyMC program that models the input data.
+
+fi
+
+fi
+
+fi
+
+ffi
+
+Model-building with PyMC code is compositional, allowing for complex distributions to be constructed by combining simpler components. VESTA instantiates a loop of proposing models, selecting
+the best one, then iterating, broadly similar to existing autoresearch workflows [40, 8]. However,
+unlike prior work, VESTA utilizes multimodal feedback by augmenting this basic loop with a new type of visual tools. Visual tools allow VESTA to inspect model fits using a VLM, giving it leverage in a modality distinct from past work on tool use.
+Figure 1 shows how a model can use a tool to compute residuals, produce a visualization, and then inspect that visualization to identify areas where the predicted model does not fit the data well and propose a new statistical model that better fits the data. For the diversity of statistical model fitting tasks we explore here, it is infeasible to enumerate all necessary tools up front; dynamic tool instantiation is required to cover the full breadth of cases.
+To support advancement on challenging model fitting problems where current approaches fail, we introduce a new benchmark we call DAWN (Dataset for Automated Workflows and Numerical Modeling).2 DAWN problems cover two domains central to both general data science and scientific research: fitting probability distributions to discrete data and constructing models for time-series analysis. In contrast to existing benchmarks which often contain a small number of distributions
+with a limited number of points [15, 29], DAWN consists of synthetic problems spanning two levels
+of difficulty ( Easy and Hard ), as well as two fundamental problems from astronomy ( Astro ): fitting stellar initial mass functions (IMFs), and detecting and characterizing chirp signals embedded in gravitational-wave data. Using DAWN, we benchmark VESTA against prior frameworks specialized for Bayesian model and dynamic VLM-based tool-generation systems. While existing approaches perform competitively on our Easy splits, performance degrades substantially as data complexity increases and tasks shift toward domain-specific scientific phenomena. This degradation reveals a systematic gap in current agents’ capacity for iterative, evidence-driven model refinement. We show that this is effectively addressed by VESTA’s visual tools, with which the agent is capable of exploring multiple hypotheses, visualizing them, and generating new hypotheses based on its tool’s visual analyses. Furthermore, we find that VESTA not only successfully recovers the expert tools at a higher rate than existing baselines, but also creates sophisticated tools that often composes several expert tools in order to test multiple hypotheses at once. While using dynamically generated visual tools does not outperform expert-written tools, likely due to limitations in agents’ ability to process complex diagrams, VESTA shows great promise for creating and utilizing statistical tools.
+
+Related Work
+
+Automated Model Fitting Past work evaluated the capabilities of LLMs and VLMs to automate
+statistical analysis [42, 22], time-series modeling [52, 47, 16, 56, 34] and Bayesian model proposals
+[37, 28]. Ji et al. [22] and Sun et al. [42] survey how LLM-based agents can automate statistical
+workflows from data cleaning and model selection. However, Zhu et al. [59] find that even stateof-the-art LLMs achieve only modest accuracy on benchmarks for selecting appropriate statistical
+2 DAWN was NASA’s first truly interplanetary spaceship that explored VESTA [33].
+
+methods, revealing significant limitations in LLMs’ ability to reason over complex statistical tasks. While much of the focus in the literature has used LLMs / VLMs to predict a continuation of time series or detect anomalies, our work seeks to represent underlying model that generates the observed data using a probabilistic Bayesian model (PyMC). Previous work in generating PyMC code to model data has been successful in scientific settings, but this work often relies on human-written kernels for
+Gaussian process, limiting the use cases of such methods [5, 6, 12]. Recent works addresses these
+key limitation by using LLMs to automatically perform “Box’s Loop” of iteratively proposing new
+and critiquing existing models written in PyMC code until an adequate fit is achieved [27]. Despite
+some promising results using LLMs to propose probabilistic models, Gandhi et al. [15] find LLMs
+struggle on more challenging datasets sampled from real-world domains and demonstrate that the iterative refinement of PyMC models does not consistently provide better predictions over one-shot LLMs. Further, while existing benchmarks sample data across different domains, they cover only a narrow range of distributions, limiting their difficulty and scope. Our VESTA automates Box’s propose-critique-refine loop using VLMs, enabling tool use and creation for data analysis, while handling significantly more complex distributions. Multimodal Tool Use & Creation Several works have demonstrated that VLMs are proficient tool-users and that the successful utilization of tools can improve fine-grained reasoning over visualquestion answering tasks [20, 57, 48, 51]. Incorporating VLM tool-use in agentic systems has
+produced even larger performance gains [53, 18, 50, 19]. In particular, Zhang et al. [54] propose a
+multi-agent VLM framework in which an orchestrator agent coordinates specialized sub-agents and vision expert tools to improve fine-grained visual perception. Recent work has tested the capabilities
+of VLMs; for example, in PyVision [55], VLMs are used in an agentic flow there they dynamically
+create and execute tools until an answer is reached. Previous work has limited VLM tool use (i.e., executing or generating code over visual inputs) to image enhancements, annotations, cropping, and
+the calculation of basic statistics [17, 44, 58]. While some work has applied multimodal tool creation
+to model fitting [24], such tools are limited to simple statistics and basic plotting, lack a dedicated
+tool-creation step, and are discarded after each use rather than persisted for reuse across iterations. In contrast, VESTA uses an LLM tool agent to dynamically create visualizations that test statistical hypotheses, which are then passed to a VLM critic as evidence for refining them. Autonomous Tool Expansion While both LLMs and VLMs have proven to use tools effectively, curating the exact set of tools for a problem often requires manually curating a tool kit. Initial work
+demonstrates that LLMs are capable of coding effective and reliable tools [36, 7], although these tools
+are typically created separately from model inference [2, 49]. Systems such as Voyager [46] extend
+this static paradigm by allowing for tool libraries to adapt to task needs and evolve across examples. Many of the systems for autonomous tool expansion tend to focus on software engineering tasks
+[11, 43, 26] or narrowly scoped API invocation benchmarks [21, 41], with less focus on problems
+that require, judgment-driven statistical analysis. While EvoSkill [2] and TTE [30] create some tools
+related to calculating statistics, they tend to contain more simplistic functions such as calculating averages, areas or retrieving information from tables.
+
+VESTA: Visual Exploration with Statistical Tools
+
+We assume as input a dataset D generated by a model M (θ). M is a data generating process (e.g., a directed graphical model) with parameters θ. In this work, we consider models that can be specified in PyMC code. Given a proposed model M̃ (θ̃), we can evaluate its fit to D with metrics denoted as R(D, M̃ (θ̃)). Central to our approach are visual tools, ε(D, M, θ), implemented as executable Python functions that accept the data D and a current model (M, θ) and return visual or statistical diagnostics used to inform subsequent modeling decisions. 3.1
+
+VESTA
+
+Algorithm 1 illustrates the workflow for VESTA. We start with an initial prediction by estimating a probabilistic model from an initial plot of the data, and then refine this prediction over N steps. At each step, we propose p alternative candidate models, then select model with the best metric, R. Our approach proceeds in four steps per iteration: propose, generate tools, critique model fit, and summarize steps of the run.
+
+Propose. On the first iteration, VESTA takes an initial visualization of the data, produces a brief visual description and is instructed to create p diverse model proposals. To ensure faithfulness to the proposed model parameters, PyMC code is generated in a dedicated step that translates parameter specifications into executable PyMC programs. Without this step, we find models frequently deviate from their specified parameterizations. Generate Tools. The central contri- Algorithm 1 Visual Exploration Agents bution of VESTA is its ability to explore data through the composition Require: Data D, iterations N , proposals p, metric R,
+registry E (initial state: generate_new_tool only)
+and creation of tools. At each iteraEnsure: Mbest , θbest tion, VESTA receives a summary of 1: Mbest , θbest ← PROPOSE (Plot(D)) ▷ Plot data; fit j the previous runs and model paramemodels by and select best model under metric, R ters then decides to either selects an 2: s0 ← SUMMARIZE(Mbest , θbest ) existing tool from a growing registry E, or dynamically codes a new diag- 3: for i ∗= 1, . . . , N do 4: ε ← TOOL MANAGER(si−1 , D, E) ▷ nostic tool in Python when no existing Select/create tool; update E tool is adequate for the desired analysis. 5: Ti ← ε∗ (D, Mi−1 , θi−1 ) ▷ Execute tool Newly created tools are saved to the 6:
+M
+, θ ←
+C
+RITIQUE(Ti , s0:i−1 , D) ▷ Propose p i i registry, making them reusable across models; return best ranked by R future iterations for the current run. At 7:
+Mbest , θbest ← arg minθ∈{θi ,θbest } R(M(θ))
+each run, the toolkit is newly initial8: si ← SUMMARIZE(Mi , θi ) ized. This allows VESTA to construct 9: end for increasingly sophisticated, hypothesisdriven visualizations. We find in Sec- 10: return Mbest , θbest tion 6.2 that tools created by VESTA have high coverage of expert written tools and create sophisticated visualizations to test multiple statistical hypotheses in a single tool call. Critique. The output of the selected or newly created tool, along with the history of the best models and descriptions from previous runs is passed to a VLM critic that refines the current PyMC model by proposing p revised models. The revised model that optimizes R is passed to the next iteration. In our prompt, we instruct the VLM critic to terminate the iterative refinement loop early if it judges the current model fit to be satisfactory. This is implemented by instructing the critic to include an explicit COMPLETE token in its description, which causes VESTA to return the best PyMC code. Summarize. At the end of each iteration, the visual description, chosen model and parameters, the metric R, and tool output are compressed into a structured summary. This summary is injected into the next iteration in place of raw intermediate outputs, enabling the system to reason over the full refinement trajectory without incurring prohibitive context growth.
+
+3.2
+
+Visual Tools in VESTA
+
+VESTA can work out-of-the-box without tools, a setting we evaluate. However, we found tools to be critical in solving challenging model fitting tasks. In particular, we allow VESTA to propose new tools tailored to their model predictions. At each tool generation step, VESTA receives as input the summarized contents of the previous iteration (including the VLM critique of the model fit, the best PyMC model with R(D, Mbest (θ)), and a history of previously executed tools, along with access to a tool registry. We initialize the toolkit with a single function that gives the option for creating a new tool. New tools emerge through the process of examining data, and allow models to verify, and update an existing hypothesis (e.g., a proposed statistical distribution). As we progress through the task, we save previously created tools. If a generated tool fails, we allow up to two retries passing the failure trace into the retry prompt. After two retries if a tool fails to execute due to syntax or import errors, the system falls back to the “no toolkit” mode. In practice, we found that VESTA is capable of generating complex tools that tests distinct hypotheses through visualization, which is then utilized in the Critique stage. The tools always involve visual transformations to explore the data, which we show in detail in a case study in Section 6.2 (Figure 5). VESTA can also work with externally provided visual tools. In Section 5 we compile a list of expert-written tools which we evaluate and analyze in Section 6.
+
+Figure 3: DAWN’s Astro distribution fitting tasks. Example of Initial Mass Functions projected into log-log space. Distributions become visually distinct only when projected into log-log space.
+
+The DAWN Benchmark
+
+Distribution fitting and time series modeling are two key data science modeling tasks that appear consistently across scientific disciplines. We select these domains because they allow us to benchmark AI agents across easily recognizable models, complex mixtures of common forms, and challenging real-world tasks where domain-specific knowledge, such as established conventions and governing equations, can reduce the complexity of modeling real-world phenomena. DAWN problems are synthetically generated, allowing us to robustly measure model fit. Figure 2 shows examples for each domain and split ( Easy , Hard , and Astro ). 4.1
+
+Distribution Fitting Tasks
+
+The Easy tasks in distribution fitting consists of identifying the family and associated parameters for a unimodal distribution. The distribution families we consider in this paper are: gaussian, lognormal, student-t, exponential, uniform, weibull, laplace, cauchy and pareto. Both the priors and exact number of points for each distribution are randomly sampled. The Hard task composes exactly two of these distributions. Mixtures present in the Hard split model phenomenon present other real-wold
+domains such as the gaussian-laplace mixtures common in speech signal processing [3]
+and lognormal-exponential mixtures prevalent in survival-analysis [31].
+Figure 2: Sample inputs from both domains and all For our Astro split, we use initial mass functions (IMF) as the distribution family, dataset splits in DAWN. Easy splits contain easily which describes the distribution of stellar recognizable forms. Hard tasks contain mixtures masses at birth and are often modeled with of distinct forms, and Astro tasks reflect real-world
+canonical forms [35]. Accurate modeling of astronomy challenges that require additional analysis
+the IMF allows astronomers to infer the con- beyond simple visualization to solve. ditions of past star formation and predict its downstream effects on galactic evolution and heavy
+element distribution [4].
+We use five functional forms (visualized in Figure 3): (1) The simplest form, the Salpeter IMF [39], is
+a single power law. (2) The Kroupa IMF [25] is a piecewise power law with sharp breaks at specific
+characteristic masses. (3) The Chabrier IMF [9] is distinguished by a smooth log-normal component
+at low masses transitioning to a power law at higher masses. We additionally include two freeform variants that do not follow canonical forms making them more challenging to model: (4) one with breaks constrained near canonical masses (freeform tight) and (5) one with unconstrained breaks and slopes that can produce more exotic stellar IMFs (freeform wide). Evaluation Metric. We use Jensen-Shannon Divergence to measure similarity between our proposed model’s distribution and the reference model’s distribution. This metric is symmetric and
+bounded in the interval [0, 1], with a score of 0 indicating identical distributions.
+
+4.2
+
+Time Series Fitting Tasks
+
+The Easy task in time series fitting consists of modeling sequences characterized by simple linear trends (increasing, decreasing, or flat) and standard seasonal components, such as basic periodic sine waves, coupled with minimal noise. These datasets are designed to evaluate whether models can correctly identify and combine standard components such as linear and periodic kernels with minimal ambiguity. The Hard task introduces more complex, non-linear dynamics and nonstandard periodicities. This split includes time series exhibiting random walks (ARIMA process), and S-curve (sigmoidal) functions. Further, Hard contains time series from other domains, such as electrocardiogram (ECG) signals of heartbeat patterns and time series exhibiting seasonal periodicity
+with an increasing averages common in sales forecasting [14]. Capturing the behavior of these series
+requires moving beyond standard linear or single-period functions to employ multi-periodic modeling and Gaussian process kernels, such as Matérn and Radial Basis Function (RBF). This split tests the model’s ability to handle richer structures and moderate levels of noise and non-linearity. For our Astro split, we model time series inspired by gravitational wave chirps. “Chirps” are an astronomical phenomenon produced by merging binary star systems that introduces severe nonstationarity into the signal. The standard chirp variant features a continuously changing frequency over time, where initial high-wavelength, low-frequency waves progressively compress into higher frequencies as the celestial bodies converge. We additionally include a highly complex variant where this dynamic, shifting frequency is coupled with an amplitude that decays over time.
+Evaluation Metric. In accordance with prior works [27], we use the Expected Log Predictive
+Density under Leave One Out (ELPD-LOO) metric for time series. Formally, assume observations y1 , . . . , yn are independent given parameters θ. Let p(θ) be a prior distribution on the Rmodel
+parameters that forms a posterior distribution p(θ | y) and posterior predictive p(ỹ | y) = p(ỹ |
+θ)p(θ | y) dθ. We measure predictive accuracy using the expected log pointwise predictive density: n
+XZ
+ELPD − LOO = pt (ỹi ) log p(ỹi | y) dỹi
+(1) i=1
+
+where pt (ỹ) denotes the true data-generating distribution that we use LOO to approximate. ELPD measures predictive accuracy on a log-probability scale, with higher values indicating better fit. While unbounded below, its absolute value is less important than differences between models, which quantify relative predictive performance. Due to the computational cost of running ELPD-LOO over the full time series, we apply a sliding-window sampling procedure to create a representative subsample (25%) of the signal. 4.3
+
+Dataset Setup and Statistics
+
+Let D̄ = {D1 , . . . , Dn } be a collection of datasets where each Di represents a set of n ∈ [600, 1500]
+points randomly sampled from a ground-truth probability distribution or time-series signal DTruei , whose parameters are drawn uniformly from fixed ranges (see Appendix B). For each domain and difficulty split we generate 50 ( Easy / Astro ) or 100 ( Hard ) such datasets, evaluated against the known ground-truth model. In total, our benchmark consists of 200 discrete probability distributions and 200 time series.
+
+Experimental Setup
+
+5.1
+
+VESTA Implementation Details
+
+We use the following models as backbones for our VESTA: GPT-5.4-mini, Claude Sonnet 4.6, and Kimi K2.5. Note that the backbone model for VESTA must support interleaved text and image input. Although VESTA can be implemented with different models at each step, we use the same one for simplicity. For GPT-5.4-mini the reasoning effort is set to “low” and for Claude-Sonnet-4.6 we select the minimal number of reasoning tokens (1024) due to the iterative nature of our task and exploding token lengths. For all experiments run with VESTA we set the number of max iterations N = 5, number of proposals per step p = 3, and we select R to be the Akaike Information Criterion (AIC) as it balances model
+
+complexity with data fit and does not depend on having access to a ground truth distribution. For the initial plot, we use a histogram for distributions and simple line plot for time series (See Figure 2). Expert Visual Tools In addition to dynamically generating tools, we can also equip VESTA with tools designed by an expert statistician as an oracle experiment. The expert toolkit remain unaltered during the course of exploration and consists of general-purpose, functions that target key questions expert statisticians use when fitting complex mixture distributions or noisy time-series. For distribution fitting, the static toolkit includes tools for visualizing QQ plots, tail transform diagnostics, probability plots, and a running a Gaussian-Mixture-Model based segmentation with moment estimation, enabling agents to systematically diagnose location, scale, tail, and mixture structure miscalculations. For time series, the expert toolkit includes tools for comparing model fit against actuals, diagnosing residuals, and testing temporal independence via autocorrelation plots and Ljung-Box statistics, together enabling agents to detect underfitting, missed periodicity, and unmodeled dynamics. A complete description of tools is available in Appendix E. 5.2
+
+Baselines
+
+We detail exact prompts of all baselines in Appendix H. For fair comparison with VESTA, we set the maximum number of iterations N = 5 for all baselines.
+BoxLM. BoxLM [27] is inspired by the principle of Box’s Loop where a language model proposes
+statistical models using PyMC code and then critiques the probabilistic program over N rounds of iteration. The LLM proposes M models per round and scores each of them using ELPD-LOO, selecting the top p as candidates for the next round. The critic LM then synthesizes the fitted models, their scores, and posterior predictive summary statistics into a natural language hypothesis in order to update the model proposals in the next round of feedback. We minimally adapt Box LM prompts to better reflect our task goals.
+PyVision. PyVision [55] is a multi-turn framework designed to enhance multimodal reasoning by
+allowing VLMs to generate and execute Python code during inference. AVLM receives an input, generates Python code, and executes it in an isolated runtime, with the resulting output fed back into the VLM’s context to refine reasoning over multiple turns. The iteration continues until the VLM decides to provide a final answer. PyVision is originally designed for Visual Question Answering, where it generates and executes tools to enhance images by adjusting contrast, cropping irrelevant regions, and computing simple statistics such as histograms of pixel intensities. We adapt PyVision to propose and fit PyMC models by providing the same intent and PyMC coding guidelines that Visual Exploration Agent receives, keeping the multi-turn execution loop intact.
+
+Results and Analysis on DAWN
+
+6.1
+
+Results
+
+Distribution Fitting Figure 4 reports the Jensen-Shannon Divergence between the ground truth distribution and the probability density function induced by agent-written PyMC code. VESTA equipped with tool use consistently outperforms both the PyVision and BoxLM baselines across DAWN, with the largest gains on the Hard and Astro splits. When provided with an expert toolkit, VESTA achieves the strongest overall performance, establishing an upper bound for what tool discovery pipelines can attain. Crucially, VESTA with dynamic tool generation approaches this upper bound without access to any expert-written tools, producing distributions that far more closely reflect ground truth structure than the no-tool baseline. This gap demonstrates that VESTA is an effective tool discovery method: autonomously generated tools are sufficient to capture the modeling inferences that expert tools provide. Time Series Similar to the results for Distribution Fitting, VESTA, with both dynamic toolkit and expert toolkit consistently beats both PyVision and BoxLM baseline across the DAWN Time Series data. VESTA equipped with the expert toolkit has the strongest performance, followed closely by VESTA with the dynamic toolkit. We find that current baselines especially struggle to effectively model the time series in DAWN.
+
+Figure 4: [Top] Average Jensen-Shannon divergence (↓ better) between the ground-truth distribution
+and the probability density function of the proposed PYMC model on the Distribution Fitting task
+of DAWN. [Bottom] Average ELPD-LOO (↑ better) for the Time Series Modeling task of DAWN,
+computed via leave-one-out cross-validation. Error bars denote ±1 standard error of the mean. 6.2
+
+Analysis of Generated Tools
+
+Case Study Figure 5 shows an example of a VESTA written tool designed to determine the family of a given right-tailed distribution. The tool generated a single visualization with 6 panels; the original histogram of the input distribution is in Panel
+4. Each of the remaining subplots are designed to test particular hypothesis about this skewed distribution. Panel 1 shows a Q-Q plot testing whether the current proposed exponential distribution based PyMC model is an appropriate for this data, shown by whether points fall along the reference line. Panel 2 plots a histogram of Figure 5: Example of the output from a VESTA genthe raw data on a log-scaled x-axis, which erated tool. This tool composes multiple functions to compresses the right tail and spreads out analyze a heavy-tailed distribution. This multi-panel the lower values, making it easier to assess visualization output is fed back into VESTA to generate the shape of the distribution and identify better hypotheses. Panel titles are enlarged for clarity whether a heavy tail is present. Panel 3 and panel numbers are added manually. plots a histogram of the log-transformed data, meaning each observation is logged before being binned. If this histogram appears bell-shaped and symmetric then a log-normal family is appropriate for the original data. Panel 5 is a box plot and Panel 6 plots the complementary cumulative distribution function (CCDF) of the data in log-log space to see if the data follows a power-law distribution. This multi-panel visualization is a very powerful ingredient for VESTA; one limitation is that VLMs sometimes exhibit a perceptual “blindness”
+[38, 45] and fail to analyze these complex visualizations, a technical limitation that if addressed, will
+likely yield further performance gains. Generated vs. Expert Tools We analyze the tools generated by VESTA and PyVision using Claude Sonnet 4.6, and compare them to the expert-written toolkit. We find that VESTA and PyVision often independently “discover” tools present in the expert toolkit and compose them together to create a single, powerful tool for analysis. The tool in Figure 5 provides detailed analysis in a single tool that would require multiple steps. In contrast, expert tools are atomic by design, often testing a maximum
+
+Table 1: Expert tool coverage (%) across difficulty levels for VESTA and PyVision using Claude Sonnet 4.6. Each value is the percentage of generated tools that implement one of the expert tools.
+Easy
+
+Hard
+
+Expert Tool
+VESTA PyVision VESTA
+Distributions
+Calculate Moments
+98.2 72.7 94.6
+Histogram
+98.2 14.7 99.2
+Tails Transforms
+55.4 44.7 56.2 36.2
+QQ Plot
+60.7 4.0 Segment & CM. 23.2 9.3 56.2
+Probability Plot
+26.8 30.7 26.9
+Time Series
+Residuals ACF Plot
+93.8 49.3 84.1
+Fit vs. Actuals
+85.2 57.3 77.9 59.3
+Instantaneous Freq. Plot
+88.9 61.3 72.4 Fit vs. Actuals w/ Res. Dist. 76.5 7.3 9.7
+Residuals ACF Score
+14.8 32.0
+
+Astro
+
+PyVision VESTA
+
+PyVision
+
+74.4 22.8 36.7 1.1 38.3 22.8
+
+98.4 98.4 91.8 23.0 14.8 39.3
+
+88.0 2.7 65.3 0.7 0.0 32.0
+
+41.5 52.4 42.4 4.2 18.2
+
+97.1 67.6 82.4 58.8 13.2
+
+50.7 56.0 58.0 0.0 36.7
+
+of two hypotheses. For example, a single tool generated by VESTA composes an average of 3.5 tools present in the expert toolkit, compared to 1.9 tools for PyVision. This finding indicates that VESTA is capable of creating powerful statistical tools that have a high overlap with tools written by human experts, and often explore multiple hypotheses simultaneously.
+Table 1 quantifies this analysis at scale. We calculate the percent of times a generated tool contains a sub-function present in the expert toolkit. First, we find that both methods discover each function type in the tool kit at least once. VESTA recovers a much larger percentage of expert tools than PyVision.
+Second, we find that generated tools depend on the unique specifications of the task. For distribution fitting, the Astro split contains Initial Mass Functions (IMFs) which are exclusively power law or mixtures of power law distributions. In order to visually distinguish these distributions, applying a log or log-log transform is required. Accordingly, for VESTA the percent of generated tools using a “tail transform” function increases from 55.4% on the Easy split to 91.8% on the Astro . VESTA Created Tools Beyond the Expert Toolkit Not only does VESTA discover expert-written tools, but it creates tools that further strengthen analysis.
+Table 2 shows the percentage of VESTA- Table 2: For the distribution fitting task, the pergenerated tools that contain a function not centage of VESTA-generated tools that invoke present in the expert toolkit. We find that nearly each function as a subroutine. Only functions not all generated tools contain some form of “di- present in the expert toolkit are shown.
+agnostic check” where the tool fits one more candidate distributions against the input data to
+Easy
+Function
+Hard
+Astro
+assess which distribution best models. This is
+Diagnostic Fit Checks
+100.0 96.9 100.0 often accompanied by a formal ranking by calcu- Info. Criteria 82.1 73.8 65.6
+Mean Excess Plot
+5.4 7.7 36.1 lation different “information criterion” metrics 0.0 1.5 6.6 such as AIC or BIC. We find the next most com- Hill Estimator
+Box–Cox
+1.8 0.0 0.0 mon functions (mean-excess and Hill estimator)
+D’Agostino Normaltest
+0.0 0.8 0.0 are predominantly called on the Astro split
+Shapiro–Wilk
+0.0 0.8 0.0 and are designed to diagnose heavy-tailed behavior. The mean-excess plot exploits linearity
+of E[X − u | X > u] in the threshold u to identify a Generalized-Pareto-like tail and locate where it
+begins, while the Hill estimator provides a direct estimate of the tail index α from the largest order statistics. Their focus on Astro suggests that VESTA correctly identifies Initial Mass Functions as tail-dominated distributions and tailors its tools to target these features. The remaining tools (Box–Cox, D’Agostino’s normality test, and Shapiro–Wilk) are all related to Gaussian distributions, either testing for normality or transforming data to be normally distributed. A detailed description of each tool, as well as an analysis of novel time-series tools present in Appendix F. Tool Persistence and Reuse. A key architectural advantage of VESTA’s dynamic-toolkit is the persistence of its generated functions. Within a single problem instance, 79.5% of VESTA’s dy9
+
+namically generated tools are re-invoked across subsequent analysis steps (averaging 1.87 calls per tool; Table 3). This capability is most useful for tools that evaluate model fit, allowing the agent to iteratively reassess model fit using a consistent baseline. Consider the case study shown in Figure 5. As VESTA iteratively refines its distributional hypothesis (from exponential to log-normal), the tool can be re-invoked with an updated PyMC model to regenerate Panel 1’s Q-Q plot against the new candidate distribution without incurring additional tool-writing cost. Further, the remaining diagnostic panels act as a consistent reference frame, meaning VESTA does not have to regenerate tools to re-examine the underlying data when evaluating a new distributional hypothesis. PyVision treats generated code as single-use execution cells, entirely lacking a mechanism for revisitation.
+Table 3: VESTA tool reuse statistics within single problem instances.
+Dataset Tools Reused ≥1× Avg Invocations
+
+Easy
+Hard
+Astro
+
+64 (78.0%) 126 (85.1%) 51 (69.9%)
+
+1.93 1.75 2.07
+
+Overall
+
+241 (79.5%)
+
+1.87
+
+Conclusion
+
+We introduce VESTA, a pipeline that uses VLMs to propose statistical models and test hypotheses through dynamic tool use, producing models that more accurately reflect underlying data structure. To support this evaluation, we introduce DAWN, a benchmark of distribution fitting and time series modeling tasks at varying difficulty, including a challenging Astro split drawn from real-world astronomy problems. Our evaluation shows that VESTA independently recovers expert tools and composes them into more sophisticated diagnostics that test multiple hypotheses simultaneously. While VESTA with expert tools achieves the strongest overall performance, VESTA-Dynamic outperforms all existing baselines on DAWN, demonstrating that VESTA can propose high-quality statistical models and perform autonomous statistical tool discovery.
+
+Acknowledgments
+This work was supported by the NSF under Cooperative Agreement 2421782 and the Simons Foundation grant MPS-AI-00010515 awarded to the NSF-Simons AI Institute for Cosmic Origins — CosmicAI, https://www.cosmicai.org/. It was also partially supported by NSF grants IIS2145280 and IIS-2433071. We would also like to thank Stéphanie Juneau from CosmicAI / NOIRLab for her help and feedback on this work.
+
+References
+[1] Oriol Abril-Pla, Virgile Andreani, Colin Carroll, Larry Dong, Christopher J Fonnesbeck, Maxim
+Kochurov, Ravin Kumar, Junpeng Lao, Christian C Luhmann, Osvaldo A Martin, et al. Pymc: a modern, and comprehensive probabilistic programming framework in python. PeerJ Computer Science, 9:e1516, 2023.
+[2] Salaheddin Alzubi, Noah Provenzano, Jaydon Bingham, Weiyuan Chen, and Tu Vu. Evoskill:
+Automated skill discovery for multi-agent systems, 2026. URL https://arxiv.org/abs/ 2603.02766.
+[3] Ali Aroudi, Hadi Veisi, Hossein Sameti, and Zahra Mafakheri. Speech signal modeling using
+multivariate distributions. EURASIP Journal on Audio Speech and Music Processing, 2015: 1–14, 12 2015. doi: 10.1186/s13636-015-0078-1.
+[4] Nate Bastian, Kevin R. Covey, and Michael R. Meyer. A universal stellar initial
+mass function? a critical look at variations. Annual Review of Astronomy and Astrophysics, 48(Volume 48, 2010):339–389, 2010. ISSN 1545-4282. doi: https://doi.org/
+
+10.1146/annurev-astro-082708-101642. URL https://www.annualreviews.org/content/ journals/10.1146/annurev-astro-082708-101642.
+[5] Josh Bongard and Hod Lipson. Automated reverse engineering of nonlinear dynamical systems.
+Proceedings of the National Academy of Sciences of the United States of America, 104(24): 9943–9948, Jun 2007. doi: 10.1073/pnas.0609476104.
+[6] Jure Brence, Ljupco Todorovski, and Saso Dzeroski. Probabilistic grammars for equation
+discovery. CoRR, abs/2012.00428, 2020. URL https://arxiv.org/abs/2012.00428.
+[7] Tianle Cai, Xuezhi Wang, Tengyu Ma, Xinyun Chen, and Denny Zhou. Large language models
+as tool makers, 2024. URL https://arxiv.org/abs/2305.17126.
+[8] Mert Cemri, Shubham Agrawal, Akshat Gupta, Shu Liu, Audrey Cheng, Qiuyang Mang,
+Ashwin Naren, Lutfi Eren Erdogan, Koushik Sen, Matei Zaharia, Alex Dimakis, and Ion Stoica. Adaevolve: Adaptive llm driven zeroth-order optimization, 2026. URL https://arxiv.org/ abs/2602.20133.
+[9] Gilles Chabrier. Galactic stellar and substellar initial mass function. Publications of the
+Astronomical Society of the Pacific, 115(809):763–795, July 2003. ISSN 1538-3873. doi: 10.1086/376392. URL http://dx.doi.org/10.1086/376392.
+[10] Jun Shern Chan, Neil Chowdhury, Oliver Jaffe, James Aung, Dane Sherburn, Evan Mays, Giulio
+Starace, Kevin Liu, Leon Maksin, Tejal Patwardhan, Lilian Weng, and Aleksander M ˛ adry. Mle-bench: Evaluating machine learning agents on machine learning engineering, 2025. URL https://arxiv.org/abs/2410.07095.
+[11] Gangda Deng, Zhaoling Chen, Zhongming Yu, Haoyang Fan, Yuhong Liu, Yuxin Yang, Dhruv
+Parikh, Rajgopal Kannan, Le Cong, Mengdi Wang, Qian Zhang, Viktor Prasanna, Xiangru Tang, and Xingyao Wang. Evoclaw: Evaluating ai agents on continuous software evolution, 2026. URL https://arxiv.org/abs/2603.13428.
+[12] David Duvenaud, James Robert Lloyd, Roger Grosse, Joshua B. Tenenbaum, and Zoubin
+Ghahramani. Structure discovery in nonparametric regression through compositional kernel search, 2013. URL https://arxiv.org/abs/1302.4922.
+[13] Alex Egg, Martin Iglesias Goyanes, Friso Kingma, Andreu Mora, Leandro von Werra, and
+Thomas Wolf. Dabstep: Data agent benchmark for multi-step reasoning, 2025. URL https: //arxiv.org/abs/2506.23719. [14] Yasaman Ensafi, Saman Hassanzadeh Amin, Guoqing Zhang, and Bharat Shah. Time-series forecasting of seasonal items sales using machine learning – a comparative analysis. International Journal of Information Management Data Insights, 2(1):100058, 2022. ISSN 2667-0968. doi: 10.1016/j.jjimei.2022.100058. URL https://www.sciencedirect.com/science/article/ pii/S2667096822000027.
+[15] Kanishk Gandhi, Michael Y. Li, Lyle Goodyear, Agam Bhatia, Louise Li, Aditi Bhaskar,
+Mohammed Zaman, and Noah D. Goodman. Boxinggym: Benchmarking progress in automated experimental design and model discovery, 2025. URL https://arxiv.org/abs/2501.01540.
+[16] Nate Gruver, Marc Finzi, Shikai Qiu, and Andrew Gordon Wilson. Large language models are
+zero-shot time series forecasters, 2024. URL https://arxiv.org/abs/2310.07820.
+[17] Tanmay Gupta and Aniruddha Kembhavi. Visual programming: Compositional visual reasoning
+without training, 2022. URL https://arxiv.org/abs/2211.11559.
+[18] Jack Hong, Chenxiao Zhao, ChengLin Zhu, Weiheng Lu, Guohai Xu, and Xing Yu. Deepeyesv2:
+Toward agentic multimodal model, 2026. URL https://arxiv.org/abs/2511.05271.
+[19] Xinhai Hou, Shaoyuan Xu, Manan Biyani, Moyan Li, Jia Liu, Todd C. Hollon, and Bryan Wang.
+Codev: Code with images for faithful visual reasoning via tool-aware policy optimization, 2026. URL https://arxiv.org/abs/2511.19661.
+
+[20] Yushi Hu, Weijia Shi, Xingyu Fu, Dan Roth, Mari Ostendorf, Luke Zettlemoyer, Noah A Smith,
+and Ranjay Krishna. Visual sketchpad: Sketching as a visual chain of thought for multimodal language models, 2024. URL https://arxiv.org/abs/2406.09403.
+[21] Xu Huang, Weiwen Liu, Xingshan Zeng, Yuefeng Huang, Xinlong Hao, Yuxian Wang, Yirong
+Zeng, Chuhan Wu, Yasheng Wang, Ruiming Tang, and Defu Lian. Toolace-dev: Self-improving tool learning via decomposition and evolution, 2025. URL https://arxiv.org/abs/2505. 07512.
+[22] Wenlong Ji, Weizhe Yuan, Emily Getzen, Kyunghyun Cho, Michael I. Jordan, Song Mei,
+Jason E Weston, Weijie J. Su, Jing Xu, and Linjun Zhang. An overview of large language models for statisticians, 2025. URL https://arxiv.org/abs/2502.17814.
+[23] Sebastian Antony Joseph, Syed Murtaza Husain, Stella SR Offner, StÃŠphanie Juneau, Paul
+Torrey, Adam S Bolton, Juan P Farias, Niall Gaffney, Greg Durrett, and Junyi Jessy Li. Astrovisbench: A code benchmark for scientific computing and visualization in astronomy. arXiv
+[24] Lee Jung-Mok, Nam Hyeon-Woo, Moon Ye-Bin, Junhyun Nam, and Tae-Hyun Oh. Automated
+model discovery via multi-modal & multi-step pipeline, 2025. URL https://arxiv.org/abs/ 2509.25946.
+[25] P. Kroupa. On the variation of the initial mass function. Monthly Notices of the Royal
+Astronomical Society, 322(2):231–246, April 2001. ISSN 1365-2966. doi: 10.1046/j.1365-8711. 2001.04022.x. URL http://dx.doi.org/10.1046/j.1365-8711.2001.04022.x.
+[26] Hongwei Li, Zhun Wang, Qinrun Dai, Yuzhou Nie, Jinjun Peng, Ruitong Liu, Jingyang
+Zhang, Kaijie Zhu, Jingxuan He, Lun Wang, Yangruibo Ding, Yueqi Chen, Wenbo Guo, and Dawn Song. Opensage: Self-programming agent generation engine, 2026. URL https: //arxiv.org/abs/2602.16891.
+[27] Michael Y. Li, Emily B. Fox, and Noah D. Goodman. Automated statistical model discovery
+with language models, 2024. URL https://arxiv.org/abs/2402.17879.
+[28] Michael Y. Li, Vivek Vajipey, Noah D. Goodman, and Emily B. Fox. Critical: Critic automation
+with language models, 2024. URL https://arxiv.org/abs/2411.06590.
+[29] James Robert Lloyd, David Duvenaud, Roger Grosse, Joshua B. Tenenbaum, and Zoubin
+Ghahramani. Automatic construction and natural-language description of nonparametric regression models, 2014. URL https://arxiv.org/abs/1402.4304.
+[30] Jiaxuan Lu, Ziyu Kong, Yemin Wang, Rong Fu, Haiyuan Wan, Cheng Yang, Wenjie Lou,
+Haoran Sun, Lilong Wang, Yankai Jiang, Xiaosong Wang, Xiao Sun, and Dongzhan Zhou. Beyond static tools: Test-time tool evolution for scientific reasoning, 2026. URL https: //arxiv.org/abs/2601.07641.
+[31] Ross Maller, Sidney Resnick, Soudabeh Shemehsavar, and Muzhi Zhao. Mixture cure model
+methodology in survival analysis: Some recent results for the one-sample case. Statistics Surveys, 18, 01 2024. doi: 10.1214/24-SS147.
+[32] NASA Science. Vesta: In depth. https://science.nasa.gov/solar-system/asteroids/
+4-vesta/, . Accessed: May 2, 2026.
+[33] NASA Science. Dawn mission overview. https://science.nasa.gov/mission/dawn/, .
+Accessed: May 2, 2026.
+[34] Jingchao Ni, Ziming Zhao, ChengAo Shen, Hanghang Tong, Dongjin Song, Wei Cheng,
+Dongsheng Luo, and Haifeng Chen. Harnessing vision models for time series analysis: A survey, 2025. URL https://arxiv.org/abs/2502.08869.
+[35] S. S. R. Offner, P. C. Clark, P. Hennebelle, N. Bastian, M. R. Bate, P. F. Hopkins, E. Moreaux, and
+A. P. Whitworth. The Origin and Universality of the Stellar Initial Mass Function. University of
+Arizona Press, 2014. ISBN 9780816531240. doi: 10.2458/azu_uapress_9780816531240-ch003.
+URL http://dx.doi.org/10.2458/azu_uapress_9780816531240-ch003.
+
+[36] Cheng Qian, Chi Han, Yi R. Fung, Yujia Qin, Zhiyuan Liu, and Heng Ji. Creator: Tool
+creation for disentangling abstract and concrete reasoning of large language models, 2024. URL https://arxiv.org/abs/2305.14318.
+[37] James Requeima, John Bronskill, Dami Choi, Richard E. Turner, and David Duvenaud. Llm
+processes: Numerical predictive distributions conditioned on natural language, 2024. URL https://arxiv.org/abs/2405.12856.
+[38] William Rudman, Michal Golovanevsky, Amir Bar, Vedant Palit, Yann LeCun, Carsten Eickhoff,
+and Ritambhara Singh. Forgotten polygons: Multimodal large language models are shape-blind. In Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Mohammad Taher Pilehvar, editors, Findings of the Association for Computational Linguistics: ACL 2025, pages 11983–11998, Vienna, Austria, July 2025. Association for Computational Linguistics. ISBN 979-8-89176256-5. doi: 10.18653/v1/2025.findings-acl.620. URL https://aclanthology.org/2025. findings-acl.620/.
+[39] Edwin E. Salpeter. The Luminosity Function and Stellar Evolution. apj, 121:161, January 1955.
+doi: 10.1086/145971.
+[40] Chenglei Si, Zitong Yang, Yejin Choi, Emmanuel Candès, Diyi Yang, and Tatsunori Hashimoto.
+Towards execution-grounded automated ai research, 2026. URL https://arxiv.org/abs/ 2601.14525.
+[41] Yifan Song, Weimin Xiong, Dawei Zhu, Wenhao Wu, Han Qian, Mingbo Song, Hailiang Huang,
+Cheng Li, Ke Wang, Rong Yao, Ye Tian, and Sujian Li. Restgpt: Connecting large language models with real-world restful apis, 2023. URL https://arxiv.org/abs/2306.06624.
+[42] Maojun Sun, Ruijian Han, Binyan Jiang, Houduo Qi, Defeng Sun, Yancheng Yuan, and Jian
+Huang. A survey on large language model-based agents for statistics and data science. The American Statistician, page 1–14, October 2025. ISSN 1537-2731. doi: 10.1080/00031305. 2025.2561140. URL http://dx.doi.org/10.1080/00031305.2025.2561140.
+[43] Zeyi Sun, Ziyu Liu, Yuhang Zang, Yuhang Cao, Xiaoyi Dong, Tong Wu, Dahua Lin, and Jiaqi
+Wang. Seagent: Self-evolving computer use agent with autonomous learning from experience,
+2025. URL https://arxiv.org/abs/2508.04700.
+[44] Dídac Surís, Sachit Menon, and Carl Vondrick. Vipergpt: Visual inference via python execution
+for reasoning, 2023. URL https://arxiv.org/abs/2303.08128.
+[45] Shengbang Tong, Zhuang Liu, Yuexiang Zhai, Yi Ma, Yann LeCun, and Saining Xie. Eyes
+wide shut? exploring the visual shortcomings of multimodal llms, 2024. URL https://arxiv. org/abs/2401.06209.
+[46] Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Mandlekar, Chaowei Xiao, Yuke Zhu, Linxi Fan,
+and Anima Anandkumar. Voyager: An open-ended embodied agent with large language models,
+2023. URL https://arxiv.org/abs/2305.16291.
+[47] Qingsong Wen, Tian Zhou, Chaoli Zhang, Weiqi Chen, Ziqing Ma, Junchi Yan, and Liang Sun.
+Transformers in time series: A survey, 2023. URL https://arxiv.org/abs/2202.07125.
+[48] Chenfei Wu, Shengming Yin, Weizhen Qi, Xiaodong Wang, Zecheng Tang, and Nan Duan.
+Visual chatgpt: Talking, drawing and editing with visual foundation models, 2023. URL https://arxiv.org/abs/2303.04671.
+[49] Georg Wölflein, Dyke Ferber, Daniel Truhn, Ognjen Arandjelović, and Jakob Nikolas Kather.
+Llm agents making agent tools, 2025. URL https://arxiv.org/abs/2502.11705.
+[50] Shilin Yan, Jintao Tong, Hongwei Xue, Xiaojun Tang, Yangyang Wang, Kunyu Shi, Guannan
+Zhang, Ruixuan Li, and Yixiong Zou. Act wisely: Cultivating meta-cognitive tool use in agentic multimodal models, 2026. URL https://arxiv.org/abs/2604.08545.
+[51] Xinlei Yu, Chengming Xu, Guibin Zhang, Zhangquan Chen, Yudong Zhang, Yongbo He,
+Peng-Tao Jiang, Jiangning Zhang, Xiaobin Hu, and Shuicheng Yan. Vismem: Latent vision memory unlocks potential of vision-language models, 2026. URL https://arxiv.org/abs/ 2511.11007.
+
+[52] George Zerveas, Srideepika Jayaraman, Dhaval Patel, Anuradha Bhamidipaty, and Carsten
+Eickhoff. A transformer-based framework for multivariate time series representation learning,
+2020. URL https://arxiv.org/abs/2010.02803.
+[53] Yifan Zhang, Liang Hu, Haofeng Sun, Peiyu Wang, Yichen Wei, Shukang Yin, Jiangbo Pei,
+Wei Shen, Peng Xia, Yi Peng, Tianyidan Xie, Eric Li, Yang Liu, Xuchen Song, and Yahui Zhou. Skywork-r1v4: Toward agentic multimodal intelligence through interleaved thinking with images and deepresearch, 2025. URL https://arxiv.org/abs/2512.02395.
+[54] Zhehao Zhang, Ryan Rossi, Tong Yu, Franck Dernoncourt, Ruiyi Zhang, Jiuxiang Gu, Sungchul
+Kim, Xiang Chen, Zichao Wang, and Nedim Lipka. Vipact: Visual-perception enhancement via specialized vlm agent collaboration and tool-use, 2025. URL https://arxiv.org/abs/2410. 16400.
+[55] Shitian Zhao, Haoquan Zhang, Shaoheng Lin, Ming Li, Qilong Wu, Kaipeng Zhang, and Chen
+Wei. Pyvision: Agentic vision with dynamic tooling, 2025. URL https://arxiv.org/abs/ 2507.07998.
+[56] Siru Zhong, Weilin Ruan, Ming Jin, Huan Li, Qingsong Wen, and Yuxuan Liang. Time-vlm:
+Exploring multimodal vision-language models for augmented time series forecasting, 2025. URL https://arxiv.org/abs/2502.04395. [57] Qiji Zhou, Ruochen Zhou, Zike Hu, Panzhong Lu, Siyang Gao, and Yue Zhang. Image-ofthought prompting for visual reasoning refinement in multimodal large language models, 2024. URL https://arxiv.org/abs/2405.13872.
+[58] Zetong Zhou, Dongping Chen, Zixian Ma, Zhihan Hu, Mingyang Fu, Sinan Wang, Yao Wan,
+Zhou Zhao, and Ranjay Krishna. Reinforced visual perception with tools, 2025. URL https: //arxiv.org/abs/2509.01656.
+[59] Yizhang Zhu, Shiyin Du, Boyan Li, Yuyu Luo, and Nan Tang. Are large language models good
+statisticians?, 2024. URL https://arxiv.org/abs/2406.07815.
+
+A VESTA Details
+
+Algorithm 2 Visual Exploration Agents (Detailed) Require: Data D, iteration limit N , proposals per iteration p, metric R, registry E (initial state:
+generate_new_tool only)
+Ensure: Mbest , θbest 1: P0 ← Plot(D) (j) p
+2: {M0 }j=1 ← PROPOSE (P0 )
+▷ Proposal Agent proposes p diverse models (j)
+
+(j)
+
+← STAT GEN(D, M0 ) ∀j (j) (j) 4: M0 , θ0 ← arg minj R(D, M0 (θ0 ))
+5: Mbest , θbest ← M0 , θ0 6: s0 ← SUMMARIZE (Mbest , θbest )
+7: for i = 1, . . . , N do 8: ε∗ ← TOOL MANAGER(si−1 , D, Mi−1 , θi−1 , E)
+9:
+E ← E ∪ {ε∗ }
+10: Ti ← ε∗ (D, Mi−1 , θi−1 ) (j) 11:
+desc, {Mi }pj=1 ← CRITIQUE(Ti , s0:i−1 , D)
+12: if desc = COMPLETE then 13: break 14: end if (j) (j) 15: θi ← STAT GEN(D, Mi ) ∀j
+(j) (j) 16: Mi , θi ← arg minj R(D, Mi (θi )) 17:
+Mbest , θbest ← arg minθ∈{θi , θbest } R(D, M(θ))
+18: si ← SUMMARIZE(Mi , θi , ε∗ ) 19: end for 20: return Mbest , θbest 3: θ0
+
+BDAWN Details.
+
+B.1
+
+Distribution Fitting
+
+▷ Stat-Gen fits all p models ▷ Select best model under metric R
+
+▷ Select or create diagnostic tool ▷ Persist newly created tools to registry ▷ Execute tool to produce diagnostic ▷ Propose p revised models
+
+▷ Stat-Gen fits all p models ▷ Select best model under metric R
+
+For each DTruei in the distribution fitting domain, ground-truth parameters are drawn independently and uniformly from predefined ranges, with the family (or mixture of families) depending on the difficulty split. Eight base families are used throughout: Gaussian, Log-normal, Student-t, Exponential, Uniform, Weibull, Cauchy, and Laplace. Easy split. A single distribution family is drawn uniformly at random from the eight families above. Parameters are then sampled as follows. For the Gaussian, mean µ ∼ U (−5, 5) and standard deviation σ ∼ U (0.5, 3). For the Log-normal, log-mean µ ∼ U (0, 2) and log-width σ ∼ U (0.3, 1.5). For the Student-t, location µ ∼ U(−5, 5), scale σ ∼ U(0.5, 3), and degrees of freedom ν ∼ U (2.5, 10). For the Exponential, location ℓ ∼ U (0, 2) and scale λ ∼ U(0.5, 3). For the Uniform, mean√µ ∼ U (−5, √ 5)
+and standard deviation σ ∼ U (0.5, 3), from which the bounds are derived as [µ − σ 3, µ + σ 3].
+For the Weibull, location ℓ ∼ U(0, 2), shape α ∼ U (1, 3), and scale λ ∼ U(0.5, 2). For the Cauchy, location α ∼ U(−5, 5) and scale β ∼ U(0.5, 2). For the Laplace, location µ ∼ U(−5, 5) and
+diversity b ∼ U (0.5, 2). Each dataset contains n ∈ [500, 1500] points.
+Hard split. Two distribution families are drawn independently with replacement from the same
+eight families. Each component draws its own sample size nk ∈ [250, 750] independently, and
+parameters for each component are sampled using the same per-family ranges described above. The two components are concatenated to form the final dataset of total size n = n1 + n2 . Astro split. Each ground-truth model is one of five initial mass function (IMF) families: Salpeter, Kroupa, Chabrier, Free-form (wide), and Free-form (tight), with 20 independent realisations generated
+per family. The number of stellar masses drawn per realisation is sampled uniformly from [500, 1500],
+
+and all families share mmax = 120 M⊙ . The Salpeter IMF is a single power law ξ(m) ∝ m−α with
+α ∼ U(1.9, 2.7) on [0.08, 120] M⊙ . The Kroupa IMF is a three-segment broken power law with
+slopes p1 ∼ U(0.1, 0.5), p2 ∼ U(1.0, 1.6), p3 ∼ U(1.9, 2.7) and fixed break masses m1 = 0.08 M⊙ ,
+m2 = 0.5 M⊙ on [0.009, 120] M⊙ ; continuity constants are enforced at each break. The Chabrier
+IMF joins a log-normal component (mchar ∼ U (0.15, 0.35), σ ∼ U(0.45, 0.70)) below 1 M⊙ to a power law (α ∼ U (1.9, 2.7)) above 1 M⊙ , matched continuously at the junction. The Free-form IMF is an 8-parameter broken power law with four slopes and three interior break masses; the wide variant uses broad exploratory ranges (a0 ∼ U(−0.5, 1.0), a1 ∼ U(0.5, 2.0), a2 ∼ U(1.5, 3.0), a3 ∼ U (1.8, 3.5); breaks b1 ∼ U(0.06, 0.12), b2 ∼ U(0.30, 0.80), b3 ∼ U(0.80, 2.00); mmin ∼ U(0.007, 0.040)), while the tight variant uses ranges anchored near canonical Kroupa values (a0 ∼ U(0.1, 0.5), a1 ∼ U(1.0, 1.6), a2 , a3 ∼ U(1.9, 2.7); breaks b1 ∼ U(0.07, 0.09), b2 ∼ U(0.40, 0.60),
+b3 ∼ U(0.80, 1.20); mmin ∼ U(0.007, 0.012)). Break masses are sorted to enforce b1 < b2 < b3 , and
+continuity constants are applied at each break.
+B.2
+
+Time Series
+
+For each DTruei in the time-series domain, ground-truth signal parameters are drawn independently and uniformly from predefined ranges, with the specific ranges and signal family depending on the difficulty split. Easy split.
+
+Each ground-truth signal follows a sinusoidal trend model, y(t) = s · t̃ + A sin(2πf t̃) + ε(t),
+
+(2)
+
+where t̃ ∈ [0, 1] is normalized time. Parameters are sampled as slope s ∼ U(−2.5, 2.5),
+amplitude A ∼ U(0.2, 2.0), frequency f ∼ U (1, 12) cycles per window, and noise fraction σ/A ∼ U (0.05, 0.15) with ε(t) ∼ N (0, σ 2 ). Approximately 16% of series are further constrained to s = 0 to ensure flat-trend instances are represented. All series are mean-centred after generation. Hard split. A two-level sampling scheme is used. First, a signal category is drawn—Complex with probability 0.4 or Rhythmic with probability 0.6. Within Complex, a type is drawn uniformly from: ARMA (an AR(1) random walk), Heteroscedastic (an expanding-variance process with additive seasonal component), and Logistic (an S-curve trend). Within Rhythmic, a type is drawn uniformly from: synthetic ECG (a Gaussian P-QRS-T complex template) and Square wave, with period sampled
+from {40, 60, 80} time steps; small Gaussian noise ε(t) ∼ N (0, σ 2 ) is added to all rhythmic signals.
+Pure sine-wave instances are generated but excluded from the final dataset to prevent overlap with the easy split. Astro split (gravitational wave chirps). Each ground-truth signal follows a linearly sweptfrequency (chirp) model,
+
+y(t) = A(t) sin 2π f0 t + 21 β t2 + ε(t), (3) giving instantaneous frequency f (t) = f0 + βt. Parameters are sampled as f0 ∼ U (0.3, 2.5),
+β ∼ U(0.20, 1.00), A ∼ U (0.7, 1.8), and σ ∼ U(0.07, 0.15). For 40 of the 50 series, amplitude
+is constant, A(t) = A; for the remaining 10, an exponential decay envelope A(t) = A e−t/τ with
+τ ∼ U(2.0, 5.0) is applied to model inspiral ringdown behaviour. All time series consist of N = 600 equally spaced observations on a daily grid.
+
+CVESTA Tool Generation Variants
+
+To evaluate whether tools can be effectively accumulated through sequential interaction, we sampled 100 instances from the Hard distribution fitting split, partitioning them equally into 50 train and 50 test examples. We evaluate three conditions with Claude Sonnet 4.6. (1) Accumulate-Only: During a train phase, the model processes training examples sequentially with tool accumulation enabled, initializing each run with the tools generated in all prior runs and selecting either an existing tool or generating a new one. After 50 sequential runs, this process converges to just 4 unique tools. During the test phase, the model is restricted to selecting from these accumulated tools with no new generation permitted and no interaction between runs. (2) Generate-Only: Identical to Accumulate-Only, but the
+
+test phase additionally permits the model to generate new tools, which are not shared across test runs. (3) Expert Toolkit + Generation: No train phase is used. Instead, the model is initialized with the default expert toolkit on all 50 test examples while also retaining the ability to generate new tools, again without cross-run sharing. This design isolates three factors: the value of accumulated tools alone, the benefit of combining accumulated tools with on-the-fly generation, and the contribution of generation when paired with a fixed expert toolkit. presents JS divergence scores across the three toolkit conditions on the Hard distribution fitting split. Overall, performance differences across conditions are modest, with all three variants achieving mean JS divergence between 0.106 and 0.124, and overlapping standard errors indicating no statistically significant separation. Nevertheless, a consistent ordering emerges: Expert+Generate achieves the lowest divergence (0.106), followed by Generate-Only (0.115), with Accumulate-Only performing worst (0.124). Two conclusions follow from this pattern. First, tool accumulation alone provides no measurable benefit. Restricting the model to the four autoaccumulated tools at test time yields the weakest performance, suggesting that sequential accumulation over 50 training examples converges to a toolkit that Figure 6: Jensen–Shannon divergence on the is too narrow to generalize across the full diversity of Hard distribution fitting split (lower is betdataset. Second, on-the-fly tool generation is the pri- ter) comparing three accumulated toolkit conmary performance driver. Both conditions that permit ditions with Claude Sonnet 4.6. test-time generation outperform Accumulate-Only, regardless of whether the base toolkit is accumulated or expert-designed. The marginal advantage of Expert+Generate over Generate-Only further suggests that a well-curated expert toolkit provides a stronger generative prior than one derived through automatic accumulation. Taken together, these results indicate that the current accumulation strategy does not yet yield tools competitive with expert-designed ones, and that allowing the model to generate new tools at test time remains essential for robust distribution fitting performance.
+
+D Additional Results on VESTA
+
+D.1
+
+Statistical Significance of the Results
+
+We pair-wise test, for each combination of LLM, dataset split, baseline, and VESTA variant, whether VESTA significantly outperforms the baseline. The two evaluation metrics are treated as independent statistical questions: they probe different tasks (distribution fitting vs. time-series modelling), have different data structures, and warrant different tests. Multiple-comparison corrections are applied within each metric but never across them. Distribution fitting (JS divergence). Per-problem JS values are available for every method on the same set of problems, so we use a one-sided paired Wilcoxon signed-rank test across problems with H1 : JSV esta < JSbaseline . \ and its standard Time-series modeling (ELPD LOO). ArviZ’s loo returns a point estimate ELPD c error SE q for each fit. We use a one-sided z-test on ∆ELPD = ELPDV esta − ELPDbaseline with c V + SE
+c B . This SE∆ is conservative: loo_compare computes the SE from perSE∆ =
+SE
+observation ELPD differences, which is strictly smaller whenever the two ELPDs are positively correlated. Our reported p-values are therefore upper bounds on the true p-values. Multiple comparisons. Within each metric we conduct 3 splits × 3 LLMs × 3 VESTA variants ×
+2 baselines = 54 tests and apply Holm–Bonferroni correction. We use α = 0.05 throughout.
+
+D.2
+
+Summary: aggregate win rates
+
+Table 4 reports, per (variant, baseline, split), how many of the 3 LLMs yield a statistically significant win for VESTA after Holm correction. VESTA’s advantage on time-series modelling is robust: every variant beats PyVision in every (LLM, split) cell, and beats Box-LM in 13/18 cells. For distribution fitting, significant wins are concentrated on the Hard split, where the absolute JS gap between VESTA and the baselines is largest.
+Table 4: Number of LLMs (out of 3) for which each VESTA variant significantly outperforms each baseline at α = 0.05 after Holm correction. Tests are one-sided in the direction “VESTA beats baseline” (paired Wilcoxon for JS divergence; z-test on ∆ELPD for ELPD LOO). Bold marks cells with ≥ 1 significant win.
+Easy
+
+Hard
+
+PyVis. Box-LM
+Distribution fitting — JS divergence
+VESTA-None
+1/3 0/3
+VESTA-Dynamic
+1/3 0/3
+VESTA-Expert
+1/3 1/3 Time-series modelling — ELPD LOO
+VESTA-None
+3/3 2/3
+VESTA-Dynamic
+3/3 2/3
+VESTA-Expert
+3/3 2/3
+
+D.3
+
+Astro
+
+PyVis.
+
+Box-LM
+
+PyVis.
+
+Box-LM
+
+2/3 2/3 2/3
+
+0/3 2/3 1/3
+
+0/3 1/3 2/3
+
+0/3 0/3 1/3
+
+2/3 3/3 3/3
+
+0/3 2/3 2/3
+
+3/3 3/3 3/3
+
+3/3 3/3 3/3
+
+Detailed per-LLM results
+
+Tables 5 and 6 give the median JS gap and ∆ELPD respectively for every individual comparison, along with stars denoting Holm-corrected significance levels.
+Table 5: Distribution fitting: median JS gap ∆ = med(JSV esta ) − med(JSbaseline ). Negative values favour VESTA. Stars are Holm-corrected p-values from the one-sided paired Wilcoxon test: * p < 0.05, **
+p < 0.01, *** p < 0.001. Significant wins (pHolm < 0.05) in bold.
+Easy
+LLM
+
+Method
+VESTA-None
+GPT-5.4-mini
+VESTA-Dynamic
+VESTA-Expert
+VESTA-None
+Claude Sonnet 4.6 VESTA-Dynamic
+VESTA-Expert
+VESTA-None
+Kimi K2.5
+VESTA-Dynamic
+VESTA-Expert
+
+D.4
+
+Hard
+
+PyVis. Box-LM
++0.084 +0.031 +0.026 −0.027 −0.047 −0.100 −0.024 −0.114 −0.076 −0.166 −0.076 −0.166 +0.031 +0.005 −0.010 −0.036 −0.004 −0.030
+
+PyVis. −0.144∗∗
+−0.105∗ −0.148∗∗∗ −0.137∗∗ −0.149∗∗∗ −0.136∗∗∗ −0.030 −0.083 −0.077
+
+Box-LM
+−0.102 −0.063 −0.106∗∗ −0.070 −0.082 −0.069 −0.005 −0.058 −0.052
+
+Astro
+PyVis. −0.001
+−0.023 −0.078 −0.034 −0.069 −0.120∗ +0.144 −0.370 −0.126
+
+Box-LM
+−0.009 −0.031 −0.086 −0.022 −0.057 −0.108 +0.279 −0.235 +0.009
+
+Discussion
+
+Time-series modelling. VESTA’s advantage on ELPD LOO is essentially universal: 45 of 54
+comparisons are significant at α = 0.05 after Holm correction, with the great majority at p < 0.001.
+The five non-significant comparisons against Box-LM on Claude (Easy and Hard splits) are an artefact of Box-LM’s catastrophically diffuse posterior on Claude — the ∆ELPD point estimates are massive (+398 to +644 nats in favour of VESTA), but the standard error on the Box-LM side (∼ 360 nats) is large enough to keep these just above the Holm-corrected threshold. Substantively, VESTA clearly wins here; the test is simply unable to certify it given how unstable Box-LM’s posterior is. Distribution fitting. Significant wins on JS divergence are concentrated in the Hard split, where the effect size is largest. On Easy and Astro , point estimates favour VESTA in nearly every cell (Table 5), but per-problem variance is high relative to the typical gap, and the Wilcoxon test cannot certify the difference at α = 0.05 given 54 corrections. The Kimi/ Astro results are particularly
+
+Table 6: Time-series modelling: ∆ELPD = ELPDV esta −ELPDbaseline , in nats (positive favours
+VESTA). Stars are Holm-corrected p-values from the one-sided z-test: * p < 0.05, ** p < 0.01,
+*** p < 0.001. Significant wins in bold.
+Easy
+LLM
+
+Method
+PyVis.
+VESTA-None
+137∗∗∗
+GPT-5.4-mini
+VESTA-Dynamic 138∗∗∗
+VESTA-Expert
+166∗∗∗
+VESTA-None
+92.7∗∗∗ Claude Sonnet 4.6 VESTA-Dynamic 118∗∗∗
+VESTA-Expert
+145∗∗∗
+VESTA-None
+182∗∗∗
+Kimi K2.5
+VESTA-Dynamic 200∗∗∗
+VESTA-Expert
+209∗∗∗
+
+Box-LM
+64.3∗∗ 65.0∗∗∗ 92.9∗∗∗ 142∗∗∗ 160∗∗∗ 170∗∗∗
+
+Hard
+PyVis. 114∗∗∗
+146∗∗∗ 125∗∗∗ 251∗∗∗ 264∗∗∗ 87.2∗∗∗ 195∗∗∗ 219∗∗∗
+
+Box-LM
+−39 44.8∗ 76.5∗∗∗ 14.8 123∗∗ 147∗∗∗
+
+Astro
+PyVis. 143∗∗∗
+161∗∗∗ 164∗∗∗ 163∗∗∗ 176∗∗∗ 195∗∗∗ 173∗∗∗ 171∗∗∗ 192∗∗∗
+
+Box-LM
+115∗∗∗ 133∗∗∗ 136∗∗∗ 97.7∗∗∗ 111∗∗∗ 130∗∗∗ 128∗∗∗ 126∗∗∗ 147∗∗∗
+
+noisy: VESTA-Dynamic posts a −0.370 median JS gap vs. PyVision yet pHolm = 1, because the paired sample is small and skewed. We therefore present the JS divergence results as suggestive rather than confirmatory on Easy and Astro , and as confirmatory on Hard .
+Table 7: Distribution fitting: posterior quality metrics by LLM, method, and dataset. ELPD LOO (↑): posterior predictive log-density on held-out data. Bhatt (↓): Bhattacharyya distance between predicted and true distributions. ploo (↓): PSIS-LOO effective number of parameters (lower indicates cleaner posterior geometry). Bold marks the best value within each (LLM, dataset, metric) column.
+Easy
+LLM
+
+GPT 5.4-mini
+
+Claude Sonnet 4.6
+
+Kimi K2.5
+
+D.5
+
+Configuration
+ELPD Bhatt
+PyVision
+−1981.48 0.68
+Box-LM
+−1788.34 0.51
+VESTA-None
+−1964.96 0.44 VESTA-Dynamic −1860.53 0.43
+VESTA-Expert
+−1853.66 0.41
+PyVision
+−1997.60 0.49
+Box-LM
+−1707.01 0.54
+VESTA-None
+−1856.27 0.51 VESTA-Dynamic −1848.46 0.97
+VESTA-Expert
+−1883.78 0.44
+PyVision
+−2133.54 0.54
+Box-LM
+−1788.34 0.51
+VESTA-None
+−1840.80 1.13 VESTA-Dynamic −1891.31 0.50
+VESTA-Expert
+−1839.91 0.70
+
+Astro
+
+Hard
+
+ploo
+ELPD Bhatt
+ploo
+ELPD Bhatt
+ploo 4.41 181.31 0.54 6.58 −2426.22 0.40 17.11 4.68 281.73 0.41 6.23 −2381.70 0.30 12.23 5.52 267.33 0.33 5.54 −2359.47 0.21 6.94 3.17 279.21 0.36 5.77 −2365.76 0.18 7.19 3.08 281.12 0.28 5.33 −2344.45 0.17 7.17 2.32 249.36 0.57 2.61 −2661.05 0.44 23.36 3.35 199.42 0.44 6.67 −2288.47 0.27 11.79 1.92 318.42 0.57 2.59 −2330.62 0.17 7.75 4.22 291.38 0.32 3.67 −2348.25 0.18 7.82 2.82 286.56 0.31 5.05 −2340.52 0.18 13.85 16.10 180.66 0.54 8.59 −2458.90 0.34 20.45 4.68 281.73 0.41 6.23 −2381.70 0.30 12.23 5.01 417.58 0.97 1.32 −2335.40 0.24 10.42 5.19 299.67 0.34 6.91 −2351.49 0.20 8.88 4.14 291.38 0.23 6.57 −2349.39 0.17 13.76
+
+Alternative Evaluation Metrics
+
+Estimating the Expected Log Predictive Density (ELPD) for Gaussian Process based Time Series models in PyMC is computationally demanding because it necessitates full MCMC sampling. Unlike simpler parametric models, GPs require the inversion of an n × n covariance matrix - a process with O(n3 ) complexity - at every gradient evaluation within the NUTS sampler. To mitigate this cubic scaling bottleneck, we employ fixed-space sub-sampling. By selecting a representative subset of the time series data at regular intervals, we reduce the effective n and this significantly speeds up the evaluation. For consistency, we measure the R2 , CRPS are calculated in the same manner. For the baseline evaluations, BoxLM generally performs better than PyVision, with the exception of a small number of anomalous cases in Claude-generated PyMC code. Specifically, a few extremely large ELPD values substantially inflate the mean performance metrics. Excluding these 7 outliers (out of 630 total samples) reduces the mean ELPD for Claude Sonnet 4.6 + BoxLM to 40.4 on the Easy dataset and -150.6 on the Hard dataset, bringing performance closer for Easy, and ahead for Hard dataset to the corresponding No-Toolkit configuration. In contrast, PyVision exhibits substantially higher failure rates during model fitting. Across datasets, approximately 40–60% of generated samples fail either due to code execution issues or unsuccessful MCMC fitting, representing the highest failure rate among all evaluated approaches. In the remaining
+
+Table 8: Mean performance comparison across all toolkit configurations and datasets for time series.
+Metrics: ELPD LOO (higher ↑), R2 (higher ↑), CRPS (lower ↓); We use PYVISION as our baseline.
+LLM
+
+Configuration
+
+ELPD
+
+Easy
+R2
+
+CRPS
+
+Astro (Chirp)
+ELPD
+R2
+CRPS
+
+ELPD
+
+Hard
+R2
+
+CRPS
+
+Claude Sonnet 4.6
+
+VESTA No-Toolkit
+VESTA Dynamic-Toolkit
+VESTA Expert-Toolkit
+PYVISION
+BOX LM
+
+30.2 55.9 82.7 -62.5 -561.0
+
+0.870 0.965 0.981 ≈0 0.639
+
+0.1127 0.0749 0.0660 0.490 0.235
+
+10.1 23.3 42.3 -153.1 -87.6
+
+0.675 0.842 0.909 ≈0 0.342
+
+0.1949 0.1085 0.0798 0.5052 0.3318
+
+-210.7 -85.1 -71.8 -335.9 -608.6
+
+0.819 0.920 0.938 ≈0 0.573
+
+0.6891 0.3537 0.3689 4.833 1.1383
+
+GPT 5.4 mini
+
+VESTA No-Toolkit
+VESTA Dynamic-Toolkit
+VESTA Expert-Toolkit
+PYVISION
+BOX LM
+
+33.7 34.4 62.3 -103.4 -30.6
+
+0.769 0.812 0.962 0.085 0.434
+
+0.1864 0.1244 0.0702 0.512 0.3438
+
+26.2 44.5 47.5 -116.5 -88.6
+
+0.791 0.882 0.891 0.031 0.024
+
+0.1238 0.0875 0.0811 0.448 0.4523
+
+-233.4 -149.4 -117.7 -263.4 -194.2
+
+0.830 0.844 0.948 ≈0 0.412
+
+0.6218 0.4746 0.4445 4.4379 1.5097
+
+Kimi K2.5
+
+VESTA No-Toolkit
+VESTA Dynamic-Toolkit
+VESTA Expert-Toolkit
+PYVISION
+BOX LM
+
+80.7 98.7 108.1 -101.1 -61.6
+
+0.830 0.909 0.962 ≈0 0.462
+
+0.1481 0.0936 0.0720 0.512 0.3249
+
+36.6 34.6 55.5 -136.7 -91.1
+
+0.857 0.884 0.965 ≈0 0.004
+
+0.1061 0.1001 0.0559 0.4899 0.4575
+
+-222.3 -114.1 -90.1 -309.5 -237.1
+
+0.741 0.907 0.969 ≈0 0.401
+
+0.8551 0.3651 0.2776 4.0653 1.7423
+
+successful runs, the fitted models frequently collapse to near mean-value predictions, resulting in poor overall ELPD and near-zero R2 values. These failures are largely attributable to PyVision’s implementation strategy, which is primarily optimized around MAP-based fitting and does not consistently translate to stable MCMC-based inference.
+
+E Expert Tools in Detail
+
+E.1
+
+Distribution Fitting
+1. CalculateMoments: Computes the mean, variance, skewness, and excess kurtosis of the input data. Returns a JSON artifact with a plain-language interpretation to guide distribution selection, including symmetry hints (e.g., right-skewed data suggests Gamma, Lognormal, or Weibull families) and tail-weight hints (e.g., leptokurtic data suggests Student-t, Cauchy, or Laplace families).
+2. Histogram: Plots a histogram of the empirical data with the fitted distribution’s probability density function (PDF) overlaid. Handles both single distributions and mixtures by summing component PDFs weighted by their mixture weights. Provides an immediate visual check of whether the model captures the overall shape, modality, and spread of the data. When no model has been fitted yet, produces a raw histogram without an overlay.
+3. SegmentDistributionsAndCalculateMoments: Segments the data into a specified number of mixture components using a Gaussian Mixture Model (GMM), then computes percomponent moments (mean, variance, skewness, kurtosis). Produces both a segmentation image with a total mixture overlay and a JSON summary of per-component statistics with distribution family hints. Most useful when the histogram appears multimodal.
+4. QQPlot: Generates a Quantile-Quantile (Q-Q) plot comparing empirical data quantiles to theoretical quantiles from the currently fitted distribution. Linearity indicates a good fit; S-shaped curvature signals tail mismatch; one-sided curvature suggests skew; and sharp tail departures may indicate outliers or heavier tails than the model captures.
+5. PlotTailsTransform: Produces log-log and semi-log complementary CDF (CCDF) plots to diagnose tail behavior. A straight line on the log-log plot indicates power-law or Pareto-type heavy tails, while a straight line on the semi-log plot indicates exponential decay. Useful for distinguishing heavy-tailed from light-tailed distributions when the histogram alone is ambiguous.
+6. ProbabilityPlot: Generates a probability plot comparing the empirical CDF to the fitted distribution’s theoretical CDF. A consistent horizontal shift indicates a mis-specified location parameter; a slope mismatch indicates a scale misfit; and systematic tail deviations suggest distributional misfit. Also reports a Kolmogorov-Smirnov (KS) statistic for quantitative goodness-of-fit assessment.
+
+Table 9: Per-sample tool coverage: percentage of samples in which each Expert tool is invoked at least once during the iterative refinement loop.
+Tool
+Easy
+Astro (Chirp) Hard Overall
+get_dominant_period
+fit_vs_actuals_w/_resid.
+residuals_auto_corr._plot
+residuals_auto_corr._score
+fit_vs_actuals (default at step-0)
+
+E.2
+
+100.0% 100.0% 2.0% 0.0% 100.0%
+
+100.0% 96.0% 10.0% 0.0% 100.0%
+
+99.1% 48.2% 54.5% 6.4% 100%
+
+99.5% 71.9% 31.4% 3.3% 100%
+
+Time Series
+1. GetDominantPeriod: Extracts the dominant period from the time series using Fast Fourier Transform (FFT) analysis. Returns a plain-text summary of the detected period. Most useful when Periodic or PeriodicComplex kernels are under consideration and the period has not yet been numerically determined. The result is available in the subsequent feedback iteration.
+2. FitVsActuals: Produces a visual overlay of the Gaussian Process (GP) fit on the raw time series data. Essential for visually assessing whether the model adequately captures the underlying trend and seasonality while appropriately discounting noise. Falls back to a raw series plot if no model has been fitted yet.
+3. FitVsActualsWithResidualsDistribution: Generates a combined plot showing the GP fit overlaid on the observed time series alongside the distribution of residuals. Used to assess whether residuals resemble white noise; a broadly normal residual distribution is indicative of a well-specified model. Falls back to a raw series plot if no model has been fitted yet.
+4. ResidualsAutoCorrelationPlot: Produces an Autocorrelation Function (ACF) plot of the model residuals to check for temporal independence. Significant spikes above the confidence band indicate that the model is failing to capture some latent structure in the data. Falls back to a raw series plot if no model has been fitted yet.
+5. ResidualsAutoCorrelationScore: Applies the Ljung-Box statistical test to assess residual independence numerically. A p-value greater than 0.05 indicates that the residuals are consistent with white noise, suggesting an adequate model fit. Returns a plain-text summary and requires a fitted model to produce meaningful results.
+
+E.2.1
+
+Feedback Modality and Adaptive Selection
+
+The static and dynamic toolkits differ fundamentally in their feedback modality. The expert toolkit provides narrow, targeted signals—such as returning a single scalar for dominant frequency—which allows the VLM to rapidly integrate findings and converge quickly on structurally simple datasets (Easy, Chirp). In contrast, the dynamic toolkit generates comprehensive, multi-panel visualizations that synthesize frequency estimation, residual analysis, and harmonic structure into a single artifact. While this rich feedback demands more visual interpretation from the VLM, it is critical for diagnosing complex signals where isolated scalars are insufficient. As shown in Table 9, the VLM dynamically adapts its tool selection to the underlying problem complexity. Simple goodness-of-fit overlays dominate the early steps for clean periodic datasets. However, when applied to the Hard dataset, the agent heavily prioritizes autocorrelation and residual diagnostics to detect more subtle, persistent temporal dependencies.
+E.2.2
+
+Comparison with PyVision Baseline
+
+Apart of choice of modalities, and complexity of serving the tool (via panels), both dynamic-toolkit and expert-toolkit lean into visual feedback. On the other hand, PyVision also generates dynamic tools on the fly, but they diverge significantly in diagnostic focus, output density, and tool lifecycle.
+
+Diagnostic Category Coverage. As detailed in Table 10, both systems heavily utilize Lag/Autocorrelation and Frequency Estimation (∼85–94%). However, VESTA’s dynamic toolkit exhibits a massive preference for Residual Analysis (91.9% vs. PyVision’s 11.9%) and exclusively employs Statistical Tests (28.6% vs. 0%). Because residual structure is the primary indicator of GP kernel misspecification, this gap directly impacts model selection quality.
+Table 10: Diagnostic category coverage (% of samples with ≥1 tool in category). PV = PyVision.
+Easy
+Astro (Chirp)
+Hard
+Overall
+Category
+VESTA
+PV VESTA
+PV VESTA
+PV VESTA
+PV
+Residual Analysis
+Lag / Autocorrelation
+Frequency Estimation
+Statistical Tests
+
+92.0 98.0 100.0 34.0
+
+22.0 98.0 100.0 0.0
+
+80.0 92.0 100.0 32.0
+
+0.0 94.0 100.0 0.0
+
+97.3 84.5 71.8 24.5
+
+F
+
+Analysis of Generated Tools Not in the Expert Toolkit
+
+F.1
+
+Distribution Fitting
+
+12.7 84.5 89.1 0.0
+
+91.9 89.5 85.2 28.6
+
+11.9 90.0 94.3 0.0
+
+1. diagnostic_fit_checks: Naming a concrete model family (gaussian, gamma, lognormal,
+Pareto, Weibull, etc.) and trying it on the data. Each family encodes different assumptions. These tools allow for typically allow for a visual comparison of multiple model families at once. Occasionally, we observe some single use model fitting.
+2. information_criteria: Numerical scores that rank competing fits while penalizing model complexity. Beyond simply fitting and visualizing models, AIC and BIC provide quantitative fit metrics.
+3. mle_fitting: Maximum likelihood estimation: choosing the parameter values (µ, σ, shape, scale, . . . ) that maximize the probability of observing the data under the chosen family. This is the how you actually of fit models, distinct from what models we want to test in
+diagnostic_fit_checks. MLE gives you the canonical “best” parameters under a given
+family, plus a likelihood value that feeds directly into AIC/BIC.
+4. mean_excess_plot Plots the conditional expectation E[X − u | X > u] against threshold u.
+For the Generalized Pareto distribution this function is linear in u, so a straight line in the upper tail signals a GPD-like tail and tells you where the “extreme regime” begins. This is a
+tail-diagnostic that complements diagnostic_fit_checks. These test help it VESTA decide if
+the tail behaves as that family predicts and at what threshold the heavy-tail regime kicks in. The 36% rate on Astro vs. ∼5% elsewhere is a sign the model recognizes astronomical data as tail-dominated.
+5. hill_estimator Estimates the tail index α of a heavy-tailed distribution from the largest k order statistics, giving a concrete number for “how heavy” the tail is. A Hill plot (α̂ vs. k) lets you check stability and pick a sensible threshold. This refines a Pareto/power-law fit by pinning down its single most important parameter, and serves as a sanity check on MLE-fit tail parameters — if MLE on a full-data Pareto fit and a Hill estimate on the upper tail disagree, the body of the distribution is contaminating your tail estimate.
+6. shapiro_wilk A formal hypothesis test for whether data come from a normal distribution. If Shapiro-Wilk rejects normality strongly, that rules out the normal family in
+diagnostic_fit_checks.
+7. box_cox A parametric family of power transforms y = (xλ − 1)/λ that searches for the λ
+making the transformed data closest to normal and can be useful when working with exotic, heavy-tailed distributions.
+F.2
+
+Time Series
+1. density_visualization: Overlays a histogram with a kernel density estimate (KDE) to give a non-parametric picture of the marginal distribution of a time series. This is typically
+
+Table 11: Analysis of functions in VESTA-generated tools that are not contained in the expert toolkit for Distribution Fitting.
+Function
+Diagnostic Fit Checks
+Information Criteria
+MLE Fitting
+Mean Excess Plot
+Hill Estimator
+Box–Cox
+D’Agostino Normal Test
+Shapiro–Wilk
+
+Easy
+
+Hard
+
+100.0 82.1 69.6 5.4 0.0 1.8 0.0 0.0
+
+96.9 73.8 36.2 7.7 1.5 0.0 0.8 0.8
+
+All
+100.0 98.4 65.6 73.7 67.2 51.4 36.1 14.2 6.6 2.4 0.0 0.4 0.0 0.4 0.0 0.4
+
+Astro
+
+Table 12: Analysis of functions in VESTA-generated tools that are not contained in the expert toolkit for Distribution Fitting.
+Function
+Density Visualization
+Distribution Shape Summary
+Moving Average
+Regime Switching Analysis
+Heavy Tail Diagnostics
+QQ Plot
+Shapiro–Wilk
+Stationarity Tests
+Differencing
+ARIMA
+Change Point Detection
+Information Criteria
+MLE Fitting
+Kolmogorov–Smirnov
+Log Transform
+Jarque–Bera
+ECDF
+
+Easy
+
+Hard
+
+Astro
+
+51.9 38.3 30.9 2.5 9.9 13.6 17.3 1.2 4.9 0.0 0.0 0.0 0.0 0.0 0.0 1.2 0.0
+
+67.6 50.3 25.5 30.3 20.7 9.7 6.2 11.7 10.3 5.5 4.1 4.8 1.4 0.7 0.7 0.0 0.7
+
+33.8 30.9 27.9 0.0 5.9 10.3 11.8 4.4 2.9 0.0 1.5 0.0 0.0 1.5 1.5 0.0 0.0
+
+the first diagnostic VESTA reaches for: before committing to any parametric family, the histogram/KDE pair reveals modality, skew, and gross tail behavior at a glance. The KDE bandwidth controls the bias–variance tradeoff in smoothing; narrower bandwidths reveal fine structure while wider ones expose the global shape.
+2. distribution_shape_summary: Computes the first four standardized moments (mean,
+variance, skewness, and excess kurtosis) along with the coefficient of variation CV = σ/µ. These scalars compress the shape of an entire distribution into a small, comparable summary. Skewness distinguishes asymmetric processes (e.g. log-normal dwell times) from symmetric ones. Kurtosis flags heavy tails before any formal test is run. This is the numerical complement to density_visualization.
+Pw−1
+3. moving_average: Computes a rolling mean x̄t = w1 i=0 xt−i over a sliding window of
+width w. This is low-pass filter suppresses high-frequency noise and reveals the underlying trend or long-timescale signal. VESTA uses it both as a standalone smoother and as a preprocessing step before stationarity tests or ARIMA fitting, since many parametric models assume a trend-free series.
+4. regime_switching_analysis: A grouped capability covering Gaussian Mixture Models
+(GMMs), bimodality and multimodality detection, k-means clustering on temporal states, Hidden Markov Models (HMMs), and log-normal fits to dwell times. Together these tools test the amount of time a signal spends in qualitatively distinct states?, GMMs and k-means partition the amplitude space into clusters; HMMs additionally impose a Markov transition structure on state sequences; dwell-time fits characterize how long the process stays in each regime. This matters for telegraph-noise or switching processes where a single stationary distribution is a category error. The high rate on Hard reflects that harder series are more likely to be genuine multi-state processes.
+
+5. heavy_tail_diagnostics: A grouped capability covering Pareto/power-law identification,
+Generalized Extreme Value (GEV) fits, Hill estimator calls, and mean-excess plots; see the analogous entries in the distribution-fitting appendix for mathematical detail on the latter two. In the time series context, VESTA applies these when the marginal distribution of the series itself (rather than residuals) appears heavy-tailed, e.g. burst-like signals or processes with rare but extreme excursions.
+6. qq_plot: Plots empirical quantiles Fn−1 (p) against theoretical quantiles Fθ−1 (p) for a candidate family Fθ . These are typically used to measure the distribution of residuals.
+7. shapiro_wilk: A formal hypothesisP test of the null P that the data are drawn from a normal distribution, with test statistic W = ( ai x(i) )2 / (xi − x̄)2 where x(i) are order statistics and ai are weights derived from the expected normal order statistics. In the time series context, VESTA typically applies this to residuals after trend/seasonality removal to verify that the generating process is Gaussian, which is a prerequisite for classical ARIMA inference.
+8. stationarity_tests: A grouped capability covering the Augmented Dickey–Fuller (ADF) test for a unit root and the KPSS test for level/trend stationarity. These are complementary. ADF tests the null of a unit root while KPSS tests the null of stationarity, so using both guards against the failure mode of each test individually. Stationarity is a prerequisite for most parametric time series models; this capability gates whether VESTA proceeds to ARIMA fitting or first applies differencing or detrending.
+9. differencing: Computes the lag-d difference ∇d xt = xt − xt−d , most commonly d = 1,
+the first difference. This is the standard cure for a unit root: if the ADF test fails to reject nonstationarity, first-differencing typically removes a stochastic trend and produces a stationary series suitable for ARIMA fitting. Seasonal differencing (d = s, the period) removes periodic non-stationarity. VESTA uses this as a preprocessing step that is directly triggered by stationarity test results.
+10. arima: Fits an Autoregressive Integrated Moving Average model ϕ(B)(1 − B)d xt = θ(B)ϵt , where B is the backshift operator, p autoregressive terms capture dependence on recent values, d differences remove trends, and q moving-average terms model the residual autocorrelation structure. ARIMA is the workhorse parametric model for univariate stationary time series; it is typically applied after stationarity tests confirm (or differencing achieves) stationarity, and model order (p, d, q) is selected via AIC/BIC.
+11. change_point_detection: Identifies times τ at which the statistical properties of
+the series, mean, variance, or autocorrelation structure, shift abruptly.
+Unlike
+regime_switching_analysis, which models soft probabilistic membership in states, changepoint methods partition the timeline into contiguous segments and locate the breakpoints. This is appropriate when the series undergoes irreversible structural shifts (e.g. a one-time intervention) rather than recurrent toggling between states.
+12. information_criteria: Computes AIC = 2k − 2ℓ̂ and BIC = k ln n − 2ℓ̂, where k is
+the number of free parameters, n the sample size, and ℓ̂ the maximized log-likelihood. These penalize model complexity to prevent overfitting and give you a principled basis for comparing models of different orders (e.g. ARIMA(1, 1, 1) vs. ARIMA(2, 1, 2)) or different parametric families on the same data. AIC favors predictive accuracy while BIC applies a stronger complexity penalty and is consistent for model selection.
+13. mle_fitting: See the analogous entry in the distribution-fitting appendix. In the time series context, MLE is used both for fitting marginal distributions (e.g. the amplitude distribution of a stationary series) and for estimating ARIMA parameters via conditional or exact likelihood. The resulting likelihood value feeds directly into AIC/BIC for model comparison.
+14. kolmogorov_smirnov: A nonparametric goodness-of-fit test based on the supremum distance Dn = supx |Fn (x) − F0 (x)| between the empirical CDF and a hypothesized distribution F0 . Unlike Shapiro–Wilk, the KS test is distribution-free and applies to any fully specified F0 , making it useful when VESTA wants to test an arbitrary fitted family rather than only normality. It is less powerful than Anderson–Darling in the tails but gives a straightforward visual diagnostic via the CDF overlay.
+15. log_transform: Applies yt = log(xt ) to stabilize variance in series whose standard deviation grows with the mean, a signature of log-normal or multiplicative processes. Logtransforming a series with exponential growth or multiplicative noise often produces an
+
+approximately Gaussian, stationary series amenable to ARIMA. It is also a prerequisite for power-law tail analysis, where log–log linearity of the CCDF is the diagnostic signature.
+
+γ2
+16. jarque_bera: A moment-based normality test with statistic JB = n6 γ12 + 42 , which is
+asymptotically χ2 (2) under normality. Because it is constructed directly from skewness and kurtosis, it is more powerful than the KS test against symmetric heavy-tailed alternatives
+(large γ2 ) and skewed alternatives (large |γ1 |). In practice VESTA uses it as a fast scalar
+complement to the full distribution_shape_summary.
+Pn
+17. ecdf: Plots the empirical cumulative distribution function Fn (x) = n1 i=1 1[xi ≤ x]. The
+ECDF is a non-parametric, unsmoothed estimate of the true CDF and serves as the ground truth against which parametric fits are visually compared. It is the natural complement to the KS test: the test statistic is the maximum vertical gap between the ECDF and the hypothesized CDF curve.
+
+G Runtime of VESTA
+
+H Prompts
+
+This section contains all the prompts used by our method and baselines.
+
+I Limitations
+
+While VESTA demonstrates strong performance across DAWN, several limitations remain. First, VESTA relies on VLMs to interpret multi-panel diagnostic visualizations, and current VLMs struggle to fully unpack and reason over complex visual outputs. This bottleneck directly limits the gains from dynamic tool creation, as the most sophisticated generated tools contain multi-panel images that compose multiple functions. This gap likely accounts for the remaining performance differential between VESTA-Dynamic and VESTA-Expert. Second, the iterative nature of VESTA incurs non-trivial computational cost, as each iteration requires fitting up to p PyMC models via MAP estimation. This limits scalability to very large datasets. Finally, while DAWN covers two domains central to scientific modeling and includes real-world Astro tasks, the benchmark is synthetically generated. Performance on fully observational scientific datasets, where ground-truth parameters are unknown, remains an important avenue for future evaluation.
+
+Table 13: Runtimes by Domain, Dataset, Mode, and Model
+Domain
+
+Dataset
+
+Mode
+genonly
+
+imf
+
+none static
+
+genonly df
+
+mixed
+
+none static
+
+genonly single
+
+none static
+
+genonly easy
+
+none static
+
+genonly ts
+
+gravitational_chirp
+
+none static
+
+genonly medium
+
+none static
+
+Model
+
+n
+
+Avg Time (s)
+
+Avg Steps
+
+Total Time (s)
+
+claude_sonnet46 gpt54_mini
+kimi25 claude_sonnet46 gpt54_mini
+kimi25 claude_sonnet46 gpt54_mini
+kimi25
+
+84.8 163.5 1122.6 64.9 31.6 1073.9 135.2 40.1 1172.4
+
+4.1 5.1 5.0 4.4 5.4 5.3 5.8 5.8 5.5
+
+4238.9 8173.1 56131.8 3242.6 1577.9 53694.8 6762.3 2004.7 58622.3
+
+claude_sonnet46 gpt54_mini
+kimi25 claude_sonnet46 gpt54_mini
+kimi25 claude_sonnet46 gpt54_mini
+kimi25
+
+125.0 91.6 1272.7 103.3 21.4 29.0 152.5 24.4 31.3
+
+5.0 5.0 4.5 5.3 5.2 5.5 5.4 5.5 5.3
+
+12503.9 9163.7 127267.2 10333.3 2142.7 2905.0 15245.5 2443.5 3127.5
+
+claude_sonnet46 gpt54_mini
+kimi25 claude_sonnet46 gpt54_mini
+kimi25 claude_sonnet46 gpt54_mini
+kimi25
+
+78.3 19.4 1166.1 88.6 15.6 24.6 101.8 26.7 27.5
+
+3.7 4.6 3.9 5.2 4.2 5.5 4.8 4.7 5.5
+
+3914.8 967.9 58306.0 4427.7 782.2 1232.1 5088.8 1335.1 1375.1
+
+claude_sonnet46 gpt54_mini
+kimi25 claude_sonnet46 gpt54_mini
+kimi25 claude_sonnet46 gpt54_mini
+kimi25
+
+132.3 14.8 883.6 51.5 11.5 40.1 38.6 17.2 50.5
+
+4.8 3.3 3.8 3.2 3.1 5.9 2.4 3.3 5.8
+
+6614.0 740.8 44181.9 2576.6 576.8 2006.1 1927.9 861.9 2527.5
+
+claude_sonnet46 gpt54_mini
+kimi25 claude_sonnet46 gpt54_mini
+kimi25 claude_sonnet46 gpt54_mini
+kimi25
+
+153.0 96.7 986.0 62.6 17.0 39.8 87.2 22.0 43.7
+
+4.5 3.3 4.1 3.5 3.4 5.7 3.4 3.4 5.9
+
+7648.1 4834.6 49298.0 3132.0 852.0 1989.7 4358.0 1099.4 2184.9
+
+claude_sonnet46 gpt54_mini
+kimi25 claude_sonnet46 gpt54_mini
+kimi25 claude_sonnet46 gpt54_mini
+kimi25
+
+99.1 136.1 1166.3 53.1 12.8 38.3 49.5 15.9 43.6
+
+3.6 4.2 4.5 3.2 2.8 5.7 2.6 2.7 5.8
+
+10902.3 14968.5 128297.0 5842.3 1409.4 4208.5 5443.2 1750.4 4791.9
+
+VESTA Time Series Critique Prompt
+You are the VLM critic of VESTA. Inspect the latest fit of the current Gaussian-process PyMC model and decide whether to refine the kernel composition further or to terminate the iterative refinement loop. The prompt covers stationary periodic structure as well as non-stationary (warped periodic) wave signals. Goal: Determine whether the current GP kernel composition correctly captures the trend, seasonality, and non-stationarity of the series, and whether the priors are well-scaled for the observed amplitude and period.
+Current Model Information
+• Current PyMC code: {current_pymc_code}
+• Current kernels: {current_kernels}
+• Previously tested kernel combinations: {tested_kernels}
+• History of previously executed tools: {tool_history}
+Iteration Summaries: {summaries}
+Important Constraints
+• Evaluate fit quality based on the most recent iteration’s tool output and visual feedback.
+• Take the trajectory of past iterations and their metric values into account.
+• You may revisit a previously tested kernel combination, but you must use sufficiently different priors.
+• Do not invoke the same tool more than twice across the run.
+• Combine kernels by addition only (cov = cov1 + cov2).
+• warped_periodic subsumes periodic; do not combine them. Stationary vs. Non-Stationary Wave Check: [ visual rule for deciding whether cycle spacing is constant (stationary) or sweeping (non-stationary), and what kernel that implies ] Kernel Family Guide: [ valid kernel names, when each kernel applies, and how kernels may be combined are listed here ] Prior Specification Rules: [ recommended prior families and scales for length-scale, amplitude, period, warp coefficients, and observation noise are listed here, with anti-patterns for misuse of pm.Deterministic and undefined initializer variables ] Proposal Diversity Rules: [ the primary proposal must be the best guess; the remaining proposals must explore structurally different kernel combinations, including at least one with and one without
+warped_periodic when non-stationary periodicity is suspected ]
+Diagnostic Results: {tool_outputs}
+Task: If the current fit is satisfactory, terminate the loop early by including the literal token COMPLETE in
+your description. Otherwise, propose exactly {num_proposals} diverse revised models following the rules
+above. State explicitly whether the stationary-vs-non-stationary wave check passes and, if non-stationary, which direction the frequency sweeps. Output Format: Return only a valid JSON object with description and proposals. Each proposal must include kernels and priors. Never output anything outside the JSON object.
+
+Figure 7: Critique-stage prompt used by VESTA for time series modeling.
+
+VESTA Distribution Fitting Critique Prompt
+You are the VLM critic of VESTA. Inspect the latest fit of the current PyMC model and decide whether to refine it further or to terminate the iterative refinement loop. Goal: Determine whether the current distribution model correctly captures the shape, location, scale, and tail behavior of the data.
+Current Model Information
+• Current PyMC code: {current_pymc_code}
+• Current distribution family: {current_family}
+• Previously tested distribution families: {tested_families}
+• History of previously executed tools: {tool_history}
+Iteration Summaries: {summaries}
+Important Constraints
+• Evaluate fit quality based on the most recent iteration’s tool output and visual feedback.
+• Take the trajectory of past iterations and their metric values into account.
+• You may revisit a previously tested family, but you must use sufficiently different priors.
+• Do not invoke the same tool more than twice across the run.
+• Prefer interpretable distributions and avoid unnecessary complexity. Model Fit Diagnostics: [ shape capture, peak alignment, tail behavior, mixture detection, and overfitting checks are listed here ] Distribution Family Guide: [ valid single families, mixture syntax, parametrization reference for each family, support-validation rules, and family-specific prior constraints are listed here ] Prior Specification Rules: [ instructions for reading the histogram to extract peak/spread/support/tails, translating those observations into hyperparameter values, and the variable naming convention for single and mixture priors are listed here ] Proposal Diversity Rules: [ the primary proposal must be the best guess; the remaining proposals must be structurally different alternatives covering both single distributions and mixtures ]
+Diagnostic Results: {tool_outputs}
+Task: If the current fit is satisfactory, terminate the loop early by including the literal token COMPLETE
+in your description. Otherwise, propose exactly {num_proposals} diverse revised models following the
+rules above. Output Format: Return only a valid JSON object with description and proposals. Each proposal
+must include distribution_family, is_mixture, and priors. Never output anything outside the JSON
+object.
+
+Figure 8: Critique-stage prompt used by VESTA for distribution fitting.
+
+VESTA Tool Selection Prompt
+You are evaluating the current PyMC model fit. The latest fit is shown in the attached plot.
+Tool Registry: {tool_descriptions}
+Decision Rules
+• Select exactly one tool from the registry that best diagnoses the current fit.
+• Prefer tools that probe the suspected weakness of the current model: {model_weakness_examples}.
+• If no existing tool in the registry is adequate, return the generate_new_tool action and describe what
+the new tool should compute; the tool-creation step will then code it.
+• You may not invoke the same tool more than twice across the run. Output Format: Return only a valid JSON object naming the selected tool and any arguments it requires. Domain-specific values for the placeholders above:
+• Distribution fitting - {model_weakness_examples} = peak misalignment, tail mismatch,
+multimodality, support violation.
+• Time series modeling - {model_weakness_examples} = missed period, residual structure,
+amplitude envelope, frequency sweep, anomalies.
+
+Figure 9: Tool-selection prompt used by the Generate-Tools stage of VESTA.
+
+VESTA Tool Creation Prompt
+You are creating a new diagnostic tool that will be added to the tool registry of VESTA and may be reused in later iterations of this run. The tool is a Python function executed in a sandbox with access to: numpy
+as np, pandas as pd, scipy.stats, matplotlib.pyplot as plt, sklearn{extra_imports}.
+Function Signature
+• Define a single function: def tool(data:
+{data_handle}, map_estimate:
+dict,
+family_or_kernel: str) -> str
+• The return value is the path to a saved figure (PNG) or a short textual summary that the VLM critic can read.
+Implementation Rules
+• Begin directly with the def tool(...) block. Do not include import statements; required modules are already in scope.
+• Use map_estimate to construct a comparison between the observed data and the current model.
+• Save any figure with plt.savefig(...) and return its path; do not call plt.show().
+• The tool must run end-to-end without user interaction.
+• {domain_specific_code_rule}
+Output Format: Return only a JSON-parseable dict with key "code" containing the function as a single-line string with \n for newlines. Domain-specific values for the placeholders above:
+• Distribution fitting - {extra_imports} = (none beyond the default sandbox); {data_handle} =
+np.ndarray; {domain_specific_code_rule} = “Visualize the empirical and model-implied densities
+or transformed-data summaries; do not fit a new PyMC model inside the tool.”
+• Time series modeling - {extra_imports} = , statsmodels.api as sm, scipy.signal;
+{data_handle} = pd.Series with a DatetimeIndex; {domain_specific_code_rule} = “Use
+the time index for any plot’s x-axis and align predictions with data.index; do not re-fit the GP inside the tool.”
+
+Figure 10: Tool-creation prompt used by the Generate-Tools stage of VESTA.
+
+VESTA Summarization Prompt
+You are summarizing the latest iteration of a {run_kind} run so that the next iteration of VESTA can
+reason over the full refinement trajectory without consuming the raw intermediate outputs.
+Inputs Available
+• The visual description produced for the current iteration.
+• The best PyMC model code and its fitted parameters (map_estimate).
+• The metric value and any auxiliary fit statistics.
+• The output (image or text) produced by the selected or newly created tool.
+What the Summary Must Contain
+• A short textual description of what the data look like and what structure the current best model captures.
+• The chosen {model_field_name} and its key fitted parameters as concise key–value pairs.
+• The metric value for the current best model.
+• One or two sentences describing what the tool output revealed, focusing on remaining mismatch between the model and the data.
+• {description_specialization}
+Style Rules
+• Be concrete: name parameters and numeric values rather than describing them abstractly.
+• Do not re-derive the model or restate prompt instructions.
+• Keep the summary self-contained; it replaces the raw per-iteration outputs in subsequent iterations.
+Output Format: Return a JSON object with fields description, {model_field_name}, map_estimate,
+metric, and tool_output_summary.
+Domain-specific values for the placeholders above:
+• Distribution fitting - {run_kind} = distribution fitting; {model_field_name} =
+distribution_family; {description_specialization} = “Mention any tail, peak, or modality
+features the current model fails to reproduce.”
+• Time series modeling - {run_kind} = time series modeling; {model_field_name} = kernels;
+{description_specialization} = “Mention any trend, seasonality, or non-stationarity features the
+current kernels fail to reproduce.”
+
+Figure 11: Prompt used by the Summarize stage of VESTA.
+
+BoxLM Proposal Prompt for Time Series Modeling
+You are a brilliant statistician modeling a time series dataset using Gaussian processes. Your job is to come up with a GP model that explains the time series by writing a PyMC probabilistic program. In the first round you receive only the dataset description; in later rounds you also receive the previous program along with the critic’s hypotheses and synthesis.
+Inputs
+• Dataset description: {dataset_description}
+• Column description: {column_description}
+• Previous round’s hypotheses: {prev_hypotheses}
+• Previous round’s synthesis: {prev_synthesis}
+Kernel Family Guide
+• pm.gp.cov.Linear - persistent upward or downward drift.
+• pm.gp.cov.Periodic - smooth repeating sinusoidal patterns.
+• pm.gp.cov.ExpQuad (RBF) - extremely smooth curves.
+• pm.gp.cov.Matern52 - rough or jagged paths.
+• Combine kernels by addition for independent structures, by multiplication for modulation. Do not combine RBF and Matern in the same model.
+PyMC API Rules
+• Import pymc (not pymc3). Do not use sd as an argument; use sigma instead.
+• Use the variable name y_obs for the likelihood.
+• Index columns explicitly from observed_data; never use observed_data.index to grab raw data.
+• The model must use Gaussian processes (pm.gp); plain regression is not allowed.
+• Do not use pm.Constant for parameters and do not pass dims="obs_id" for the GP marginal likelihood.
+Required Function Skeleton
+a function def
+gen_model(observed_data)
+that loads data via
+• Define
+observed_data["column_name"].values (never a placeholder array literal).
+• Before the model block, normalize the time axis to [0, 1] and center the target values.
+• Inside with pm.Model() as model: declare the kernel priors, build the covariance, define gp = pm.gp.Marginal(cov_func=cov), and set the likelihood y_obs =
+gp.marginal_likelihood(’y_obs’, ..., sigma=sigma).
+• Sample with trace = pm.sample(1000, tune=500, target_accept=0.90, chains=3, cores=1,
+random_seed=rng1, idata_kwargs={"log_likelihood": True}).
+• Then
+run posterior_predictive =
+pm.sample_posterior_predictive(trace,
+random_seed=rng2, return_inferencedata=False).
+• Return (model, posterior_predictive, trace) in that order.
+Response Structure
+• First, sketch a high-level GP model for the data and explicitly cite which previous-round hypotheses (if any) the sketch addresses.
+• Then write the full program in a Python code block, with comments on lines that address specific hypotheses.
+
+Figure 12: Proposal prompt used by the BoxLM baseline for time series modeling.
+
+BoxLM Proposal Prompt for Distribution Fitting
+You are a brilliant statistician modeling a dataset. Your job is to come up with a generative model that explains the true data by writing a PyMC probabilistic program. In the first round you receive only the dataset description; in later rounds you also receive the previous program along with the critic’s hypotheses and synthesis.
+Inputs
+• Dataset description: {dataset_description}
+• Column description: {column_description}
+• Previous round’s hypotheses: {prev_hypotheses}
+• Previous round’s synthesis: {prev_synthesis}
+PyMC API Rules
+• Import pymc (not pymc3). Do not use sd as an argument; use sigma instead.
+• Use the variable name y_obs for the likelihood.
+• Index columns explicitly from observed_data; never use observed_data.index to grab raw data.
+• Wrap every input feature in a pm.MutableData container with dims="obs_id", and pass
+dims="obs_id" to the likelihood as well.
+• Do not use pm.Constant for parameters and do not use Gaussian processes for this task.
+• For Student-T, give nu a continuous positive prior such as pm.Exponential or pm.HalfNormal.
+Required Function Skeleton
+• Define
+a function def
+gen_model(observed_data)
+that loads data via
+observed_data["column_name"].values (never a placeholder array literal).
+• Inside with pm.Model() as model: declare the MutableData containers, the priors, and the likelihood y_obs.
+• Sample with trace = pm.sample(1000, tune=500, target_accept=0.90, chains=3, cores=1,
+random_seed=rng1, idata_kwargs={"log_likelihood": True}).
+• Then
+run posterior_predictive =
+pm.sample_posterior_predictive(trace,
+random_seed=rng2, return_inferencedata=False).
+• Return (model, posterior_predictive, trace) in that order.
+Response Structure
+• First, sketch a high-level probabilistic program for the data and explicitly cite which previous-round hypotheses (if any) the sketch addresses.
+• Then write the full program in a Python code block, with comments on lines that address specific hypotheses.
+
+Figure 13: Proposal prompt used by the BoxLM baseline for distribution fitting.
+
+BoxLM Critic Prompt
+You are a brilliant statistician specializing in critiquing and proposing revisions of probabilistic models.
+Your colleague has produced a list of PyMC programs that hypothesize {model_class} for the data; each
+program has been fit, plotted against the actual data, and scored with ELPD-LOO (higher is better). Your job is to figure out whether the proposed programs are consistent with the actual data by comparing the posterior predictive plots against the actual data, and to provide modeling-related guidance for the next round of revision.
+Inputs
+• Dataset description: {dataset_description}
+• Column description: {column_description}
+• Expert context: {expert_context}
+• Programs from this round, each with its ELPD-LOO score and a posterior-predictive plot overlaid on the actual data.
+• Hypotheses and synthesis from previous rounds (if any), which may be revised, removed, or extended.
+Instructions
+• Look at every posterior-predictive plot and explicitly describe the visual properties of the model versus the data.
+• State natural-language hypotheses for any discrepancies between the proposed programs and the actual data, prioritizing the larger discrepancies.
+• Using the programs and their ELPD-LOO scores, write a synthesis of which strategies and modeling choices did and did not work. The synthesis is passed back to your colleague, so make it as informative as possible. Restrict suggestions to modeling; do not suggest collecting more data.
+• If hypotheses or a synthesis from previous rounds are provided, revise them based on the new evidence and briefly explain any additions or removals.
+Output Format
+Respond with two fenced blocks in this exact order:
+``` Hypotheses
+* Hypothesis
+* Hypothesis
+``` ```Synthesis (Your synthesis here) ```
+Domain-specific values
+• For distribution fitting, {model_class} is generative models.
+• For time series modeling, {model_class} is Gaussian process models.
+
+Figure 14: Critic prompt used by the BoxLM baseline for both distribution fitting and time series modeling.
+
+PyVision Agent Prompt
+You are an agent; please keep going until the user’s query is completely resolved before ending your turn and yielding back to the user. Only terminate your turn when you are sure that the problem is solved. Solve the following problem step by step. You now have the ability to selectively write executable Python code to enhance your reasoning process. The Python code will be executed by an external sandbox. You MUST plan extensively before each function call, and reflect extensively on the outcomes of the previous function calls. Do not do this entire process by making function calls only, as this can impair your ability to solve the problem and think insightfully. For all the provided images, in order, the i-th image has already been read into the global variable
+image_clue_i using PIL.Image.open(). When writing Python code, you can directly use these variables
+without needing to read them again. Since you are dealing with the vision-related task, you MUST use the Python tool (e.g., the matplotlib library) to analyze or transform the image whenever it could improve your understanding or aid your reasoning. This includes but is not limited to zooming in, rotating, adjusting contrast, computing statistics, or isolating features. When you use matplotlib to visualize data or further process images, use plt.show() to display them; there is no need to save them. Do not use image-processing libraries like cv2 or PIL. If you want to check the value of a variable, you MUST use print() to check it.
+Code-execution Format
+The output (wrapped in <interpreter>output_str</interpreter>) is returned to aid your reasoning.
+Each Python snippet must be a complete script including necessary imports, wrapped exactly as:
+<code>
+```python code snippet ```
+</code>
+Image Information
+Image Width: {width}; Image Height: {height}
+User Query
+{query}
+Final Answer Format
+The last part of your response must be in the following format:
+<answer>
+\boxed{'The final answer goes here.'}
+</answer>
+Domain-specific values
+• For distribution fitting, {query} instructs the agent to propose and fit a PyMC probabilistic program for
+the empirical distribution shown in the histogram image, using the same PyMC coding guidelines as the VESTA agent.
+• For time series modeling, {query} instructs the agent to propose and fit a PyMC Gaussian process
+program for the series shown in the time series plot, using the same PyMC coding guidelines as the VESTA agent.
+
+Figure 15: Agent prompt used by the PyVision baseline for both distribution fitting and time series modeling.

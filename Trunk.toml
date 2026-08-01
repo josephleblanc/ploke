@@ -1,0 +1,3 @@
+[build]
+target = "crates/ploke-tree-egui/index.html"
+dist = "target/trunk/ploke-tree-egui"

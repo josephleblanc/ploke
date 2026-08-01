@@ -1,0 +1,1435 @@
+{
+  "schema_version": "ploke-egui.native-benchmark-report.v3",
+  "suite": "standard",
+  "created_at_unix_ms": 1779065989035,
+  "commit": {
+    "short_sha": "c4a6acb3ab66",
+    "full_sha": "c4a6acb3ab66ad7d44ff842f1d9eece6f3537468"
+  },
+  "dirty_state": {
+    "dirty": true,
+    "classification": "dirty_relevant",
+    "relevant_dirty": true,
+    "paths": [
+      "crates/ploke-egui/src/benchmark.rs",
+      "crates/ploke-egui/src/ui/app/shell.rs",
+      "crates/ploke-egui/src/ui/inspector.rs",
+      "crates/ploke-egui/src/ui/view/projection.rs",
+      "crates/ploke-tree/src/graph/build/selection.rs",
+      "crates/ploke-tree/src/graph/build/selection/tests.rs",
+      "crates/ploke-tree/src/graph/types/selection.rs",
+      "crates/ploke-tree/src/graph/types/warning.rs",
+      "docs/active/agents/collaboration-incidents/authority-boundary-violations/README.md",
+      "docs/active/archaeology/INDEX.md",
+      "docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md",
+      "crates/ploke-egui/docs/profiling/benchmarks/20260518-selection-metric-witness-benchmark-note.md",
+      "docs/active/agents/collaboration-incidents/authority-boundary-violations/2026-05-17-headless-harness-probe-used-primary-gitdir.md"
+    ],
+    "relevant_paths": [
+      "crates/ploke-egui/src/benchmark.rs",
+      "crates/ploke-egui/src/ui/app/shell.rs",
+      "crates/ploke-egui/src/ui/inspector.rs",
+      "crates/ploke-egui/src/ui/view/projection.rs",
+      "crates/ploke-tree/src/graph/build/selection.rs",
+      "crates/ploke-tree/src/graph/build/selection/tests.rs",
+      "crates/ploke-tree/src/graph/types/selection.rs",
+      "crates/ploke-tree/src/graph/types/warning.rs"
+    ],
+    "unrelated_paths": [
+      "docs/active/agents/collaboration-incidents/authority-boundary-violations/README.md",
+      "docs/active/archaeology/INDEX.md",
+      "docs/active/archaeology/ploke-tree-graph/selection-protocol-evidence.md",
+      "crates/ploke-egui/docs/profiling/benchmarks/20260518-selection-metric-witness-benchmark-note.md",
+      "docs/active/agents/collaboration-incidents/authority-boundary-violations/2026-05-17-headless-harness-probe-used-primary-gitdir.md"
+    ],
+    "scope": "git status --short at benchmark start; benchmark-relevant paths are Cargo manifests, ploke-egui inputs except generated benchmark reports, ploke-tree, and ploke-records"
+  },
+  "command": "target/debug/ploke-egui --run-root /home/brasides/.ploke-eval/campaigns/p1-five-gen-1x3-20260516-1/prototype1 --benchmark-suite standard --benchmark-scenario select_artifact_inspector_300",
+  "run_root": "/home/brasides/.ploke-eval/campaigns/p1-five-gen-1x3-20260516-1/prototype1",
+  "feature_set": [
+    "dev",
+    "native-benchmark",
+    "profile-with-puffin"
+  ],
+  "scenarios_requested": [
+    "select_artifact_inspector_300"
+  ],
+  "run_readiness": {
+    "policy_max_generations": 5,
+    "policy_child_budget_min": 1,
+    "expected_min_history_blocks": 6,
+    "sealed_history_blocks": 6,
+    "max_sealed_block_height": 5,
+    "expected_min_spawned_children": 5,
+    "spawned_child_nodes": 18,
+    "scheduler_node_count": 1,
+    "node_record_count": 19,
+    "ready": true,
+    "reason": "sealed_history_reached_policy_generation"
+  },
+  "startup": {
+    "spans": [
+      {
+        "name": "run_picker_discovery",
+        "duration_ns": 28583398987
+      },
+      {
+        "name": "FsRunStore::load",
+        "duration_ns": 927948639
+      },
+      {
+        "name": "FsRunStore::load_history_blocks",
+        "duration_ns": 22735623
+      },
+      {
+        "name": "FsRunStore::load_transition_journal",
+        "duration_ns": 4603536
+      },
+      {
+        "name": "FsRunStore::load_record_set",
+        "duration_ns": 955293037
+      },
+      {
+        "name": "compressed_run_record_profile_probe",
+        "duration_ns": 116048568
+      },
+      {
+        "name": "Graph::from_records",
+        "duration_ns": 6044569
+      },
+      {
+        "name": "graph_load_total",
+        "duration_ns": 1077389091
+      }
+    ],
+    "compressed_run_records": [
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/BurntSushi__ripgrep-2209/runs/run-1778950623675-structured-current-policy-da5906b1/record.json.gz",
+        "compressed_bytes": 78413,
+        "decompressed_bytes": 692537,
+        "turn_count": 1,
+        "tool_call_count": 18,
+        "failed_tool_call_count": 2,
+        "open_read_ns": 10409,
+        "gzip_decompress_ns": 2460576,
+        "typed_json_deserialize_ns": 4077169
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-001b9e9fc72533ca/instances/BurntSushi__ripgrep-2209/runs/run-1778965589964-structured-current-policy-5dd3b64c/record.json.gz",
+        "compressed_bytes": 148354,
+        "decompressed_bytes": 1040789,
+        "turn_count": 1,
+        "tool_call_count": 57,
+        "failed_tool_call_count": 9,
+        "open_read_ns": 16921,
+        "gzip_decompress_ns": 4206071,
+        "typed_json_deserialize_ns": 6521264
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-191617d9aacf4dda/instances/BurntSushi__ripgrep-2209/runs/run-1778968862624-structured-current-policy-c97a8076/record.json.gz",
+        "compressed_bytes": 66867,
+        "decompressed_bytes": 456406,
+        "turn_count": 1,
+        "tool_call_count": 25,
+        "failed_tool_call_count": 1,
+        "open_read_ns": 13034,
+        "gzip_decompress_ns": 1902239,
+        "typed_json_deserialize_ns": 2965042
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-38a8fc72b0b8bf03/instances/BurntSushi__ripgrep-2209/runs/run-1778963824453-structured-current-policy-61a90854/record.json.gz",
+        "compressed_bytes": 47520,
+        "decompressed_bytes": 316722,
+        "turn_count": 1,
+        "tool_call_count": 20,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 10069,
+        "gzip_decompress_ns": 1335996,
+        "typed_json_deserialize_ns": 2269999
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-53d3c597b864fcf9/instances/BurntSushi__ripgrep-2209/runs/run-1778962530279-structured-current-policy-c6d6a72d/record.json.gz",
+        "compressed_bytes": 61586,
+        "decompressed_bytes": 503774,
+        "turn_count": 1,
+        "tool_call_count": 36,
+        "failed_tool_call_count": 6,
+        "open_read_ns": 9909,
+        "gzip_decompress_ns": 1841004,
+        "typed_json_deserialize_ns": 3508742
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-67233258b489ccf1/instances/BurntSushi__ripgrep-2209/runs/run-1778953273239-structured-current-policy-277d8be9/record.json.gz",
+        "compressed_bytes": 90600,
+        "decompressed_bytes": 630218,
+        "turn_count": 1,
+        "tool_call_count": 34,
+        "failed_tool_call_count": 8,
+        "open_read_ns": 11882,
+        "gzip_decompress_ns": 2578257,
+        "typed_json_deserialize_ns": 4022717
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-7ee6db64779c8019/instances/BurntSushi__ripgrep-2209/runs/run-1778957355110-structured-current-policy-b0e1d500/record.json.gz",
+        "compressed_bytes": 65528,
+        "decompressed_bytes": 430878,
+        "turn_count": 1,
+        "tool_call_count": 24,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 11492,
+        "gzip_decompress_ns": 1898602,
+        "typed_json_deserialize_ns": 2894600
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-8895520341e426aa/instances/BurntSushi__ripgrep-2209/runs/run-1778963824455-structured-current-policy-b4563a68/record.json.gz",
+        "compressed_bytes": 80492,
+        "decompressed_bytes": 485725,
+        "turn_count": 1,
+        "tool_call_count": 24,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 11491,
+        "gzip_decompress_ns": 2201741,
+        "typed_json_deserialize_ns": 3056274
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-9456db3662f9d15a/instances/BurntSushi__ripgrep-2209/runs/run-1778953272443-structured-current-policy-f1847fad/record.json.gz",
+        "compressed_bytes": 125451,
+        "decompressed_bytes": 1127416,
+        "turn_count": 1,
+        "tool_call_count": 59,
+        "failed_tool_call_count": 10,
+        "open_read_ns": 12373,
+        "gzip_decompress_ns": 3989655,
+        "typed_json_deserialize_ns": 7020751
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b2b9bfa6ac855313/instances/BurntSushi__ripgrep-2209/runs/run-1778965588668-structured-current-policy-8957da87/record.json.gz",
+        "compressed_bytes": 72745,
+        "decompressed_bytes": 531868,
+        "turn_count": 1,
+        "tool_call_count": 37,
+        "failed_tool_call_count": 4,
+        "open_read_ns": 11832,
+        "gzip_decompress_ns": 2102595,
+        "typed_json_deserialize_ns": 3778839
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b360573242cfdaf4/instances/BurntSushi__ripgrep-2209/runs/run-1778965588668-structured-current-policy-ba315811/record.json.gz",
+        "compressed_bytes": 94759,
+        "decompressed_bytes": 751078,
+        "turn_count": 1,
+        "tool_call_count": 59,
+        "failed_tool_call_count": 4,
+        "open_read_ns": 13866,
+        "gzip_decompress_ns": 2885723,
+        "typed_json_deserialize_ns": 5480682
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b53a075a894cedf9/instances/BurntSushi__ripgrep-2209/runs/run-1778953269791-structured-current-policy-6d0dc6f7/record.json.gz",
+        "compressed_bytes": 63371,
+        "decompressed_bytes": 510476,
+        "turn_count": 1,
+        "tool_call_count": 39,
+        "failed_tool_call_count": 8,
+        "open_read_ns": 11882,
+        "gzip_decompress_ns": 1885507,
+        "typed_json_deserialize_ns": 3782376
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b8ec5f10e815fd12/instances/BurntSushi__ripgrep-2209/runs/run-1778957354452-structured-current-policy-9ec5c365/record.json.gz",
+        "compressed_bytes": 44147,
+        "decompressed_bytes": 332582,
+        "turn_count": 1,
+        "tool_call_count": 26,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 11030,
+        "gzip_decompress_ns": 1288236,
+        "typed_json_deserialize_ns": 2642427
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-babdce8b381580ef/instances/BurntSushi__ripgrep-2209/runs/run-1778963824455-structured-current-policy-5e788851/record.json.gz",
+        "compressed_bytes": 62602,
+        "decompressed_bytes": 500893,
+        "turn_count": 1,
+        "tool_call_count": 32,
+        "failed_tool_call_count": 9,
+        "open_read_ns": 11021,
+        "gzip_decompress_ns": 1857084,
+        "typed_json_deserialize_ns": 3410047
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-bd77551f3715f119/instances/BurntSushi__ripgrep-2209/runs/run-1778957354823-structured-current-policy-fadea182/record.json.gz",
+        "compressed_bytes": 50992,
+        "decompressed_bytes": 367261,
+        "turn_count": 1,
+        "tool_call_count": 25,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 10139,
+        "gzip_decompress_ns": 1470990,
+        "typed_json_deserialize_ns": 2655311
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-c1a38306ed49dc1c/instances/BurntSushi__ripgrep-2209/runs/run-1778962529969-structured-current-policy-3204ca08/record.json.gz",
+        "compressed_bytes": 118577,
+        "decompressed_bytes": 884086,
+        "turn_count": 1,
+        "tool_call_count": 53,
+        "failed_tool_call_count": 10,
+        "open_read_ns": 12052,
+        "gzip_decompress_ns": 3442649,
+        "typed_json_deserialize_ns": 5729178
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-c30d784dd5ffb231/instances/BurntSushi__ripgrep-2209/runs/run-1778968862801-structured-current-policy-91092892/record.json.gz",
+        "compressed_bytes": 49619,
+        "decompressed_bytes": 364079,
+        "turn_count": 1,
+        "tool_call_count": 28,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 11452,
+        "gzip_decompress_ns": 1433489,
+        "typed_json_deserialize_ns": 2806265
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-c9841bdf11e59aee/instances/BurntSushi__ripgrep-2209/runs/run-1778962529953-structured-current-policy-9448cde8/record.json.gz",
+        "compressed_bytes": 52601,
+        "decompressed_bytes": 460616,
+        "turn_count": 1,
+        "tool_call_count": 39,
+        "failed_tool_call_count": 5,
+        "open_read_ns": 6993,
+        "gzip_decompress_ns": 1600713,
+        "typed_json_deserialize_ns": 3443651
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-ccfbb42e20f22f5b/instances/BurntSushi__ripgrep-2209/runs/run-1778968862654-structured-current-policy-477c4423/record.json.gz",
+        "compressed_bytes": 46743,
+        "decompressed_bytes": 336339,
+        "turn_count": 1,
+        "tool_call_count": 24,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 8566,
+        "gzip_decompress_ns": 1343951,
+        "typed_json_deserialize_ns": 2497786
+      }
+    ],
+    "notes": [
+      "run_picker_discovery=28583398987 ns (kept in startup spans)",
+      "warning: run_picker_discovery exceeded 250000000 ns",
+      "standard_run_readiness_heuristic: sealed_history_reached_policy_generation; history_blocks=6/6 max_history_height=Some(5) spawned_children=18/5 node_records=19"
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "select_artifact_inspector_300",
+      "target_frames": 300,
+      "frame_stats": {
+        "count": 300,
+        "min_ns": 2038354,
+        "median_ns": 2060035,
+        "p95_ns": 2611098,
+        "p99_ns": 5994996,
+        "max_ns": 102111512
+      },
+      "top_frames": [
+        {
+          "frame_index": 1,
+          "duration_ns": 102111512,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 10818546
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 13641802
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 53573324
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 1604711
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 20733837
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 4659
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 12903,
+            "deallocation_count_delta": 11537,
+            "allocated_object_bytes_delta": 5972650,
+            "deallocated_object_bytes_delta": 5524171,
+            "allocated_wrapped_bytes_delta": 6095816,
+            "deallocated_wrapped_bytes_delta": 5635120,
+            "live_object_bytes": 448479,
+            "live_wrapped_bytes": 460696
+          }
+        },
+        {
+          "frame_index": 2,
+          "duration_ns": 18051164,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 82164
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 7397918
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 8159587
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 670588
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 78698
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 8980528
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 4598
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 4136,
+            "deallocation_count_delta": 3215,
+            "allocated_object_bytes_delta": 3184404,
+            "deallocated_object_bytes_delta": 2824739,
+            "allocated_wrapped_bytes_delta": 3223568,
+            "deallocated_wrapped_bytes_delta": 2855088,
+            "live_object_bytes": 808144,
+            "live_wrapped_bytes": 829176
+          }
+        },
+        {
+          "frame_index": 14,
+          "duration_ns": 6121995,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 102362
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 111018
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 418264
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 886954
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 83747
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 4522404
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3576
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1393,
+            "deallocation_count_delta": 1383,
+            "allocated_object_bytes_delta": 925685,
+            "deallocated_object_bytes_delta": 922012,
+            "allocated_wrapped_bytes_delta": 938976,
+            "deallocated_wrapped_bytes_delta": 935200,
+            "live_object_bytes": 1795834,
+            "live_wrapped_bytes": 1816536
+          }
+        },
+        {
+          "frame_index": 13,
+          "duration_ns": 5994996,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 92975
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 98595
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 375464
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 800251
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 105448
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 4526522
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3566
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1393,
+            "deallocation_count_delta": 1383,
+            "allocated_object_bytes_delta": 925677,
+            "deallocated_object_bytes_delta": 922012,
+            "allocated_wrapped_bytes_delta": 938968,
+            "deallocated_wrapped_bytes_delta": 935200,
+            "live_object_bytes": 1792161,
+            "live_wrapped_bytes": 1812760
+          }
+        },
+        {
+          "frame_index": 80,
+          "duration_ns": 3202097,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 108904
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 116629
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 451136
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 931578
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 105077
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1488643
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3616
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1393,
+            "deallocation_count_delta": 1383,
+            "allocated_object_bytes_delta": 925651,
+            "deallocated_object_bytes_delta": 922012,
+            "allocated_wrapped_bytes_delta": 938944,
+            "deallocated_wrapped_bytes_delta": 935200,
+            "live_object_bytes": 2053503,
+            "live_wrapped_bytes": 2081280
+          }
+        },
+        {
+          "frame_index": 218,
+          "duration_ns": 3154348,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 106479
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 115106
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 445075
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 909847
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 87414
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1498311
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3677
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1393,
+            "deallocation_count_delta": 1385,
+            "allocated_object_bytes_delta": 925682,
+            "deallocated_object_bytes_delta": 924852,
+            "allocated_wrapped_bytes_delta": 938976,
+            "deallocated_wrapped_bytes_delta": 938056,
+            "live_object_bytes": 2574291,
+            "live_wrapped_bytes": 2616704
+          }
+        },
+        {
+          "frame_index": 146,
+          "duration_ns": 3128659,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 105668
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 113794
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 442329
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 904847
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 87594
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1481500
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3587
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1393,
+            "deallocation_count_delta": 1385,
+            "allocated_object_bytes_delta": 925659,
+            "deallocated_object_bytes_delta": 922316,
+            "allocated_wrapped_bytes_delta": 938952,
+            "deallocated_wrapped_bytes_delta": 935520,
+            "live_object_bytes": 2310639,
+            "live_wrapped_bytes": 2345488
+          }
+        },
+        {
+          "frame_index": 236,
+          "duration_ns": 3128329,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 108884
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 111439
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 425428
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 890290
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 84369
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1511466
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3256
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1394,
+            "deallocation_count_delta": 1384,
+            "allocated_object_bytes_delta": 925758,
+            "deallocated_object_bytes_delta": 922060,
+            "allocated_wrapped_bytes_delta": 939056,
+            "deallocated_wrapped_bytes_delta": 935256,
+            "live_object_bytes": 2640102,
+            "live_wrapped_bytes": 2684400
+          }
+        },
+        {
+          "frame_index": 44,
+          "duration_ns": 3125934,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 105388
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 112821
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 430387
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 901271
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 91141
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1484996
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3617
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1393,
+            "deallocation_count_delta": 1383,
+            "allocated_object_bytes_delta": 925677,
+            "deallocated_object_bytes_delta": 922012,
+            "allocated_wrapped_bytes_delta": 938968,
+            "deallocated_wrapped_bytes_delta": 935200,
+            "live_object_bytes": 1914078,
+            "live_wrapped_bytes": 1937992
+          }
+        },
+        {
+          "frame_index": 81,
+          "duration_ns": 3073606,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 106660
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 109255
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 416682
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 877215
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 83957
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1486508
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3497
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1393,
+            "deallocation_count_delta": 1383,
+            "allocated_object_bytes_delta": 925664,
+            "deallocated_object_bytes_delta": 922012,
+            "allocated_wrapped_bytes_delta": 938960,
+            "deallocated_wrapped_bytes_delta": 935200,
+            "live_object_bytes": 2057155,
+            "live_wrapped_bytes": 2085040
+          }
+        }
+      ],
+      "component_timings": [
+        {
+          "component": "capture_overhead",
+          "stats": {
+            "count": 300,
+            "min_ns": 2896,
+            "median_ns": 3046,
+            "p95_ns": 3347,
+            "p99_ns": 4659,
+            "max_ns": 5891
+          },
+          "median_percent_of_frame_x100": 14
+        },
+        {
+          "component": "central_graph",
+          "stats": {
+            "count": 300,
+            "min_ns": 999195,
+            "median_ns": 1007049,
+            "p95_ns": 1194822,
+            "p99_ns": 4522404,
+            "max_ns": 20733837
+          },
+          "median_percent_of_frame_x100": 4888
+        },
+        {
+          "component": "diagnostics",
+          "stats": {
+            "count": 299,
+            "min_ns": 68609,
+            "median_ns": 69811,
+            "p95_ns": 100508,
+            "p99_ns": 132829,
+            "max_ns": 7397918
+          },
+          "median_percent_of_frame_x100": 338,
+          "nested_under": "run_navigation"
+        },
+        {
+          "component": "run_navigation",
+          "stats": {
+            "count": 300,
+            "min_ns": 273082,
+            "median_ns": 278082,
+            "p95_ns": 416682,
+            "p99_ns": 515437,
+            "max_ns": 13641802
+          },
+          "median_percent_of_frame_x100": 1349
+        },
+        {
+          "component": "selection_inspector",
+          "stats": {
+            "count": 300,
+            "min_ns": 561924,
+            "median_ns": 571542,
+            "p95_ns": 670588,
+            "p99_ns": 931578,
+            "max_ns": 53573324
+          },
+          "median_percent_of_frame_x100": 2774
+        },
+        {
+          "component": "timeline",
+          "stats": {
+            "count": 300,
+            "min_ns": 52939,
+            "median_ns": 54052,
+            "p95_ns": 61746,
+            "p99_ns": 95940,
+            "max_ns": 1604711
+          },
+          "median_percent_of_frame_x100": 262
+        },
+        {
+          "component": "top_strip",
+          "stats": {
+            "count": 300,
+            "min_ns": 70602,
+            "median_ns": 75762,
+            "p95_ns": 106239,
+            "p99_ns": 147086,
+            "max_ns": 10818546
+          },
+          "median_percent_of_frame_x100": 367
+        }
+      ],
+      "allocation_frames": {
+        "per_frame": {
+          "allocation_count": {
+            "count": 300,
+            "min": 1391,
+            "median": 1393,
+            "p95": 1394,
+            "p99": 1402,
+            "max": 12903
+          },
+          "allocated_object_bytes": {
+            "count": 300,
+            "min": 925501,
+            "median": 925682,
+            "p95": 928406,
+            "p99": 978926,
+            "max": 5972650
+          },
+          "allocated_wrapped_bytes": {
+            "count": 300,
+            "min": 938792,
+            "median": 938976,
+            "p95": 941704,
+            "p99": 992224,
+            "max": 6095816
+          },
+          "live_object_bytes": {
+            "count": 300,
+            "min": 448479,
+            "median": 2325162,
+            "p95": 2846542,
+            "p99": 2890319,
+            "max": 2901404
+          },
+          "live_wrapped_bytes": {
+            "count": 300,
+            "min": 460696,
+            "median": 2360432,
+            "p95": 2896032,
+            "p99": 2941072,
+            "max": 2952480
+          }
+        },
+        "first_50": {
+          "frame_start": 1,
+          "frame_end": 50,
+          "stats": {
+            "allocation_count": {
+              "count": 50,
+              "min": 1391,
+              "median": 1393,
+              "p95": 1609,
+              "p99": 12903,
+              "max": 12903
+            },
+            "allocated_object_bytes": {
+              "count": 50,
+              "min": 925547,
+              "median": 925689,
+              "p95": 2055162,
+              "p99": 5972650,
+              "max": 5972650
+            },
+            "allocated_wrapped_bytes": {
+              "count": 50,
+              "min": 938824,
+              "median": 938984,
+              "p95": 2070416,
+              "p99": 6095816,
+              "max": 6095816
+            },
+            "live_object_bytes": {
+              "count": 50,
+              "min": 448479,
+              "median": 1838107,
+              "p95": 1929085,
+              "p99": 1936364,
+              "max": 1936364
+            },
+            "live_wrapped_bytes": {
+              "count": 50,
+              "min": 460696,
+              "median": 1859992,
+              "p95": 1953440,
+              "p99": 1960936,
+              "max": 1960936
+            }
+          }
+        },
+        "last_50": {
+          "frame_start": 251,
+          "frame_end": 300,
+          "stats": {
+            "allocation_count": {
+              "count": 50,
+              "min": 1392,
+              "median": 1393,
+              "p95": 1394,
+              "p99": 1395,
+              "max": 1395
+            },
+            "allocated_object_bytes": {
+              "count": 50,
+              "min": 925603,
+              "median": 925679,
+              "p95": 925879,
+              "p99": 978926,
+              "max": 978926
+            },
+            "allocated_wrapped_bytes": {
+              "count": 50,
+              "min": 938896,
+              "median": 938976,
+              "p95": 939192,
+              "p99": 992224,
+              "max": 992224
+            },
+            "live_object_bytes": {
+              "count": 50,
+              "min": 2695130,
+              "median": 2809731,
+              "p95": 2893988,
+              "p99": 2901404,
+              "max": 2901404
+            },
+            "live_wrapped_bytes": {
+              "count": 50,
+              "min": 2741008,
+              "median": 2858152,
+              "p95": 2944848,
+              "p99": 2952480,
+              "max": 2952480
+            }
+          }
+        },
+        "slope": "plateau"
+      },
+      "heap_profile": {
+        "totals": {
+          "allocation_count": 432457,
+          "deallocation_count": 427347,
+          "allocated_object_bytes": 286280569,
+          "deallocated_object_bytes": 283379165,
+          "allocated_wrapped_bytes": 290406928,
+          "deallocated_wrapped_bytes": 287454448,
+          "live_object_bytes": 2901404,
+          "live_wrapped_bytes": 2952480
+        },
+        "unmatched_deallocations": 0,
+        "top_groups_by_allocated_bytes": [
+          {
+            "group_id": 1,
+            "name": "root",
+            "totals": {
+              "allocation_count": 204214,
+              "deallocation_count": 202986,
+              "allocated_object_bytes": 264873724,
+              "deallocated_object_bytes": 262721917,
+              "allocated_wrapped_bytes": 266625024,
+              "deallocated_wrapped_bytes": 264461104,
+              "live_object_bytes": 2151807,
+              "live_wrapped_bytes": 2163920
+            }
+          },
+          {
+            "group_id": 6,
+            "name": "selection_inspector",
+            "totals": {
+              "allocation_count": 71899,
+              "deallocation_count": 71321,
+              "allocated_object_bytes": 8047488,
+              "deallocated_object_bytes": 7756737,
+              "allocated_wrapped_bytes": 8772168,
+              "deallocated_wrapped_bytes": 8476328,
+              "live_object_bytes": 290751,
+              "live_wrapped_bytes": 295840
+            }
+          },
+          {
+            "group_id": 7,
+            "name": "central_graph",
+            "totals": {
+              "allocation_count": 96166,
+              "deallocation_count": 95798,
+              "allocated_object_bytes": 6026043,
+              "deallocated_object_bytes": 5945623,
+              "allocated_wrapped_bytes": 7128448,
+              "deallocated_wrapped_bytes": 7044840,
+              "live_object_bytes": 80420,
+              "live_wrapped_bytes": 83608
+            }
+          },
+          {
+            "group_id": 4,
+            "name": "run_navigation",
+            "totals": {
+              "allocation_count": 26002,
+              "deallocation_count": 25523,
+              "allocated_object_bytes": 2812559,
+              "deallocated_object_bytes": 2743842,
+              "allocated_wrapped_bytes": 3057752,
+              "deallocated_wrapped_bytes": 2983648,
+              "live_object_bytes": 68717,
+              "live_wrapped_bytes": 74104
+            }
+          },
+          {
+            "group_id": 5,
+            "name": "diagnostics",
+            "totals": {
+              "allocation_count": 12087,
+              "deallocation_count": 11953,
+              "allocated_object_bytes": 1674700,
+              "deallocated_object_bytes": 1575404,
+              "allocated_wrapped_bytes": 1782344,
+              "deallocated_wrapped_bytes": 1681904,
+              "live_object_bytes": 99296,
+              "live_wrapped_bytes": 100440
+            }
+          },
+          {
+            "group_id": 3,
+            "name": "top_strip",
+            "totals": {
+              "allocation_count": 5551,
+              "deallocation_count": 5521,
+              "allocated_object_bytes": 1177863,
+              "deallocated_object_bytes": 1163542,
+              "allocated_wrapped_bytes": 1230176,
+              "deallocated_wrapped_bytes": 1215568,
+              "live_object_bytes": 14321,
+              "live_wrapped_bytes": 14608
+            }
+          },
+          {
+            "group_id": 2,
+            "name": "frame_update",
+            "totals": {
+              "allocation_count": 10362,
+              "deallocation_count": 8201,
+              "allocated_object_bytes": 987002,
+              "deallocated_object_bytes": 827389,
+              "allocated_wrapped_bytes": 1075640,
+              "deallocated_wrapped_bytes": 893424,
+              "live_object_bytes": 159613,
+              "live_wrapped_bytes": 182216
+            }
+          },
+          {
+            "group_id": 8,
+            "name": "timeline",
+            "totals": {
+              "allocation_count": 4459,
+              "deallocation_count": 4423,
+              "allocated_object_bytes": 481915,
+              "deallocated_object_bytes": 466829,
+              "allocated_wrapped_bytes": 520896,
+              "deallocated_wrapped_bytes": 505512,
+              "live_object_bytes": 15086,
+              "live_wrapped_bytes": 15384
+            }
+          },
+          {
+            "group_id": 9,
+            "name": "graph_projection_cache_refresh",
+            "totals": {
+              "allocation_count": 1717,
+              "deallocation_count": 1621,
+              "allocated_object_bytes": 199275,
+              "deallocated_object_bytes": 177882,
+              "allocated_wrapped_bytes": 214480,
+              "deallocated_wrapped_bytes": 192120,
+              "live_object_bytes": 21393,
+              "live_wrapped_bytes": 22360
+            }
+          }
+        ],
+        "top_groups_by_allocation_count": [
+          {
+            "group_id": 1,
+            "name": "root",
+            "totals": {
+              "allocation_count": 204214,
+              "deallocation_count": 202986,
+              "allocated_object_bytes": 264873724,
+              "deallocated_object_bytes": 262721917,
+              "allocated_wrapped_bytes": 266625024,
+              "deallocated_wrapped_bytes": 264461104,
+              "live_object_bytes": 2151807,
+              "live_wrapped_bytes": 2163920
+            }
+          },
+          {
+            "group_id": 7,
+            "name": "central_graph",
+            "totals": {
+              "allocation_count": 96166,
+              "deallocation_count": 95798,
+              "allocated_object_bytes": 6026043,
+              "deallocated_object_bytes": 5945623,
+              "allocated_wrapped_bytes": 7128448,
+              "deallocated_wrapped_bytes": 7044840,
+              "live_object_bytes": 80420,
+              "live_wrapped_bytes": 83608
+            }
+          },
+          {
+            "group_id": 6,
+            "name": "selection_inspector",
+            "totals": {
+              "allocation_count": 71899,
+              "deallocation_count": 71321,
+              "allocated_object_bytes": 8047488,
+              "deallocated_object_bytes": 7756737,
+              "allocated_wrapped_bytes": 8772168,
+              "deallocated_wrapped_bytes": 8476328,
+              "live_object_bytes": 290751,
+              "live_wrapped_bytes": 295840
+            }
+          },
+          {
+            "group_id": 4,
+            "name": "run_navigation",
+            "totals": {
+              "allocation_count": 26002,
+              "deallocation_count": 25523,
+              "allocated_object_bytes": 2812559,
+              "deallocated_object_bytes": 2743842,
+              "allocated_wrapped_bytes": 3057752,
+              "deallocated_wrapped_bytes": 2983648,
+              "live_object_bytes": 68717,
+              "live_wrapped_bytes": 74104
+            }
+          },
+          {
+            "group_id": 5,
+            "name": "diagnostics",
+            "totals": {
+              "allocation_count": 12087,
+              "deallocation_count": 11953,
+              "allocated_object_bytes": 1674700,
+              "deallocated_object_bytes": 1575404,
+              "allocated_wrapped_bytes": 1782344,
+              "deallocated_wrapped_bytes": 1681904,
+              "live_object_bytes": 99296,
+              "live_wrapped_bytes": 100440
+            }
+          },
+          {
+            "group_id": 2,
+            "name": "frame_update",
+            "totals": {
+              "allocation_count": 10362,
+              "deallocation_count": 8201,
+              "allocated_object_bytes": 987002,
+              "deallocated_object_bytes": 827389,
+              "allocated_wrapped_bytes": 1075640,
+              "deallocated_wrapped_bytes": 893424,
+              "live_object_bytes": 159613,
+              "live_wrapped_bytes": 182216
+            }
+          },
+          {
+            "group_id": 3,
+            "name": "top_strip",
+            "totals": {
+              "allocation_count": 5551,
+              "deallocation_count": 5521,
+              "allocated_object_bytes": 1177863,
+              "deallocated_object_bytes": 1163542,
+              "allocated_wrapped_bytes": 1230176,
+              "deallocated_wrapped_bytes": 1215568,
+              "live_object_bytes": 14321,
+              "live_wrapped_bytes": 14608
+            }
+          },
+          {
+            "group_id": 8,
+            "name": "timeline",
+            "totals": {
+              "allocation_count": 4459,
+              "deallocation_count": 4423,
+              "allocated_object_bytes": 481915,
+              "deallocated_object_bytes": 466829,
+              "allocated_wrapped_bytes": 520896,
+              "deallocated_wrapped_bytes": 505512,
+              "live_object_bytes": 15086,
+              "live_wrapped_bytes": 15384
+            }
+          },
+          {
+            "group_id": 9,
+            "name": "graph_projection_cache_refresh",
+            "totals": {
+              "allocation_count": 1717,
+              "deallocation_count": 1621,
+              "allocated_object_bytes": 199275,
+              "deallocated_object_bytes": 177882,
+              "allocated_wrapped_bytes": 214480,
+              "deallocated_wrapped_bytes": 192120,
+              "live_object_bytes": 21393,
+              "live_wrapped_bytes": 22360
+            }
+          }
+        ],
+        "top_groups_by_retained_bytes": [
+          {
+            "group_id": 1,
+            "name": "root",
+            "totals": {
+              "allocation_count": 204214,
+              "deallocation_count": 202986,
+              "allocated_object_bytes": 264873724,
+              "deallocated_object_bytes": 262721917,
+              "allocated_wrapped_bytes": 266625024,
+              "deallocated_wrapped_bytes": 264461104,
+              "live_object_bytes": 2151807,
+              "live_wrapped_bytes": 2163920
+            }
+          },
+          {
+            "group_id": 6,
+            "name": "selection_inspector",
+            "totals": {
+              "allocation_count": 71899,
+              "deallocation_count": 71321,
+              "allocated_object_bytes": 8047488,
+              "deallocated_object_bytes": 7756737,
+              "allocated_wrapped_bytes": 8772168,
+              "deallocated_wrapped_bytes": 8476328,
+              "live_object_bytes": 290751,
+              "live_wrapped_bytes": 295840
+            }
+          },
+          {
+            "group_id": 2,
+            "name": "frame_update",
+            "totals": {
+              "allocation_count": 10362,
+              "deallocation_count": 8201,
+              "allocated_object_bytes": 987002,
+              "deallocated_object_bytes": 827389,
+              "allocated_wrapped_bytes": 1075640,
+              "deallocated_wrapped_bytes": 893424,
+              "live_object_bytes": 159613,
+              "live_wrapped_bytes": 182216
+            }
+          },
+          {
+            "group_id": 5,
+            "name": "diagnostics",
+            "totals": {
+              "allocation_count": 12087,
+              "deallocation_count": 11953,
+              "allocated_object_bytes": 1674700,
+              "deallocated_object_bytes": 1575404,
+              "allocated_wrapped_bytes": 1782344,
+              "deallocated_wrapped_bytes": 1681904,
+              "live_object_bytes": 99296,
+              "live_wrapped_bytes": 100440
+            }
+          },
+          {
+            "group_id": 7,
+            "name": "central_graph",
+            "totals": {
+              "allocation_count": 96166,
+              "deallocation_count": 95798,
+              "allocated_object_bytes": 6026043,
+              "deallocated_object_bytes": 5945623,
+              "allocated_wrapped_bytes": 7128448,
+              "deallocated_wrapped_bytes": 7044840,
+              "live_object_bytes": 80420,
+              "live_wrapped_bytes": 83608
+            }
+          },
+          {
+            "group_id": 4,
+            "name": "run_navigation",
+            "totals": {
+              "allocation_count": 26002,
+              "deallocation_count": 25523,
+              "allocated_object_bytes": 2812559,
+              "deallocated_object_bytes": 2743842,
+              "allocated_wrapped_bytes": 3057752,
+              "deallocated_wrapped_bytes": 2983648,
+              "live_object_bytes": 68717,
+              "live_wrapped_bytes": 74104
+            }
+          },
+          {
+            "group_id": 9,
+            "name": "graph_projection_cache_refresh",
+            "totals": {
+              "allocation_count": 1717,
+              "deallocation_count": 1621,
+              "allocated_object_bytes": 199275,
+              "deallocated_object_bytes": 177882,
+              "allocated_wrapped_bytes": 214480,
+              "deallocated_wrapped_bytes": 192120,
+              "live_object_bytes": 21393,
+              "live_wrapped_bytes": 22360
+            }
+          },
+          {
+            "group_id": 8,
+            "name": "timeline",
+            "totals": {
+              "allocation_count": 4459,
+              "deallocation_count": 4423,
+              "allocated_object_bytes": 481915,
+              "deallocated_object_bytes": 466829,
+              "allocated_wrapped_bytes": 520896,
+              "deallocated_wrapped_bytes": 505512,
+              "live_object_bytes": 15086,
+              "live_wrapped_bytes": 15384
+            }
+          },
+          {
+            "group_id": 3,
+            "name": "top_strip",
+            "totals": {
+              "allocation_count": 5551,
+              "deallocation_count": 5521,
+              "allocated_object_bytes": 1177863,
+              "deallocated_object_bytes": 1163542,
+              "allocated_wrapped_bytes": 1230176,
+              "deallocated_wrapped_bytes": 1215568,
+              "live_object_bytes": 14321,
+              "live_wrapped_bytes": 14608
+            }
+          }
+        ],
+        "top_callsites_by_allocated_bytes": [],
+        "top_callsites_by_allocation_count": [],
+        "top_callsites_by_retained_bytes": []
+      },
+      "allocations": {
+        "enabled": true,
+        "allocation_count_delta": 432457,
+        "deallocation_count_delta": 427347,
+        "allocated_bytes_delta": 286280569,
+        "deallocated_bytes_delta": 283379165,
+        "scope": "tracking-allocator heap window; object bytes only, excludes GPU and driver memory"
+      },
+      "action": {
+        "action": "select_artifact_inspector",
+        "target_label": "A1",
+        "target_key": "git-commit:06bf3f6c14b833372309cb409d40c137a6832124"
+      }
+    }
+  ],
+  "puffin_artifacts": [
+    {
+      "path": "/home/brasides/code/ploke/crates/ploke-egui/data/profiling/puffin/benchmarks/20260518-c4a6acb3ab66-standard/standard.puffin",
+      "bytes": 988041,
+      "sha256": "c5ac90260c2d524900c09be34c4e71c0c7d1b99be6b9f817dd9ba3b8461b8ae9",
+      "tracked": false
+    }
+  ],
+  "heap_artifacts": [
+    {
+      "path": "/home/brasides/code/ploke/crates/ploke-egui/data/profiling/heap/benchmarks/20260518-c4a6acb3ab66-standard/select_artifact_inspector_300.heap.json",
+      "bytes": 4134,
+      "sha256": "7a4fb6d17755a034e7d95370a5f6d53cef15fb5950c16170a6212026a73f9ab7",
+      "tracked": false
+    }
+  ],
+  "notes": [
+    "reporting-only benchmark; no pass/fail thresholds applied",
+    "allocation deltas use tracking-allocator object bytes and wrapped bytes; GPU and driver memory are outside the measured surface",
+    "standard heap attribution is driven by #[tracing::instrument] span names and uses cheap totals/group counters; callsite backtraces are not captured in standard mode",
+    "report.json and README.md are rewritten after each completed scenario so interrupted runs keep partial evidence",
+    "puffin captures are local ignored artifacts under crates/ploke-egui/data/",
+    "full heap profiles are local ignored artifacts under crates/ploke-egui/data/profiling/heap/benchmarks/"
+  ]
+}

@@ -1,0 +1,401 @@
+# 2026-05-09 Records Emission Clean Sweep Handoff
+
+Restart handoff for the `ploke-records` / `ploke-tree` / `ploke-eval` record-emission normalization thread.
+
+## Current State
+
+Repo was clean at the start of this handoff.
+
+Pre-compaction update for the next pickup:
+
+- Record-emission work is committed through:
+  - `c7dce2dc Replace JsonRecordValue with typed Record trait`
+  - `a061ff88 Add records emission clean sweep handoff doc`
+- The committed record-emission state includes:
+  - typed removal of `JsonRecordValue` / `crates/ploke-records/src/value.rs`;
+  - passive `ploke_records::record::{Record, RecordFamily, RecordFormat}`;
+  - eval-owned `crates/ploke-eval/src/record_emission.rs`;
+  - first producer-normalization slice: scheduler `node.json` now emits
+    `ploke_records::scheduler::NodeRecord` through the eval-owned emitter.
+- Current branch at that checkpoint:
+  `prototype1-loop-test-20260426`, ahead of origin by 60 commits.
+- Current non-record-emission dirty files observed before this pre-compaction
+  update:
+  - `crates/ploke-eval/src/cli/prototype1_state/edit_surface/surface.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tests.rs`
+  - `docs/active/agents/2026-05-08_bounded-edit-surface-handoff.md`
+  - `docs/workflow/evalnomicon/drafts/edit-surface/proof-index.md`
+- Treat those dirty files as bounded-edit-surface / other-thread work unless
+  the user explicitly reassigns them to this record-emission cleanup.
+- If this handoff is dirty after compaction, it is expected: this block was
+  added as the pre-compaction restart note.
+
+Post-compaction refresh:
+
+- The handoff remains the active restart spine for the record-emission
+  normalization thread.
+- Current task-stack focus is still
+  `prototype1-execution-file-surface-cleanhouse`.
+- Current working tree is not clean:
+  - `docs/active/agents/readme.md` includes this handoff in the active index.
+  - `docs/active/agents/2026-05-09_records-emission-clean-sweep-handoff.md`
+    is the uncommitted handoff.
+  - `docs/workflow/evalnomicon/drafts/edit-surface/harness-adapter-plan.md`
+    has unrelated bounded-edit planning additions and should be treated as
+    other-thread/user work unless explicitly reassigned.
+- Do not let the passive-reader success claim expand into a producer
+  normalization claim. `ploke-tree` can read the current typed shared records;
+  `ploke-eval` still has multiple local/direct write paths to normalize.
+
+Recent relevant commits:
+
+- `a061ff88 Add records emission clean sweep handoff doc`
+- `c7dce2dc Replace JsonRecordValue with typed Record trait`
+- `7ad9aec3 Split protocol records module`
+- `0ddefaf2 Type protocol records for tree UI`
+
+The current passive record layer is usable enough for `ploke-tree` to read the real long run, but producer-side normalization is not complete.
+
+Completed cleanup after the post-compaction refresh:
+
+- Removed `JsonRecordValue` from `ploke-records` source.
+- Deleted `crates/ploke-records/src/value.rs`.
+- Replaced opaque public record fields with typed mirrors:
+  - invocation payloads now use scheduler/node/request and resolved-branch records;
+  - channel evaluation payloads now use typed evaluation records;
+  - evaluation policy is typed;
+  - journal successor selection uses a typed selection decision record;
+  - History entry/block payloads use typed passive mirrors for selection
+    decisions, ingress imports, regime, surface commitments, opening authority,
+    claims, sealed evidence, candidate artifacts, and related payloads.
+- Split the largest new History payload mirrors into
+  `crates/ploke-records/src/history/payload.rs` instead of keeping all of the
+  new surface in `history.rs`.
+
+First producer-normalization slice after context reset:
+
+- Added passive record metadata in `crates/ploke-records/src/record.rs`:
+  `Record`, `RecordFamily`, and `RecordFormat`.
+- Tagged scheduler node/request/result/state records plus protocol and
+  evaluation artifacts with record metadata.
+- Added eval-owned JSON emission in
+  `crates/ploke-eval/src/record_emission.rs`; this is where filesystem write
+  authority lives.
+- Converted the Prototype 1 scheduler node writer to emit
+  `ploke_records::scheduler::NodeRecord` through that eval-owned emitter.
+- Extended the scheduler test so the emitted `node.json` parses as the shared
+  passive node record.
+
+Confirmed shared passive record surfaces in `ploke-records`:
+
+- `scheduler` / `node`
+- `journal`
+- `history`
+- `branch`
+- `channel`
+- `evaluation`
+- `protocol`
+
+Confirmed reader/projection path:
+
+- `ploke-tree` reads those typed records without depending on `ploke-eval`.
+- Real run checked:
+  `/home/brasides/.ploke-eval/campaigns/p1-edit-surface-history-long-20260508-1/prototype1`
+- Protocol artifacts for that run were also loaded from the matching instance `protocol-artifacts` directory.
+
+Hard rule still active:
+
+> `ploke-records` public shared record surfaces must be typed. Use original passive types when possible. Use mirror types when original active/runtime/typestate types cannot move. Do not expose `serde_json::Value`, `JsonRecordValue`, or any equivalent untyped JSON payload as a public record field. If a persisted payload is needed by the UI, model its fields. If the original type cannot move because it carries runtime authority or private constructors, create a typed mirror. If blocked, stop and report the blocker.
+
+## User Direction
+
+The user wants a normalized, low-footprint way to keep readable persisted records aligned with the future tree/browser UI.
+
+Important correction: this is not a request to keep adding "legacy" or "migration" bridges. The earlier deletion-first framing remains active.
+
+The remembered docs were not found under an exact "slash and burn" phrase. The matching docs are:
+
+- `docs/archive/reports/2026-05-06-prototype1-execution-surface-clean-sweep-handoff.md`
+  - strongest deletion-first directive
+  - key rule: "no legacy behavior needs to be preserved. Delete or fail closed..."
+  - loop execution should read only History, Channel, or Workspace/Artifact backend surfaces
+- `docs/archive/reports/2026-05-06-prototype1-file-surface-cleanhouse-map.md`
+  - strongest "clean sweep" planning map
+  - key rule: this is not incremental cleanup; it is a clean sweep of file reads/writes in loop execution
+  - classifies scheduler, branch registry, node records, runner-result, transition journal fallback reads, and parent identity
+- `docs/workflow/evalnomicon/drafts/observability/run-tree-browser-design.md`
+  - companion UI/schema plan
+  - `ploke-records` = passive schemas
+  - `ploke-tree` = read-only projection
+  - browser/native UI depends on those, not on `ploke-eval`
+
+## Sub-Agent Findings
+
+Three mini explorer passes were run and closed.
+
+### Existing Trait-Like Seams
+
+There is no existing unified `emit_record` or `RecordSink` API.
+
+Existing related shapes:
+
+- `crates/ploke-eval/src/intervention/algebra/mod.rs`
+  - `RecordStore`
+  - append-only journal abstraction for interventions
+- `crates/ploke-eval/src/cli/prototype1_state/channel.rs`
+  - `Transport`
+  - parent/child channel byte transport
+- `crates/ploke-eval/src/cli/prototype1_state/history.rs`
+  - History block append/store methods
+- `crates/ploke-eval/src/cli/prototype1_state/history_preview.rs`
+  - `EvidenceRecord`
+  - read/projection classification, not live emission
+- `crates/ploke-eval/src/record.rs`
+  - `RunRecordBuilder`
+  - older structured run replay path, not Prototype 1 loop emission
+
+The live Prototype 1 persistence path is still mostly direct `fs` / `serde` writes plus local append traits.
+
+### Producer/Consumer Gaps
+
+`ploke-tree` reads typed shared records, but `ploke-eval` still writes several families through local structs or local writers:
+
+- scheduler/node:
+  - producer: `crates/ploke-eval/src/intervention/scheduler.rs`
+  - still writes `Prototype1SchedulerState`, `Prototype1NodeRecord`, `Prototype1RunnerRequest`, `Prototype1RunnerResult`
+- branch:
+  - producer: `crates/ploke-eval/src/intervention/branch_registry.rs`
+  - still writes local `Prototype1BranchRegistry`
+- journal:
+  - producer: `crates/ploke-eval/src/cli/prototype1_state/journal.rs`
+  - still appends local `JournalEntry`
+- history:
+  - producer: `crates/ploke-eval/src/cli/prototype1_state/history.rs`
+  - still appends local typestate `Block<Sealed>` / `StoredBlock`
+  - this is expected; typestate/authority stays in `ploke-eval`
+- channel:
+  - producer: `crates/ploke-eval/src/cli/prototype1_state/channel.rs`
+  - still serializes local `Envelope`, `ToParent`, `ToChild`
+- evaluation:
+  - producer: `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`
+  - still builds/writes local `Prototype1BranchEvaluationReport`
+- protocol:
+  - producer: `crates/ploke-eval/src/protocol_artifacts.rs`
+  - still writes local `StoredProtocolArtifact`
+
+### Active Write Paths
+
+The active typed path and legacy controller still use a mix of direct writes and traits:
+
+- `cli/prototype1_state/cli_facing.rs`
+  - entry/run/report writes, monitor-target cache, parent identity bootstrap, successor ack/completion, legacy trace write
+- `cli/prototype1_process.rs`
+  - transition journal appends, successor ready/completion, child artifact persistence, History seal/append, invocation write, runner-result write
+- `cli/prototype1_state/{identity,invocation,journal,history,channel,selection}.rs`
+  - parent identity, invocation/ready/completion JSON, append-only journal, sealed History blocks, channel JSONL transport, active monitor-target projection
+- `intervention/scheduler.rs`
+  - scheduler/node/request/result projections
+
+Smallest re-run searches:
+
+```bash
+rg -n "run_prototype1_loop_controller|run_turn|spawn_and_handoff_prototype1_successor|record_prototype1_successor_ready|record_prototype1_successor_completion|persist_prototype1_buildable_child_artifact|write_treatment_evaluation_projection|write_runner_result_at|write_parent_identity" crates/ploke-eval/src/cli/prototype1_state crates/ploke-eval/src/cli/prototype1_process.rs crates/ploke-eval/src/intervention/scheduler.rs crates/ploke-eval/src/selection.rs
+```
+
+```bash
+rg -n "fs::write|serde_json::to_vec_pretty|OpenOptions|append\\(" crates/ploke-eval/src/cli/prototype1_state/{identity,invocation,journal,history,channel}.rs crates/ploke-eval/src/intervention/scheduler.rs crates/ploke-eval/src/selection.rs crates/ploke-eval/src/cli.rs
+```
+
+## Recommended Model
+
+Do not put authority-bearing write capability in `ploke-records`.
+
+Recommended split:
+
+- `ploke-records` defines passive schema identity and typed record families.
+- `ploke-eval` owns emission authority and implements write/append behavior.
+- `ploke-tree` reads records and builds projections only.
+
+Possible shape:
+
+```rust
+// ploke-records
+pub trait Record {
+    const FAMILY: RecordFamily;
+    const SCHEMA: &'static str;
+    const FORMAT: RecordFormat;
+}
+```
+
+```rust
+// ploke-eval
+pub trait EmitRecord<R: ploke_records::Record> {
+    type Error;
+    type Receipt;
+
+    fn emit(&mut self, record: &R) -> Result<Self::Receipt, Self::Error>;
+}
+```
+
+This preserves:
+
+- shared schema discoverability for UI/readers
+- no circular dependency
+- no authority constructors in `ploke-records`
+- searchable structural relationship between persisted files and record types
+- ability to delete old projection-control reads instead of preserving "legacy" compatibility
+
+The intent of `EmitRecord` is to make producer normalization explicit without
+moving loop correctness into `ploke-records`: each persisted thing that should
+feed the UI has a typed `ploke-records` schema, and `ploke-eval` emits that
+schema from the appropriate authoritative transition or projection boundary.
+The trait should replace direct ad hoc `fs` / `serde` writes where those writes
+produce durable UI/debug records. It should not be a generic escape hatch for
+untyped payloads.
+
+## Next Task
+
+Immediate restart note after the aborted replay-orientation turn:
+
+- The user asked for a coarse replay/tracking view over the earlier loop run,
+  roughly:
+  parent/ruler -> child candidates -> evaluations/scores -> selected child ->
+  crown/ruler handoff -> sealed block -> successor parent continues.
+- I over-read during that orientation turn. On restart, do not repeat broad
+  searches or dump raw JSON/log output into context. Use the commands below
+  only if needed, with bounded output.
+- The relevant campaign sampled was:
+  `p1-edit-surface-history-long-20260508-1`
+- Existing records are already sufficient for a coarse sealed replay:
+  - `prototype1/history/blocks/segment-000000.jsonl` has 12 sealed blocks.
+  - Each block has one sealed successor-selection entry.
+  - Each selection entry carries:
+    - opened/ruling parent actor in the block header;
+    - selected candidate in the entry payload;
+    - considered candidate set with node id, branch id, generation,
+      disposition, runtime, artifact/surface evidence, and comparison status;
+    - deterministic `ScoreChildProp` replay data when `selection-show --replay`
+      is used.
+  - Evaluation artifacts under `prototype1/evaluations/*.json` provide
+    per-branch keep/reject and compared metrics.
+  - Node records provide parent-node/generation/branch links, but this is a
+    projection surface. Do not use scheduler/node projections as authority for
+    active loop control.
+- A good existing command for one sealed decision is:
+
+```bash
+target/debug/ploke-eval history selection-show --campaign p1-edit-surface-history-long-20260508-1 --row 0 --replay
+```
+
+- Useful observed coarse chain from sealed History block headers:
+
+```text
+block 0: parent node-2cd25c1a4b66689c selected node-3e763294f101073e
+block 1: parent node-3e763294f101073e selected node-6b5787969ab23367
+block 2: parent node-6b5787969ab23367 selected node-987d373c2423f01f
+block 3: parent node-987d373c2423f01f selected node-887ce7c2e98b2e7c
+block 4: parent node-887ce7c2e98b2e7c selected node-6a6601f8840f022e
+block 5: parent node-6a6601f8840f022e selected node-b58e5b0763125f55
+block 6: parent node-b58e5b0763125f55 selected node-93f045d8cb5bd9f1
+block 7: parent node-93f045d8cb5bd9f1 selected node-135cae235102bcb7
+block 8: parent node-135cae235102bcb7 selected node-259cd4224fa8f263
+block 9: parent node-259cd4224fa8f263 selected node-3f1e3cde5785d098
+block 10: parent node-3f1e3cde5785d098 selected node-3f1e3cde5785d098
+block 11: parent node-3f1e3cde5785d098 selected node-259cd4224fa8f263
+```
+
+- Important interpretation caveats:
+  - block 0 selected a rejected candidate because every generation-1 candidate
+    had missing baseline evidence; the decision outcome was `Stop`, but the
+    selected coordinate was still committed.
+  - later blocks consider accumulated History candidates, not just the newly
+    spawned sibling set, so the projection must show both selected successor
+    and considered set.
+  - existing `history metrics --view trajectory` is useful but degraded: it
+    reports ambiguous trajectory state because it folds mutable/projection
+    evidence by parent/generation cohorts. The sealed History replay is the
+    better basis for the user’s requested ruler/crown timeline.
+- If implementing a durable replay view, make it a read-only projection over
+  typed History records, probably in `ploke-tree` or the existing
+  `history_preview`/metrics projection layer. Do not put authority in CLI
+  rendering, and do not parse rendered command output.
+
+Do not start with History. Continue the lowest-authority scheduler projection
+family and prove the pattern before moving to higher-authority records.
+
+Suggested first implementation slice:
+
+1. Done: add passive record metadata in `ploke-records`.
+2. Done: implement it for already-shared scheduler node/request/result/state
+   records plus protocol/evaluation artifacts.
+3. Done: add a local eval-owned emission trait/store adapter generic over
+   `ploke_records::record::Record`.
+4. Done for first low-risk writer: scheduler `node.json` emission now writes
+   the shared passive node record.
+5. Done for that writer: scheduler test proves the emitted file parses as
+   `ploke_records::scheduler::NodeRecord`.
+
+Next producer-normalization slice:
+
+1. Convert `runner-request.json` and `runner-result.json` emission to the same
+   shared scheduler records.
+2. Then convert `scheduler.json`, which needs a full state mirror conversion
+   rather than only the single-node projection.
+3. Keep local runtime structs in `ploke-eval` until their active scheduling
+   behavior has an explicit typed boundary; do not move scheduling decisions
+   into `ploke-records`.
+
+Concrete restart command set for the next slice:
+
+```bash
+rg -n "fn save_runner_request|fn save_runner_result|write_runner_result_at|record_runner_result|load_runner_request|load_runner_result" crates/ploke-eval/src/intervention/scheduler.rs crates/ploke-eval/src/cli/prototype1_process.rs
+rg -n "pub struct RunnerRequestRecord|pub struct RunnerResultRecord|impl Record for Runner" crates/ploke-records/src/scheduler.rs
+```
+
+Expected implementation shape:
+
+- add `passive_runner_request_record` and `passive_runner_result_record` beside
+  `passive_node_record` in `crates/ploke-eval/src/intervention/scheduler.rs`;
+- route `save_runner_request` and `save_runner_result` through
+  `JsonRecordFile::emit`;
+- extend scheduler tests so emitted `runner-request.json` and
+  `runner-result.json` parse as shared passive records;
+- keep loader compatibility for existing files, but do not add a parallel
+  legacy writer.
+
+Avoid:
+
+- generic trait theater that does not replace a real write path
+- keeping old and new producers side by side as indefinite "migration"
+- moving History/Crown/typestate authority out of `ploke-eval`
+- making `ploke-records` able to write records
+- public opaque JSON in shared records, including `JsonRecordValue`
+
+## Verification Baseline
+
+Last known good before this handoff:
+
+- `cargo fmt --all`
+- `cargo test -p ploke-records`
+- `cargo test -p ploke-tree`
+- `cargo test -p ploke-records protocol::tests::all_artifacts_roundtrip -- --ignored`
+- `cargo test -p ploke-records protocol::tests::typed_payloads -- --ignored`
+- real `ploke-tree` campaign load with protocol artifacts
+- `cargo check -p ploke-eval`
+
+`ploke-eval` still emits many existing warnings.
+
+Verification passed for the committed record-emission slice:
+
+- `cargo fmt --all`
+- `cargo check -p ploke-eval`
+- `cargo test -p ploke-records`
+- `cargo test -p ploke-tree`
+- `cargo test -p ploke-eval register_treatment_node_persists_scheduler_and_runner_request`
+- guard search for `JsonRecordValue`, `crate::value`, `pub mod value`, and
+  public `serde_json::Value` / `JsonRecordValue` surfaces in
+  `crates/ploke-records` and `crates/ploke-tree`
+
+## Restart Reminder
+
+Use the clean-sweep docs as the behavioral constraint. The record-emission trait is useful only if it helps delete or replace unstructured/local/direct persistence paths and prevents loop execution from reading projection files as control or authority.

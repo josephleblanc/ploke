@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use once_cell::sync::OnceCell;
 use ploke_db::{Database, create_index_primary};
-use ploke_test_utils::fixture_dbs::{FixtureDb, FixtureImportMode};
+use ploke_test_utils::fixture_dbs::{FixtureDb, load_backup_fixture_db};
 
 use crate::error::XtaskError;
 
@@ -176,18 +176,10 @@ impl DatabasePool {
 
     fn load_plain_backup(path: &Path) -> Result<Arc<Database>, XtaskError> {
         let db = Database::init_with_schema()?;
-        let prior = db.prior_rels_for_plain_backup_import()?;
+        let prior = db.prior_rels_for_current_schema_backup_import()?;
         db.import_from_backup(path, &prior)
             .map_err(|e| XtaskError::Database(e.to_string()))?;
         db.ensure_compilation_unit_relations()
-            .map_err(|e| XtaskError::Database(e.to_string()))?;
-        create_index_primary(&db)?;
-        Ok(Arc::new(db))
-    }
-
-    fn load_backup_with_embeddings(path: &Path) -> Result<Arc<Database>, XtaskError> {
-        let db = Database::init_with_schema()?;
-        db.import_backup_with_embeddings(path)
             .map_err(|e| XtaskError::Database(e.to_string()))?;
         create_index_primary(&db)?;
         Ok(Arc::new(db))
@@ -198,10 +190,11 @@ impl DatabasePool {
         &self,
         fixture: &'static FixtureDb,
     ) -> Result<Arc<Database>, XtaskError> {
-        let key = fixture.path().canonicalize().map_err(|e| {
+        let loaded = load_backup_fixture_db(fixture)?;
+        let key = loaded.path().path().canonicalize().map_err(|e| {
             XtaskError::validation(format!(
                 "Could not resolve fixture database path {}: {}",
-                fixture.path().display(),
+                loaded.path().path().display(),
                 e
             ))
         })?;
@@ -213,10 +206,7 @@ impl DatabasePool {
             }
         }
 
-        let db_arc = match fixture.import_mode {
-            FixtureImportMode::PlainBackup => Self::load_plain_backup(&key)?,
-            FixtureImportMode::BackupWithEmbeddings => Self::load_backup_with_embeddings(&key)?,
-        };
+        let db_arc = Arc::new(loaded.into_db());
 
         let mut guard = self.by_path.write().unwrap();
         if let Some(db) = guard.get(&key) {
@@ -246,7 +236,7 @@ impl DatabasePool {
                         e
                     ))
                     .with_recovery(
-                        "Ensure the backup file exists (copy a registered fixture from tests/backup_dbs/ if needed). Use an absolute path or a path relative to the current working directory.",
+                        "Ensure the backup file exists. For registered test fixtures, run `cargo xtask fixtures ensure --snapshots` to stage committed seeds into the shared snapshot directory.",
                     )
                 })?;
 

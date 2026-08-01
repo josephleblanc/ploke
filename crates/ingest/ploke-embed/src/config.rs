@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Serialize)]
@@ -13,10 +15,22 @@ pub struct HuggingFaceConfig {
     pub dimensions: usize,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Default, Deserialize, PartialEq, Serialize)]
 pub struct OpenAIConfig {
     pub api_key: String,
     pub model: String,
+}
+
+/// Redacts the credential while retaining provider diagnostics.
+/// Derived `Debug` implementations on enclosing configuration types delegate to this formatter.
+impl fmt::Debug for OpenAIConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OpenAIConfig")
+            .field("api_key", &"<redacted>")
+            .field("model", &self.model)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Serialize)]
@@ -66,6 +80,12 @@ pub struct OpenRouterConfig {
     pub max_backoff_ms: u64,
     /// Optional hint to OpenRouter about the input type.
     pub input_type: Option<String>,
+    /// Optional ordered provider slugs to route embeddings through on OpenRouter.
+    #[serde(default)]
+    pub provider_order: Option<Vec<String>>,
+    /// Whether OpenRouter may fall back away from the requested embedding providers.
+    #[serde(default)]
+    pub allow_fallbacks: Option<bool>,
     /// Per-request timeout in seconds for embeddings.
     #[serde(default = "default_openrouter_timeout_secs")]
     pub timeout_secs: u64,
@@ -87,6 +107,8 @@ impl Default for OpenRouterConfig {
             initial_backoff_ms: default_openrouter_initial_backoff_ms(),
             max_backoff_ms: default_openrouter_max_backoff_ms(),
             input_type: None,
+            provider_order: None,
+            allow_fallbacks: None,
             timeout_secs: default_openrouter_timeout_secs(),
             truncate_policy: TruncatePolicy::Truncate,
         }
@@ -131,5 +153,19 @@ mod tests {
         assert_eq!(cfg.max_backoff_ms, 10_000);
         assert_eq!(cfg.timeout_secs, 30);
         assert_eq!(cfg.request_dimensions, None);
+    }
+
+    #[test]
+    fn openai_config_debug_redacts_api_key() {
+        let config = OpenAIConfig {
+            api_key: "secret-openai-key".into(),
+            model: "text-embedding-3-small".into(),
+        };
+
+        let debug = format!("{config:?}");
+
+        assert!(!debug.contains("secret-openai-key"));
+        assert!(debug.contains("<redacted>"));
+        assert!(debug.contains("text-embedding-3-small"));
     }
 }

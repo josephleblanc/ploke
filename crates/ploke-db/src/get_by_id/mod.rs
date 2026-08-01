@@ -8,6 +8,7 @@ use uuid::Uuid;
 use crate::{
     Database, DbError, NodeType, QueryResult,
     database::{ImmutQuery, to_string, to_uuid},
+    multi_embedding::db_ext::METHOD_NODE_ANCESTOR_RULE,
     result::{get_byte_offsets, get_pos},
 };
 
@@ -16,7 +17,7 @@ lazy_static! {
     /// In multi-embedding schema, embeddings are stored in separate relations,
     /// so we don't filter by embedding field here.
     // ANCHOR: common_fields_embedded_primary_nodes
-    pub static ref COMMON_FIELDS_EMBEDDED: String = NodeType::primary_nodes().iter().map(|ty| {
+    pub static ref COMMON_FIELDS_EMBEDDED: String = NodeType::primary_and_assoc_nodes().iter().map(|ty| {
         let rel = ty.relation_str();
             format!(r#"
             has_embedding[id, name, hash, span] := *{rel}{{id, name, tracking_hash: hash, span @ 'NOW'}}
@@ -127,6 +128,7 @@ pub trait GetNodeInfo: ImmutQuery {
         {common_fields_embedded}
 
         parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}}
+        {method_ancestor_rule}
 
         ancestor[desc, asc] := parent_of[desc, asc]
         ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
@@ -137,14 +139,15 @@ pub trait GetNodeInfo: ImmutQuery {
 
         new_data[name, canon_path, file_path] := 
             *module{{ id: module_node_id, path: canon_path @ 'NOW' }},
-            parent_of[node_id, module_node_id],
+            ancestor[node_id, module_node_id],
             has_embedding[node_id, name, hash, span],
             to_find_node_id = to_uuid("{to_find_node_id}"),
             to_find_node_id == node_id,
             containing_file[file_path, to_find_node_id]
 
         ?[name, canon_path, file_path] := new_data[name, canon_path, file_path]
-        "#
+        "#,
+            method_ancestor_rule = METHOD_NODE_ANCESTOR_RULE
         );
         self.raw_query(&query)
     }

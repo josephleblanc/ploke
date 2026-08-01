@@ -193,10 +193,10 @@ fn tool_defs() -> Vec<Value> {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "token_budget": { "type": "integer", "minimum": 1, "description": "Maximum tokens of code context to return." },
-                    "hint": { "type": "string", "description": "Optional hint to guide which code to retrieve." }
+                    "token_budget_per_result": { "type": "integer", "minimum": 1, "description": "Maximum tokens per returned code snippet." },
+                    "token_budget_total": { "type": "integer", "minimum": 1, "description": "Maximum total tokens across all returned snippets." },
+                    "search_term": { "type": "string", "description": "Optional search term to guide which code to retrieve." }
                 },
-                "required": ["token_budget"],
                 "additionalProperties": false
             }
         }
@@ -302,7 +302,11 @@ fn local_apply_code_edit(file_path: &Path, start: usize, end: usize, replacement
     .unwrap_or_else(|_| "{}".to_string())
 }
 
-fn local_request_code_context(hint: Option<&str>, token_budget: u32) -> String {
+fn local_request_code_context(
+    search_term: Option<&str>,
+    token_budget_per_result: u32,
+    token_budget_total: u32,
+) -> String {
     // Instead of BM25, perform a simple grep over the fixture to produce a small snippet.
     // This keeps the test self-contained. If a richer DB is available, we could swap it in.
     let root = workspace_root();
@@ -315,16 +319,24 @@ fn local_request_code_context(hint: Option<&str>, token_budget: u32) -> String {
                 && meta.is_file()
                 && let Ok(body) = fs::read_to_string(entry.path())
             {
-                let h = hint.unwrap_or("SimpleStruct");
+                let h = search_term.unwrap_or("SimpleStruct");
                 if body.contains(h) {
-                    // Return up to token_budget/4 chars from the first match vicinity
+                    // Return up to token_budget_per_result/4 chars from the first match vicinity
                     let idx = body.find(h).unwrap_or(0);
                     let start = idx.saturating_sub(120);
                     let end = (idx + h.len() + 120).min(body.len());
                     let snippet = body[start..end].to_string();
+                    if hits.len()
+                        >= (token_budget_total / token_budget_per_result.max(1)).max(1) as usize
+                    {
+                        continue;
+                    }
                     hits.push((
                         entry.file_name().to_string_lossy().to_string(),
-                        snippet.chars().take(token_budget as usize / 4).collect(),
+                        snippet
+                            .chars()
+                            .take(token_budget_per_result as usize / 4)
+                            .collect(),
                     ));
                 }
             }
@@ -332,7 +344,7 @@ fn local_request_code_context(hint: Option<&str>, token_budget: u32) -> String {
     }
 
     serde_json::to_string(&json!({
-        "hint": hint.unwrap_or_default(),
+        "search_term": search_term.unwrap_or_default(),
         "hits": hits
     }))
     .unwrap_or_else(|_| "{}".to_string())
@@ -450,17 +462,25 @@ async fn run_tool_roundtrip(
             local_apply_code_edit(tf.path(), pos, pos + 5, "ploke")
         }
         "request_code_context" => {
-            // Try to leverage the fixture content; token_budget approx
-            let hint = tool_args
-                .get("hint")
+            // Try to leverage the fixture content; token budgets are approximate.
+            let search_term = tool_args
+                .get("search_term")
                 .and_then(|h| h.as_str())
                 .unwrap_or("SimpleStruct");
-            let token_budget = tool_args
-                .get("token_budget")
+            let token_budget_per_result = tool_args
+                .get("token_budget_per_result")
                 .and_then(|t| t.as_u64())
                 .unwrap_or(512) as u32;
+            let token_budget_total = tool_args
+                .get("token_budget_total")
+                .and_then(|t| t.as_u64())
+                .unwrap_or(2048) as u32;
             // Optional: If we ever wire RagService, we'd call bm25_rebuild() here.
-            local_request_code_context(Some(hint), token_budget)
+            local_request_code_context(
+                Some(search_term),
+                token_budget_per_result,
+                token_budget_total,
+            )
         }
         _ => {
             warn!("unknown tool '{}'", tool_name);

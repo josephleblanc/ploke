@@ -1,0 +1,1270 @@
+#![allow(dead_code)]
+// C3 -> C4 is used by run_planned_child; some replay/test helpers remain intentionally unused.
+
+// ANCHOR: prototype1_c3_to_c4
+//! Explicit `C3 -> C4` prototype configuration transition.
+//!
+//! Temporary note:
+//! This file models the runtime handoff seam that the current prototype still
+//! handles inside the parent/child process helper. It introduces a
+//! journal-backed handshake for child acknowledgement. The live child path uses
+//! this typed carrier, and the journal has replay classification for these
+//! entries even when a particular child exits before a ready acknowledgement.
+//!
+//! The current scaffold assumes:
+//! - `C3` means the child binary exists but has not yet acknowledged itself
+//! - `C4` means the parent has observed a matching child-ready witness
+//! - the handshake is mediated through the shared transition journal
+//! - the fresh child process bootstraps from one persisted invocation record
+//!   written before spawn
+// ANCHOR_END: prototype1_c3_to_c4
+
+use crate::prelude::*;
+
+use std::process::{Child as ProcessChild, Command as ProcessCommand, Stdio};
+use std::sync::{Arc, Mutex, mpsc};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use tracing::{debug, instrument, warn};
+
+use crate::intervention::{
+    CommitError, Intervention, Outcome, Prototype1NodeStatus, RecordStore, Surface,
+    project_node_status, write_parent_node_projection,
+};
+
+use super::c1::{Acknowledged, Binary, Child, ChildAckState, Parent, Present, Prototype};
+use super::channel::{Channel, Cursor, FileTransport, ToParent};
+use super::eval_store;
+use super::event::{ChildRuntimeLifecycle, ContentHash, Paths, RecordedAt, Refs, RuntimeId};
+use super::invocation::{
+    ChildInvocation, ProcessIncarnation, channel_root, invocation_path, process_incarnation,
+    write_child_invocation,
+};
+use super::journal::{
+    JournalEntry, PrototypeJournal, PrototypeJournalError, ReadyEntry, SpawnEntry,
+    SpawnObservation, SpawnPhase, Streams,
+};
+
+/// Environment key used to tell the child which runtime instance it is.
+pub(crate) const RUNTIME_ID_ENV: &str = "PLOKE_PROTOTYPE1_RUNTIME_ID";
+
+/// Environment key used to tell the child which campaign owns this runtime.
+pub(crate) const CAMPAIGN_ID_ENV: &str = "PLOKE_PROTOTYPE1_CAMPAIGN_ID";
+
+/// Environment key used to tell the child which node owns this runtime.
+pub(crate) const NODE_ID_ENV: &str = "PLOKE_PROTOTYPE1_NODE_ID";
+
+/// Environment key used to tell the child which branch is under evaluation.
+pub(crate) const BRANCH_ID_ENV: &str = "PLOKE_PROTOTYPE1_BRANCH_ID";
+
+/// Environment key used to tell the child which generation is under evaluation.
+pub(crate) const GENERATION_ENV: &str = "PLOKE_PROTOTYPE1_GENERATION";
+
+/// Environment key used to tell the child which journal to append to.
+pub(crate) const JOURNAL_PATH_ENV: &str = "PLOKE_PROTOTYPE1_TRANSITION_JOURNAL";
+
+const READY_TIMEOUT: Duration = Duration::from_secs(10);
+const READY_POLL: Duration = Duration::from_millis(50);
+
+/// `C4`: parent binary over child artifact world with a concrete child runtime
+/// acknowledged through the shared journal.
+pub(crate) type C4 = Prototype<Parent, Child, Present, Acknowledged>;
+
+/// `C3`: parent binary over child artifact world with a child binary present
+/// but not yet acknowledged.
+pub(crate) type C3 = super::c2::C3;
+
+fn spawn_entry<AckState>(
+    config: &Prototype<Parent, Child, Present, AckState>,
+    runtime_id: RuntimeId,
+    phase: SpawnPhase,
+    argv: Vec<String>,
+    parent_pid: u32,
+    child_pid: Option<u32>,
+    incarnation: Option<ProcessIncarnation>,
+    streams: Streams,
+    result: Option<SpawnObservation>,
+) -> SpawnEntry
+where
+    AckState: ChildAckState,
+{
+    let child_lifecycle = match result {
+        Some(SpawnObservation::Acknowledged) => ChildRuntimeLifecycle::Acknowledged,
+        Some(SpawnObservation::TerminatedBeforeAcknowledged { .. }) => {
+            ChildRuntimeLifecycle::Terminated
+        }
+        Some(SpawnObservation::ReadyTimedOut { .. }) => ChildRuntimeLifecycle::Terminated,
+        None => ChildRuntimeLifecycle::Spawned,
+    };
+    SpawnEntry {
+        runtime_id,
+        phase,
+        recorded_at: RecordedAt::now(),
+        generation: config.node.generation,
+        refs: Refs {
+            campaign_id: config.campaign_id.clone(),
+            node_id: config.node.node_id.clone(),
+            instance_id: config.node.instance_id.clone(),
+            source_state_id: config.node.source_state_id.clone(),
+            branch_id: config.node.branch_id.clone(),
+            candidate_id: config.node.candidate_id.clone(),
+            branch_label: config.resolved.branch.branch_label.clone(),
+            spec_id: config.resolved.branch.synthesized_spec_id.clone(),
+        },
+        paths: Paths {
+            repo_root: config.artifact.repo_root.clone(),
+            workspace_root: config.artifact.repo_root.clone(),
+            binary_path: config.binary.child_path.clone(),
+            target_relpath: config.artifact.target_relpath.clone(),
+            absolute_path: config
+                .artifact
+                .repo_root
+                .join(&config.artifact.target_relpath),
+        },
+        world: crate::cli::prototype1_state::event::World {
+            node_status: config.node.status,
+            running_binary: config.binary.parent_running,
+            running_lineage: crate::cli::prototype1_state::event::LineageMark::Parent,
+            artifact_lineage: crate::cli::prototype1_state::event::LineageMark::Child,
+            child_lifecycle: Some(child_lifecycle),
+        },
+        child_lifecycle,
+        parent_pid,
+        child_pid,
+        incarnation,
+        argv,
+        streams: Some(streams),
+        result,
+    }
+}
+
+fn streams<AckState>(
+    config: &Prototype<Parent, Child, Present, AckState>,
+    runtime_id: RuntimeId,
+) -> Streams
+where
+    AckState: ChildAckState,
+{
+    let dir = config
+        .node
+        .node_dir
+        .join("streams")
+        .join(runtime_id.to_string());
+    Streams {
+        stdout: dir.join("stdout.log"),
+        stderr: dir.join("stderr.log"),
+    }
+}
+
+fn open_streams(streams: &Streams) -> Result<(fs::File, fs::File), SpawnChildError> {
+    let dir = streams
+        .stdout
+        .parent()
+        .ok_or_else(|| SpawnChildError::InvalidStreamPath {
+            path: streams.stdout.clone(),
+        })?;
+    fs::create_dir_all(dir).map_err(|source| SpawnChildError::CreateStreamsDir {
+        path: dir.to_path_buf(),
+        source,
+    })?;
+    let stdout =
+        fs::File::create(&streams.stdout).map_err(|source| SpawnChildError::OpenStdout {
+            path: streams.stdout.clone(),
+            source,
+        })?;
+    let stderr =
+        fs::File::create(&streams.stderr).map_err(|source| SpawnChildError::OpenStderr {
+            path: streams.stderr.clone(),
+            source,
+        })?;
+    Ok((stdout, stderr))
+}
+
+fn isolate_process_group(command: &mut ProcessCommand) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+}
+
+/// Durable release path written only after the matching Spawned journal entry
+/// has been fsynced.
+pub(crate) fn spawn_barrier_path(invocation_path: &Path) -> PathBuf {
+    invocation_path.with_extension("spawned")
+}
+
+fn publish_spawn_barrier(
+    path: &Path,
+    incarnation: &ProcessIncarnation,
+) -> Result<(), std::io::Error> {
+    let bytes = serde_json::to_vec(incarnation).map_err(std::io::Error::other)?;
+    if crate::durable_io::create_atomic(path, &bytes)? {
+        Ok(())
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("spawn barrier '{}' already exists", path.display()),
+        ))
+    }
+}
+
+fn terminate_spawned_child(child: &mut ProcessChild) -> Result<(), std::io::Error> {
+    if child.try_wait()?.is_some() {
+        return Ok(());
+    }
+
+    #[cfg(unix)]
+    {
+        let pid = i32::try_from(child.id()).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("child pid {} exceeds the process-id range", child.id()),
+            )
+        })?;
+        // SAFETY: C3 gives the child its own process group before spawn. A
+        // negative PID therefore targets only this attempted child runtime.
+        if unsafe { libc::kill(-pid, libc::SIGKILL) } != 0 {
+            let source = std::io::Error::last_os_error();
+            if source.raw_os_error() != Some(libc::ESRCH) {
+                return Err(source);
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    child.kill()?;
+
+    child.wait().map(|_| ())
+}
+
+fn cleanup_spawn_error(child: &mut ProcessChild, error: SpawnChildError) -> SpawnChildError {
+    let child_pid = child.id();
+    match terminate_spawned_child(child) {
+        Ok(()) => error,
+        Err(source) => SpawnChildError::CleanupSpawn {
+            child_pid,
+            detail: error.to_string(),
+            source,
+        },
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ReaperAction {
+    Wait,
+    Terminate,
+}
+
+struct ChildReaper {
+    child_pid: u32,
+    command: mpsc::Sender<ReaperAction>,
+    handle: thread::JoinHandle<Result<(), std::io::Error>>,
+}
+
+impl ChildReaper {
+    fn start(
+        child: ProcessChild,
+        runtime_id: RuntimeId,
+    ) -> Result<Self, (ProcessChild, std::io::Error)> {
+        let child_pid = child.id();
+        let child_slot = Arc::new(Mutex::new(Some(child)));
+        let reaper_slot = Arc::clone(&child_slot);
+        let (command, receiver) = mpsc::channel();
+        let handle = thread::Builder::new()
+            .name(format!("p1-child-{child_pid}"))
+            .spawn(move || {
+                let mut child = reaper_slot
+                    .lock()
+                    .expect("child reaper slot lock")
+                    .take()
+                    .expect("child reaper owns process handle");
+                let action = receiver.recv().unwrap_or(ReaperAction::Terminate);
+                let result = match action {
+                    ReaperAction::Wait => child.wait().map(|status| {
+                        debug!(
+                            target: ploke_core::EXECUTION_DEBUG_TARGET,
+                            runtime_id = %runtime_id,
+                            child_pid,
+                            ?status,
+                            "reaped child runtime process"
+                        );
+                    }),
+                    ReaperAction::Terminate => terminate_spawned_child(&mut child),
+                };
+                if let Err(source) = &result {
+                    warn!(
+                        target: ploke_core::EXECUTION_DEBUG_TARGET,
+                        runtime_id = %runtime_id,
+                        child_pid,
+                        error = %source,
+                        "failed to reap child runtime process"
+                    );
+                }
+                result
+            });
+
+        match handle {
+            Ok(handle) => Ok(Self {
+                child_pid,
+                command,
+                handle,
+            }),
+            Err(source) => {
+                let child = child_slot
+                    .lock()
+                    .expect("failed child reaper slot lock")
+                    .take()
+                    .expect("failed child reaper retains process handle");
+                Err((child, source))
+            }
+        }
+    }
+
+    fn commit(self) -> Result<(), std::io::Error> {
+        self.command.send(ReaperAction::Wait).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                format!("child {} reaper stopped before commit", self.child_pid),
+            )
+        })
+    }
+
+    fn abort(self) -> Result<(), std::io::Error> {
+        self.command.send(ReaperAction::Terminate).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                format!("child {} reaper stopped before abort", self.child_pid),
+            )
+        })?;
+        self.handle
+            .join()
+            .map_err(|_| std::io::Error::other("child reaper thread panicked"))?
+    }
+}
+
+/// Shared journal-backed handoff view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Handoff {
+    path: PathBuf,
+}
+
+impl Handoff {
+    fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    fn with_txn<R>(
+        &self,
+        f: impl FnOnce(&mut HandoffTxn) -> Result<R, PrototypeJournalError>,
+    ) -> Result<R, PrototypeJournalError> {
+        let mut txn = HandoffTxn {
+            journal: PrototypeJournal::new(self.path.clone()),
+        };
+        let result = f(&mut txn)?;
+        drop(txn);
+        Ok(result)
+    }
+}
+
+struct HandoffTxn {
+    journal: PrototypeJournal,
+}
+
+impl HandoffTxn {
+    fn record_starting(&mut self, entry: SpawnEntry) -> Result<(), PrototypeJournalError> {
+        self.journal.append(JournalEntry::SpawnChild(entry))
+    }
+
+    fn record_spawned(&mut self, entry: SpawnEntry) -> Result<(), PrototypeJournalError> {
+        self.journal.append(JournalEntry::SpawnChild(entry))
+    }
+
+    fn record_ready(&mut self, entry: ReadyEntry) -> Result<(), PrototypeJournalError> {
+        self.journal.append(JournalEntry::ChildReady(entry))
+    }
+
+    fn record_observed(&mut self, entry: SpawnEntry) -> Result<(), PrototypeJournalError> {
+        self.journal.append(JournalEntry::SpawnChild(entry))
+    }
+}
+
+/// Child-side helper for later wiring. This writes the ready witness without
+/// leaving any journal handle alive after the closure returns.
+#[instrument(
+    target = "ploke_exec",
+    level = "debug",
+    skip(journal_path, entry),
+    fields(
+        phase = "record_child_ready",
+        transition = "Child<Starting>->Child<Ready>",
+        runtime_id = %entry.runtime_id,
+        node_id = %entry.refs.node_id,
+    )
+)]
+pub(crate) fn record_child_ready(
+    journal_path: impl Into<PathBuf>,
+    entry: ReadyEntry,
+) -> Result<(), PrototypeJournalError> {
+    let journal_path = journal_path.into();
+    debug!(
+        target: ploke_core::EXECUTION_DEBUG_TARGET,
+        runtime_id = %entry.runtime_id,
+        journal_path = %journal_path.display(),
+        "appending child ready entry"
+    );
+    Handoff::new(journal_path).with_txn(|txn| txn.record_ready(entry))
+}
+
+/// Typed failure for the `C3 -> C4` spawn transition.
+#[derive(Debug, Error)]
+pub(crate) enum SpawnChildError {
+    #[error("failed to load node record '{node_id}'")]
+    LoadNode {
+        node_id: String,
+        #[source]
+        source: PrepareError,
+    },
+    #[error("failed to load runner request for node '{node_id}'")]
+    LoadRequest {
+        node_id: String,
+        #[source]
+        source: PrepareError,
+    },
+    #[error("failed to resolve treatment branch '{branch_id}' for node '{node_id}'")]
+    ResolveBranch {
+        node_id: String,
+        branch_id: String,
+        #[source]
+        source: PrepareError,
+    },
+    #[error("node '{node_id}' is not binary_built: observed '{observed:?}'")]
+    UnexpectedNodeStatus {
+        node_id: String,
+        observed: Prototype1NodeStatus,
+    },
+    #[error("failed to read target artifact '{path}': {source}")]
+    ReadTarget {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("expected built artifact at '{path}' to match proposed branch content")]
+    ArtifactNotBuilt {
+        path: PathBuf,
+        expected_proposed_hash: ContentHash,
+        observed_hash: ContentHash,
+    },
+    #[error("expected promoted child binary at '{path}' before spawn")]
+    MissingChildBinary { path: PathBuf },
+    #[error("runner request binary path '{request}' does not match config child path '{config}'")]
+    BinaryPathMismatch { request: PathBuf, config: PathBuf },
+    #[error("failed to spawn child binary '{path}': {source}")]
+    SpawnInvoke {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to start process reaper for child {child_pid}: {source}")]
+    StartReaper {
+        child_pid: u32,
+        source: std::io::Error,
+    },
+    #[error("failed to control process reaper for child {child_pid}: {source}")]
+    ControlReaper {
+        child_pid: u32,
+        source: std::io::Error,
+    },
+    #[error("spawned child process {child_pid} disappeared before its identity was captured")]
+    ChildDisappeared { child_pid: u32 },
+    #[error("failed to capture exact identity for spawned child process {child_pid}: {source}")]
+    CaptureIncarnation {
+        child_pid: u32,
+        source: std::io::Error,
+    },
+    #[error("failed to publish child spawn barrier '{path}': {source}")]
+    PublishBarrier {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error(
+        "failed to terminate and reap child process {child_pid} after spawn failure ({detail}): {source}"
+    )]
+    CleanupSpawn {
+        child_pid: u32,
+        detail: String,
+        source: std::io::Error,
+    },
+    #[error("invalid child process stream path '{path}'")]
+    InvalidStreamPath { path: PathBuf },
+    #[error("failed to create child process stream directory '{path}': {source}")]
+    CreateStreamsDir {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to open child process stdout '{path}': {source}")]
+    OpenStdout {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to open child process stderr '{path}': {source}")]
+    OpenStderr {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to persist invocation for node '{node_id}'")]
+    WriteInvocation {
+        node_id: String,
+        #[source]
+        source: PrepareError,
+    },
+    #[error("failed to mirror child spawn '{node_id}' binary provenance to eval-store")]
+    EvalStoreSpawnProvenance {
+        node_id: String,
+        #[source]
+        source: eval_store::EvalStoreError,
+    },
+    #[error("invalid invocation bootstrap for node '{node_id}'")]
+    InvalidInvocationBootstrap {
+        node_id: String,
+        #[source]
+        source: PrepareError,
+    },
+    #[error("failed to query child runtime status for runtime '{runtime_id}': {source}")]
+    PollChildStatus {
+        runtime_id: RuntimeId,
+        source: std::io::Error,
+    },
+    #[error("failed to update node '{node_id}' status")]
+    UpdateNodeStatus {
+        node_id: String,
+        #[source]
+        source: PrepareError,
+    },
+    #[error("failed to read handoff journal")]
+    ReadJournal {
+        #[source]
+        source: PrototypeJournalError,
+    },
+    #[error("failed to read child channel for runtime '{runtime_id}': {detail}")]
+    ReadChannel {
+        runtime_id: RuntimeId,
+        detail: String,
+    },
+}
+
+/// Committed non-success result for the `C3 -> C4` handoff transition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Rejected {
+    ExitedBeforeReady {
+        runtime_id: RuntimeId,
+        child_pid: u32,
+        exit_code: Option<i32>,
+    },
+    ReadyTimedOut {
+        runtime_id: RuntimeId,
+        child_pid: u32,
+        waited_ms: u64,
+    },
+}
+
+impl Rejected {
+    fn spawn_result(&self) -> SpawnObservation {
+        match self {
+            Self::ExitedBeforeReady { exit_code, .. } => {
+                SpawnObservation::TerminatedBeforeAcknowledged {
+                    exit_code: *exit_code,
+                }
+            }
+            Self::ReadyTimedOut { waited_ms, .. } => SpawnObservation::ReadyTimedOut {
+                waited_ms: *waited_ms,
+            },
+        }
+    }
+}
+
+/// Surface over the built child binary path used by the handoff transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct ChildBinarySurface;
+
+impl Surface<C3> for ChildBinarySurface {
+    type Target = ();
+    type ReadView = PathBuf;
+    type Error = SpawnChildError;
+
+    fn read_view(&self, config: &C3, _: &Self::Target) -> Result<Self::ReadView, Self::Error> {
+        Ok(config.binary.child_path.clone())
+    }
+}
+
+/// Concrete intervention mediating `C3 -> C4`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SpawnChild {
+    runtime_id: RuntimeId,
+}
+
+impl SpawnChild {
+    pub(crate) fn new() -> Self {
+        Self {
+            runtime_id: RuntimeId::new(),
+        }
+    }
+}
+
+impl Intervention<C3, C4> for SpawnChild {
+    type Surface = ChildBinarySurface;
+    type Journal = PrototypeJournal;
+    type Error = SpawnChildError;
+    type Rejected = Rejected;
+
+    #[instrument(
+        target = "ploke_exec",
+        level = "debug",
+        skip(self, from, records),
+        fields(
+            phase = "spawn_child_runtime",
+            transition = "C3->C4",
+            node_id = %from.node.node_id,
+            branch_id = %from.resolved.branch.branch_id,
+            generation = from.node.generation,
+            runtime_id = %self.runtime_id,
+        )
+    )]
+    fn transition(
+        &self,
+        from: C3,
+        records: &mut Self::Journal,
+    ) -> Result<
+        Outcome<C4, Self::Rejected>,
+        CommitError<Self::Error, <Self::Journal as RecordStore>::Error>,
+    > {
+        let binary_path = ChildBinarySurface
+            .read_view(&from, &())
+            .map_err(CommitError::Transition)?;
+        if from.request.binary_path != from.binary.child_path {
+            return Err(CommitError::Transition(
+                SpawnChildError::BinaryPathMismatch {
+                    request: from.request.binary_path.clone(),
+                    config: from.binary.child_path.clone(),
+                },
+            ));
+        }
+        if !binary_path.is_file() {
+            return Err(CommitError::Transition(
+                SpawnChildError::MissingChildBinary { path: binary_path },
+            ));
+        }
+        let invocation_path = invocation_path(&from.node.node_dir, self.runtime_id);
+        let channel_root = channel_root(&from.node.node_dir, self.runtime_id);
+        let invocation = ChildInvocation::with_bootstrap(
+            from.campaign_id.clone(),
+            from.node.clone(),
+            from.request.clone(),
+            from.resolved.clone(),
+            self.runtime_id,
+            records.path().to_path_buf(),
+            channel_root,
+        )
+        .map_err(|source| {
+            CommitError::Transition(SpawnChildError::InvalidInvocationBootstrap {
+                node_id: from.node.node_id.clone(),
+                source,
+            })
+        })?;
+        write_child_invocation(&invocation_path, &invocation).map_err(|source| {
+            CommitError::Transition(SpawnChildError::WriteInvocation {
+                node_id: from.node.node_id.clone(),
+                source,
+            })
+        })?;
+        let child_argv = invocation.launch_args(&invocation_path);
+
+        let handoff = Handoff::new(records.path().to_path_buf());
+        let parent_pid = std::process::id();
+        let streams = streams(&from, self.runtime_id);
+        handoff
+            .with_txn(|txn| {
+                txn.record_starting(spawn_entry(
+                    &from,
+                    self.runtime_id,
+                    SpawnPhase::Starting,
+                    child_argv.clone(),
+                    parent_pid,
+                    None,
+                    None,
+                    streams.clone(),
+                    None,
+                ))
+            })
+            .map_err(|source| CommitError::Record {
+                phase: crate::intervention::CommitPhase::Before,
+                source,
+            })?;
+        let (stdout, stderr) = open_streams(&streams).map_err(CommitError::Transition)?;
+        let mut command = ProcessCommand::new(&binary_path);
+        command
+            .args(&child_argv)
+            .current_dir(&from.artifact.repo_root)
+            .env(CAMPAIGN_ID_ENV, from.campaign_id.as_str())
+            .env(NODE_ID_ENV, &from.node.node_id)
+            .env(RUNTIME_ID_ENV, self.runtime_id.to_string())
+            .env(JOURNAL_PATH_ENV, handoff.path.as_os_str())
+            .env(BRANCH_ID_ENV, &from.resolved.branch.branch_id)
+            .env(GENERATION_ENV, from.node.generation.to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr));
+        isolate_process_group(&mut command);
+        let mut child = command.spawn().map_err(|source| {
+            CommitError::Transition(SpawnChildError::SpawnInvoke {
+                path: binary_path.clone(),
+                source,
+            })
+        })?;
+        let child_pid = child.id();
+        let incarnation = match process_incarnation(child_pid) {
+            Ok(Some(incarnation)) => incarnation,
+            Ok(None) => {
+                let error = SpawnChildError::ChildDisappeared { child_pid };
+                return Err(CommitError::Transition(cleanup_spawn_error(
+                    &mut child, error,
+                )));
+            }
+            Err(source) => {
+                let error = SpawnChildError::CaptureIncarnation { child_pid, source };
+                return Err(CommitError::Transition(cleanup_spawn_error(
+                    &mut child, error,
+                )));
+            }
+        };
+        debug!(
+            target: ploke_core::EXECUTION_DEBUG_TARGET,
+            node_id = %from.node.node_id,
+            branch_id = %from.resolved.branch.branch_id,
+            runtime_id = %self.runtime_id,
+            child_pid,
+            journal_path = %handoff.path.display(),
+            "spawned child runtime"
+        );
+
+        let spawned = handoff.with_txn(|txn| {
+            txn.record_spawned(spawn_entry(
+                &from,
+                self.runtime_id,
+                SpawnPhase::Spawned,
+                child_argv.clone(),
+                parent_pid,
+                Some(child_pid),
+                Some(incarnation.clone()),
+                streams.clone(),
+                None,
+            ))
+        });
+        if let Err(source) = spawned {
+            let detail = format!("failed to publish Spawned journal entry: {source}");
+            if let Err(cleanup) = terminate_spawned_child(&mut child) {
+                return Err(CommitError::Transition(SpawnChildError::CleanupSpawn {
+                    child_pid,
+                    detail,
+                    source: cleanup,
+                }));
+            }
+            return Err(CommitError::Record {
+                phase: crate::intervention::CommitPhase::Before,
+                source,
+            });
+        }
+        let barrier_path = spawn_barrier_path(&invocation_path);
+        if let Err(source) = publish_spawn_barrier(&barrier_path, &incarnation) {
+            let error = SpawnChildError::PublishBarrier {
+                path: barrier_path,
+                source,
+            };
+            return Err(CommitError::Transition(cleanup_spawn_error(
+                &mut child, error,
+            )));
+        }
+
+        let parent_channel = invocation
+            .channel_endpoints()
+            .map(|endpoints| Channel::for_role(&from, endpoints, FileTransport));
+        let outcome = match wait_for_ready(
+            parent_channel.as_ref(),
+            &mut child,
+            self.runtime_id,
+            READY_TIMEOUT,
+            READY_POLL,
+        ) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                return Err(CommitError::Transition(cleanup_spawn_error(
+                    &mut child, error,
+                )));
+            }
+        };
+
+        match outcome {
+            WaitOutcome::ReadyFromChannel => {
+                let reaper = match ChildReaper::start(child, self.runtime_id) {
+                    Ok(reaper) => reaper,
+                    Err((mut child, source)) => {
+                        let error = SpawnChildError::StartReaper { child_pid, source };
+                        return Err(CommitError::Transition(cleanup_spawn_error(
+                            &mut child, error,
+                        )));
+                    }
+                };
+                let node = project_node_status(&from.node, Prototype1NodeStatus::Running);
+                let next = Prototype {
+                    campaign_id: from.campaign_id,
+                    campaign_manifest_path: from.campaign_manifest_path,
+                    node,
+                    request: from.request,
+                    resolved: from.resolved,
+                    artifact: from.artifact,
+                    binary: Binary {
+                        parent_running: true,
+                        child_path: from.binary.child_path,
+                        child_runtime: Some(self.runtime_id),
+                        _lineage: std::marker::PhantomData,
+                        _child: std::marker::PhantomData,
+                        _ack: std::marker::PhantomData,
+                    },
+                };
+
+                if let Err(source) = mirror_child_spawn_provenance(&next) {
+                    let error =
+                        CommitError::Transition(SpawnChildError::EvalStoreSpawnProvenance {
+                            node_id: next.node.node_id.clone(),
+                            source,
+                        });
+                    if let Err(source) = reaper.abort() {
+                        return Err(CommitError::Transition(SpawnChildError::CleanupSpawn {
+                            child_pid,
+                            detail: format!("post-ready C3-to-C4 projection failed: {error:?}"),
+                            source,
+                        }));
+                    }
+                    return Err(error);
+                }
+
+                if let Err(source) = handoff.with_txn(|txn| {
+                    txn.record_observed(spawn_entry(
+                        &next,
+                        self.runtime_id,
+                        SpawnPhase::Observed,
+                        child_argv.clone(),
+                        parent_pid,
+                        Some(child_pid),
+                        Some(incarnation.clone()),
+                        streams.clone(),
+                        Some(SpawnObservation::Acknowledged),
+                    ))
+                }) {
+                    let error = CommitError::Record {
+                        phase: crate::intervention::CommitPhase::After,
+                        source,
+                    };
+                    if let Err(source) = reaper.abort() {
+                        return Err(CommitError::Transition(SpawnChildError::CleanupSpawn {
+                            child_pid,
+                            detail: format!("post-ready C3-to-C4 commit failed: {error:?}"),
+                            source,
+                        }));
+                    }
+                    return Err(error);
+                }
+                debug!(
+                    target: ploke_core::EXECUTION_DEBUG_TARGET,
+                    node_id = %next.node.node_id,
+                    branch_id = %next.resolved.branch.branch_id,
+                    runtime_id = %self.runtime_id,
+                    child_pid,
+                    "recorded spawn observed entry"
+                );
+                // The journal entry above is the acknowledgement authority.
+                // After it commits, a projection failure must leave the child
+                // running for journal-based recovery instead of contradicting
+                // the durable C4 witness by killing the runtime.
+                if let Err(source) = write_parent_node_projection(&next.campaign_id, &next.node) {
+                    reaper.commit().map_err(|source| {
+                        CommitError::Transition(SpawnChildError::ControlReaper {
+                            child_pid,
+                            source,
+                        })
+                    })?;
+                    return Err(CommitError::Transition(SpawnChildError::UpdateNodeStatus {
+                        node_id: next.node.node_id.clone(),
+                        source,
+                    }));
+                }
+                reaper.commit().map_err(|source| {
+                    CommitError::Transition(SpawnChildError::ControlReaper { child_pid, source })
+                })?;
+
+                Ok(Outcome::Advanced(next))
+            }
+            WaitOutcome::Rejected(rejected) => {
+                debug!(
+                    target: ploke_core::EXECUTION_DEBUG_TARGET,
+                    node_id = %from.node.node_id,
+                    branch_id = %from.resolved.branch.branch_id,
+                    runtime_id = %self.runtime_id,
+                    rejected = ?rejected,
+                    "spawn handshake rejected"
+                );
+                let failed_node = project_node_status(&from.node, Prototype1NodeStatus::Failed);
+                write_parent_node_projection(&from.campaign_id, &failed_node).map_err(
+                    |source| {
+                        CommitError::Transition(SpawnChildError::UpdateNodeStatus {
+                            node_id: from.node.node_id.clone(),
+                            source,
+                        })
+                    },
+                )?;
+                let failed = Prototype {
+                    campaign_id: from.campaign_id,
+                    campaign_manifest_path: from.campaign_manifest_path,
+                    node: failed_node,
+                    request: from.request,
+                    resolved: from.resolved,
+                    artifact: from.artifact,
+                    binary: from.binary,
+                };
+
+                handoff
+                    .with_txn(|txn| {
+                        txn.record_observed(spawn_entry(
+                            &failed,
+                            self.runtime_id,
+                            SpawnPhase::Observed,
+                            child_argv.clone(),
+                            parent_pid,
+                            Some(child_pid),
+                            Some(incarnation),
+                            streams.clone(),
+                            Some(rejected.spawn_result()),
+                        ))
+                    })
+                    .map_err(|source| CommitError::Record {
+                        phase: crate::intervention::CommitPhase::After,
+                        source,
+                    })?;
+
+                Ok(Outcome::Rejected(rejected))
+            }
+        }
+    }
+}
+
+fn mirror_child_spawn_provenance(next: &C4) -> Result<(), eval_store::EvalStoreError> {
+    let db_path = eval_store::prototype1_eval_store_db_path(&next.campaign_manifest_path);
+    if !db_path.exists() {
+        return Ok(());
+    }
+
+    let runtime_id = *next
+        .binary
+        .child_runtime
+        .as_ref()
+        .expect("C4 carries acknowledged child runtime");
+    let runtime_id_ref = runtime_id.to_string();
+    let stream_paths = streams(next, runtime_id);
+    let recorded_at = chrono::Utc::now().to_rfc3339();
+    mirror_runtime_stream_log_refs(
+        &db_path,
+        &next.campaign_id,
+        runtime_id,
+        &stream_paths,
+        &recorded_at,
+    )?;
+    let artifact_id = next
+        .node
+        .derived_artifact_id
+        .as_ref()
+        .map(|id| id.to_string());
+    let binary_path = next.binary.child_path.clone();
+    let binary_hash = eval_store::file_sha256(&binary_path)?;
+    eval_store::write_build_provenance_to_owner_db(
+        &db_path,
+        eval_store::BuildProvenanceEvidence {
+            binary_ref: eval_store::BinaryRefEvidence {
+                campaign_id: next.campaign_id.clone(),
+                artifact_id: artifact_id.clone(),
+                built_by: Some(runtime_id_ref.clone()),
+                source_ref: binary_path.display().to_string(),
+                content_sha256: Some(binary_hash),
+                protocol_digest: None,
+                recorded_at: Some(recorded_at.clone()),
+            },
+            build_event: eval_store::BuildEventEvidence {
+                campaign_id: next.campaign_id.clone(),
+                node_id: next.node.node_id.clone(),
+                runtime_id: Some(runtime_id_ref),
+                artifact_id,
+                phase: "spawn".to_string(),
+                outcome: "acknowledged".to_string(),
+                binary_ref: None,
+                log_ref: None,
+                recorded_at,
+            },
+        },
+    )?;
+    Ok(())
+}
+
+fn mirror_runtime_stream_log_refs(
+    db_path: &std::path::Path,
+    campaign_id: &ploke_records::ids::CampaignId,
+    runtime_id: RuntimeId,
+    streams: &Streams,
+    recorded_at: &str,
+) -> Result<(), eval_store::EvalStoreError> {
+    for (log_kind, source_ref) in [
+        ("runtime_stdout", streams.stdout.display().to_string()),
+        ("runtime_stderr", streams.stderr.display().to_string()),
+    ] {
+        eval_store::write_log_ref_to_owner_db(
+            db_path,
+            eval_store::LogRefEvidence {
+                campaign_id: Some(campaign_id.clone()),
+                runtime_id: Some(runtime_id),
+                store_scope: "runtime".to_string(),
+                log_kind: log_kind.to_string(),
+                source_ref,
+                byte_start: None,
+                byte_len: None,
+                content_sha256: None,
+                sensitivity: Some("runtime_log".to_string()),
+                recorded_at: Some(recorded_at.to_string()),
+            },
+        )?;
+    }
+    Ok(())
+}
+
+enum WaitOutcome {
+    ReadyFromChannel,
+    Rejected(Rejected),
+}
+
+fn wait_for_ready(
+    channel: Option<&Channel<C3, FileTransport>>,
+    child: &mut ProcessChild,
+    runtime_id: RuntimeId,
+    timeout: Duration,
+    poll: Duration,
+) -> Result<WaitOutcome, SpawnChildError> {
+    let start = Instant::now();
+    let mut cursor = Cursor::start();
+    loop {
+        if let Some(channel) = channel {
+            let (next_cursor, messages) =
+                channel
+                    .recv_from_child(cursor)
+                    .map_err(|source| SpawnChildError::ReadChannel {
+                        runtime_id,
+                        detail: format!("{source:?}"),
+                    })?;
+            cursor = next_cursor;
+            if messages
+                .iter()
+                .any(|message| matches!(message.body(), ToParent::Ready))
+            {
+                debug!(
+                    target: ploke_core::EXECUTION_DEBUG_TARGET,
+                    runtime_id = %runtime_id,
+                    "observed child ready channel message"
+                );
+                return Ok(WaitOutcome::ReadyFromChannel);
+            }
+        }
+
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|source| SpawnChildError::PollChildStatus { runtime_id, source })?
+        {
+            return Ok(WaitOutcome::Rejected(Rejected::ExitedBeforeReady {
+                runtime_id,
+                child_pid: child.id(),
+                exit_code: status.code(),
+            }));
+        }
+
+        let waited = start.elapsed();
+        if waited >= timeout {
+            let rejected = Rejected::ReadyTimedOut {
+                runtime_id,
+                child_pid: child.id(),
+                waited_ms: waited.as_millis() as u64,
+            };
+            terminate_spawned_child(child).map_err(|source| SpawnChildError::CleanupSpawn {
+                child_pid: child.id(),
+                detail: format!("spawn handshake rejected: {rejected:?}"),
+                source,
+            })?;
+            return Ok(WaitOutcome::Rejected(rejected));
+        }
+
+        thread::sleep(poll);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn isolate_process_group_gives_child_own_group() {
+        let mut command = ProcessCommand::new("sh");
+        command
+            .arg("-c")
+            .arg("printf '%s %s\\n' \"$$\" \"$(ps -o pgid= -p $$)\"");
+        isolate_process_group(&mut command);
+
+        let output = command.output().expect("spawn process-group probe");
+
+        assert!(
+            output.status.success(),
+            "probe failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).expect("utf8 probe stdout");
+        let mut parts = stdout.split_whitespace();
+        let pid = parts.next().expect("pid");
+        let pgid = parts.next().expect("pgid");
+        assert_eq!(pid, pgid);
+    }
+
+    #[test]
+    fn terminate_spawned_child_reaps_process_group() {
+        let mut command = ProcessCommand::new("sh");
+        command.arg("-c").arg("while :; do sleep 1; done");
+        isolate_process_group(&mut command);
+        let mut child = command.spawn().expect("spawn child stand-in");
+
+        terminate_spawned_child(&mut child).expect("terminate spawned child");
+
+        assert!(child.try_wait().expect("inspect reaped child").is_some());
+    }
+
+    #[test]
+    fn child_reaper_abort_terminates_and_reaps_child() {
+        let mut command = ProcessCommand::new("sh");
+        command.arg("-c").arg("while :; do sleep 1; done");
+        isolate_process_group(&mut command);
+        let child = command.spawn().expect("spawn child stand-in");
+        let child_pid = child.id();
+        #[cfg(target_os = "linux")]
+        let incarnation = process_incarnation(child_pid)
+            .expect("capture child process identity")
+            .expect("child process is live");
+        let reaper = match ChildReaper::start(child, RuntimeId::new()) {
+            Ok(reaper) => reaper,
+            Err((mut child, source)) => {
+                terminate_spawned_child(&mut child).expect("clean up failed reaper start");
+                panic!("start child reaper: {source}");
+            }
+        };
+
+        reaper.abort().expect("abort child reaper");
+
+        #[cfg(target_os = "linux")]
+        assert_ne!(
+            process_incarnation(child_pid).expect("inspect reaped child"),
+            Some(incarnation)
+        );
+    }
+
+    #[test]
+    fn ready_timeout_terminates_and_reaps_child() {
+        let mut command = ProcessCommand::new("sh");
+        command.arg("-c").arg("while :; do sleep 1; done");
+        isolate_process_group(&mut command);
+        let mut child = command.spawn().expect("spawn child stand-in");
+
+        let outcome = wait_for_ready(
+            None,
+            &mut child,
+            RuntimeId::new(),
+            Duration::from_millis(1),
+            Duration::from_millis(1),
+        )
+        .expect("ready timeout is a committed rejection");
+
+        assert!(matches!(
+            outcome,
+            WaitOutcome::Rejected(Rejected::ReadyTimedOut { .. })
+        ));
+        assert!(child.try_wait().expect("inspect reaped child").is_some());
+    }
+
+    #[test]
+    fn prototype1_eval_store_runtime_streams_write_log_refs() {
+        let temp = tempfile::tempdir().expect("tmp");
+        let prototype_root = temp.path().join("prototype1");
+        let db_path = prototype_root.join("eval-store.cozo.sqlite");
+        let stream_root = prototype_root.join("nodes/node-1/streams/runtime-1");
+        let streams = Streams {
+            stdout: stream_root.join("stdout.log"),
+            stderr: stream_root.join("stderr.log"),
+        };
+        let campaign_id = ploke_records::ids::CampaignId::from("campaign");
+        let runtime_id = RuntimeId::new();
+
+        mirror_runtime_stream_log_refs(
+            &db_path,
+            &campaign_id,
+            runtime_id,
+            &streams,
+            "2026-06-25T00:00:00Z",
+        )
+        .expect("mirror runtime stream log refs");
+
+        let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "runtime_id".to_string(),
+            cozo::DataValue::from(runtime_id.to_string()),
+        );
+        let rows = db
+            .raw_query_params(
+                r#"
+?[log_kind, source_ref, store_scope, sensitivity, recorded_at] :=
+    *eval_log_ref { log_kind, source_ref, store_scope, sensitivity, recorded_at, runtime_id },
+    runtime_id = $runtime_id
+"#,
+                params,
+            )
+            .expect("query runtime log refs");
+
+        assert_eq!(rows.rows.len(), 2);
+        let observed: std::collections::BTreeSet<_> = rows
+            .row_refs()
+            .map(|row| {
+                (
+                    row.get::<String>("log_kind").expect("kind"),
+                    row.get::<String>("source_ref").expect("source"),
+                    row.get::<String>("store_scope").expect("scope"),
+                    row.get::<String>("sensitivity").expect("sensitivity"),
+                    row.get::<String>("recorded_at").expect("recorded_at"),
+                )
+            })
+            .collect();
+        let expected = std::collections::BTreeSet::from([
+            (
+                "runtime_stdout".to_string(),
+                streams.stdout.display().to_string(),
+                "runtime".to_string(),
+                "runtime_log".to_string(),
+                "2026-06-25T00:00:00Z".to_string(),
+            ),
+            (
+                "runtime_stderr".to_string(),
+                streams.stderr.display().to_string(),
+                "runtime".to_string(),
+                "runtime_log".to_string(),
+                "2026-06-25T00:00:00Z".to_string(),
+            ),
+        ]);
+        assert_eq!(observed, expected);
+    }
+}

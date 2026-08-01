@@ -3,16 +3,16 @@ use std::sync::Arc;
 #[cfg(feature = "test_harness")]
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use ploke_embed::indexer::{IndexStatus, IndexingStatus};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::app_state::{AppState, IndexTargetDir, handlers};
+use crate::EventBus;
+use crate::INDEXING_FAILURE_CONTAINMENT_NOTE;
+use crate::app_state::{AppState, IndexTarget, IndexTargetDir, handlers};
 use crate::chat_history::MessageKind;
-use crate::error::ErrorSeverity;
-use crate::event_bus::ErrorEvent;
 use crate::parser::{resolve_index_target, run_parse_resolved};
-use crate::utils::parse_errors::format_parse_failure;
-use crate::{AppEvent, EventBus};
+use crate::utils::parse_errors::{extract_nested_parser_diagnostics, format_parse_failure};
 
 use super::chat::add_msg_immediate;
 
@@ -32,6 +32,20 @@ async fn maybe_delay_indexing_for_test() {
             tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         }
     }
+}
+
+fn emit_indexing_failed_status(
+    event_bus: &Arc<EventBus>,
+    detail: String,
+    current_file: Option<PathBuf>,
+) {
+    let _ = event_bus.index_tx.send(IndexingStatus {
+        status: IndexStatus::Failed(detail.clone()),
+        recent_processed: 0,
+        num_not_proc: 0,
+        current_file,
+        errors: vec![detail],
+    });
 }
 
 pub async fn index_workspace(
@@ -72,16 +86,20 @@ pub async fn index_workspace(
             state
                 .with_system_txn(|txn| {
                     txn.record_parse_failure(
-                        stopgap_pathbuf.unwrap_or_else(|| PathBuf::from("todo-add-error-handling")),
+                        stopgap_pathbuf
+                            .clone()
+                            .unwrap_or_else(|| PathBuf::from("todo-add-error-handling")),
                         msg.clone(),
                     );
                 })
                 .await;
             add_msg_shortcut(&msg).await;
-            event_bus.send(AppEvent::Error(ErrorEvent {
-                message: msg,
-                severity: ErrorSeverity::Error,
-            }));
+            tracing::warn!(
+                "Indexing target resolution failed: {}. {}",
+                msg,
+                INDEXING_FAILURE_CONTAINMENT_NOTE
+            );
+            emit_indexing_failed_status(event_bus, msg, stopgap_pathbuf);
             return;
         }
     };
@@ -96,16 +114,22 @@ pub async fn index_workspace(
             }
             Err(e) => {
                 let msg = format_parse_failure(&resolved.focused_root, &e);
+                let diagnostics = extract_nested_parser_diagnostics(&e);
                 state
                     .with_system_txn(|txn| {
-                        txn.record_parse_failure(resolved.requested_path.clone(), msg.clone());
+                        txn.record_parse_failure_with_diagnostics(
+                            resolved.requested_path.clone(),
+                            msg.clone(),
+                            diagnostics.clone(),
+                        );
                     })
                     .await;
-                event_bus.send(AppEvent::Error(ErrorEvent {
-                    message: msg,
-                    severity: ErrorSeverity::Error,
-                }));
-                tracing::info!("Failure parsing directory from IndexWorkspace event: {}", e);
+                emit_indexing_failed_status(event_bus, msg, Some(resolved.focused_root.clone()));
+                tracing::warn!(
+                    "Failure parsing directory from IndexWorkspace event: {}. {}",
+                    e,
+                    INDEXING_FAILURE_CONTAINMENT_NOTE
+                );
                 return;
             }
         }
@@ -193,11 +217,66 @@ pub async fn index_workspace(
     }
 }
 
+pub async fn index_target(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    target: Option<IndexTarget>,
+    needs_parse: bool,
+) {
+    let add_msg_shortcut = |msg: &str| {
+        handlers::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg.to_string(),
+            MessageKind::SysInfo,
+        )
+    };
+
+    let Some(target) = target else {
+        index_workspace(state, event_bus, None, needs_parse).await;
+        return;
+    };
+
+    let display_target = target.describe();
+    let resolved = state
+        .with_system_read(|sys| target.resolve_against_loaded_state(sys))
+        .await;
+
+    let Some(target_dir) = resolved else {
+        let msg = format!(
+            "Indexing target resolution failed: {display_target} is not available in loaded state."
+        );
+        state
+            .with_system_txn(|txn| {
+                txn.record_parse_failure(PathBuf::from(display_target.clone()), msg.clone());
+            })
+            .await;
+        add_msg_shortcut(&msg).await;
+        tracing::warn!(
+            "Semantic indexing target resolution failed: {}. {}",
+            msg,
+            INDEXING_FAILURE_CONTAINMENT_NOTE
+        );
+        emit_indexing_failed_status(event_bus, msg, None);
+        return;
+    };
+
+    index_workspace(state, event_bus, Some(target_dir), needs_parse).await;
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::app_state::IndexTargetDir;
     use crate::app_state::core::SystemStatus;
+    use crate::app_state::{IndexTarget, IndexTargetDir};
+    use crate::event_bus::{EventBus, EventBusCaps};
+    use crate::test_utils::mock::create_mock_app_state;
+    use ploke_core::CrateId;
+    use ploke_embed::indexer::IndexStatus;
     use std::path::PathBuf;
+    use std::sync::Arc;
+    use tempfile::tempdir;
+    use tokio::time::{Duration, timeout};
 
     /// Regression witness for the `test_update_embed` failure mode.
     ///
@@ -237,6 +316,107 @@ mod tests {
         let resolved = target.resolve_against_loaded_state(&status);
 
         assert!(resolved.is_none());
+    }
+
+    #[tokio::test]
+    async fn loaded_crate_target_uses_loaded_root_instead_of_pwd_resolution() {
+        let fixture_root = std::fs::canonicalize(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixture_crates/fixture_update_embed"),
+        )
+        .expect("canonical fixture root");
+        let crate_id = CrateId::from_root_path(&fixture_root);
+
+        let state = Arc::new(create_mock_app_state());
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+
+        state
+            .with_system_txn(|txn| {
+                txn.set_pwd(PathBuf::from("/tmp/not-the-crate-root"));
+                txn.set_focus_from_root(fixture_root.clone());
+            })
+            .await;
+
+        super::index_target(
+            &state,
+            &event_bus,
+            Some(IndexTarget::LoadedCrate(crate_id)),
+            false,
+        )
+        .await;
+
+        let failure = state
+            .with_system_read(|sys| sys.last_parse_failure().cloned())
+            .await;
+        assert!(
+            failure.is_none(),
+            "unexpected parse failure after semantic target resolution: {:?}",
+            failure
+        );
+        assert_eq!(
+            state.system.loaded_workspace_root_for_test().await,
+            Some(fixture_root)
+        );
+    }
+
+    #[tokio::test]
+    async fn parse_failure_emits_failed_index_status_before_indexer_runs() {
+        let temp = tempdir().expect("tempdir");
+        let crate_root = temp.path();
+        std::fs::create_dir_all(crate_root.join("src")).expect("create src");
+        std::fs::write(
+            crate_root.join("Cargo.toml"),
+            "[package]\nname = \"broken_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .expect("write Cargo.toml");
+        std::fs::write(crate_root.join("src/lib.rs"), "pub fn broken( {\n")
+            .expect("write broken lib.rs");
+
+        let state = Arc::new(create_mock_app_state());
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let mut index_rx = event_bus.index_subscriber();
+
+        super::index_workspace(
+            &state,
+            &event_bus,
+            Some(IndexTargetDir::new(crate_root.to_path_buf())),
+            true,
+        )
+        .await;
+
+        let status = timeout(Duration::from_secs(2), index_rx.recv())
+            .await
+            .expect("expected indexing failure status")
+            .expect("index status channel open");
+
+        match status.status {
+            IndexStatus::Failed(detail) => {
+                assert!(
+                    detail.contains("Parse failed for crate"),
+                    "unexpected detail: {detail}"
+                );
+                assert!(
+                    detail.contains(&crate_root.display().to_string()),
+                    "detail should mention failing crate root: {detail}"
+                );
+            }
+            other => panic!("expected failed indexing status, got {other:?}"),
+        }
+
+        let last_failure = state
+            .with_system_read(|sys| sys.last_parse_failure().cloned())
+            .await
+            .expect("parse failure recorded");
+        assert!(last_failure.message.contains("Parse failed for crate"));
+        assert!(
+            last_failure
+                .diagnostics
+                .iter()
+                .filter_map(|diag| diag.source_path.as_ref())
+                .any(|path| path.ends_with("src/lib.rs")),
+            "expected broken source path in diagnostics: {:?}",
+            last_failure.diagnostics
+        );
     }
 }
 

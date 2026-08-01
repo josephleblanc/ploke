@@ -1,0 +1,26 @@
+?[plan_id, parent_node_id, child_generation, child_count, rejected_count, message_path, message_sha256, child_node_id, child_index, branch_id, candidate_id, instance_id, target_relpath, node_path, runner_request_path, workspace_root, binary_path, status, surface_present, harness_present] :=
+  *eval_child_plan{
+    plan_id,
+    parent_node_id,
+    child_generation,
+    child_count,
+    rejected_count,
+    message_path,
+    message_sha256
+  },
+  *eval_child_plan_child{
+    plan_id,
+    child_node_id,
+    child_index,
+    branch_id,
+    candidate_id,
+    instance_id,
+    target_relpath,
+    node_path,
+    runner_request_path,
+    workspace_root,
+    binary_path,
+    status,
+    surface_present,
+    harness_present
+  }

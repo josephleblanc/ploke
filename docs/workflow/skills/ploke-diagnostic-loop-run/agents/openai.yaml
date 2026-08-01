@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ploke Diagnostic Loop Run"
+  short_description: "Advance and diagnose one Prototype 1 loop phase."
+  default_prompt: "Use this skill to run one bounded Prototype 1 loop advance, collect evidence, classify the result, and decide the next safe action."

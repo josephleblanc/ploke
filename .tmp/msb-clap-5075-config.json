@@ -1,0 +1,29 @@
+{
+  "mode": "evaluation",
+  "workdir": "/home/brasides/.ploke-eval/msb/workdir/clap-5075",
+  "patch_files": [
+    "/home/brasides/.ploke-eval/runs/clap-rs__clap-5075/runs/run-1776578905711-structured-current-policy-2d0a0752/multi-swe-bench-submission.jsonl"
+  ],
+  "dataset_files": [
+    "/home/brasides/.ploke-eval/datasets/clap-rs__clap_dataset.jsonl"
+  ],
+  "force_build": false,
+  "output_dir": "/home/brasides/.ploke-eval/msb/output/clap-5075",
+  "specifics": [
+    "clap-rs/clap:pr-5075"
+  ],
+  "skips": [],
+  "repo_dir": "/home/brasides/.ploke-eval/msb/repos/clap-5075",
+  "need_clone": true,
+  "global_env": [],
+  "clear_env": true,
+  "stop_on_error": true,
+  "max_workers": 1,
+  "max_workers_build_image": 1,
+  "max_workers_run_instance": 1,
+  "fix_patch_run_cmd": "",
+  "log_dir": "/home/brasides/.ploke-eval/msb/logs/clap-5075",
+  "log_level": "DEBUG",
+  "log_to_console": true,
+  "human_mode": true
+}

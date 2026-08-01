@@ -1,0 +1,29 @@
+?[decision_id, parent_id, selected_node_id, selected_branch_id, selection_outcome, selection_disposition, continuation_disposition, next_generation, total_nodes, selected_status, selected_candidate_id, selected_workspace_root, selected_runner_result_path, decision_ref, decision_hash, continuation_recorded_at] :=
+  *eval_selection_decision{
+    campaign_id,
+    parent_id,
+    decision_id,
+    selected_node_id,
+    outcome: selection_outcome,
+    disposition: selection_disposition,
+    decision_ref,
+    decision_hash
+  },
+  *eval_continuation_decision{
+    campaign_id,
+    parent_id,
+    selected_branch_id,
+    disposition: continuation_disposition,
+    next_generation,
+    total_nodes,
+    recorded_at: continuation_recorded_at
+  },
+  *eval_scheduler_node{
+    campaign_id,
+    node_id: selected_node_id,
+    branch_id: selected_branch_id,
+    candidate_id: selected_candidate_id,
+    workspace_root: selected_workspace_root,
+    runner_result_path: selected_runner_result_path,
+    status: selected_status
+  }

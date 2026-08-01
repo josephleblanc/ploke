@@ -1,0 +1,16 @@
+BEGIN 2026-06-30T14:36:25-07:00
+{
+  "type": "ok",
+  "phase": "r12",
+  "message": "from: r11 - child fanout complete\nto: r12 - report facts ready\nedge: r11_to_r12\ntypestate changes:\n  - phase: phase::R11 -> phase::R12\n  - children:\n      Children<\n          children::set::Outcomes<PlannedChildOutcome>,\n          children::attempt::Complete,\n      >\n      -> Children<\n          children::set::Report<PlannedChildOutcome>,\n          children::attempt::Complete,\n      >\n  - report: Report<report::None> -> Report<report::Facts>\n  - projection: assembles report facts without emitting the final report\nnext:\n  r12_to_r13 -> r13a - record no-selection stopped continuation\n  r12_to_r13 --watch --allow git-changes -> r13b - seal History, install selected successor, retire parent, and wait for successor ready",
+  "epoch": {
+    "protocol_version": 3,
+    "transition_graph_version": "walk-r0-r14a-v1",
+    "repo_root": "/home/brasides/.ploke-eval/worktrees/p1-gated-parent-3g1x3-p3-20260630-174316",
+    "exe_path": "/home/brasides/.ploke-eval/worktrees/p1-gated-parent-3g1x3-p3-20260630-174316/target/debug/ploke-eval",
+    "exe_modified_unix_ms": 1782841491704,
+    "git_head": "f906d59a8b1c0ee455ca9cf22a82363c0f8d3c23",
+    "source_status_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}
+END 2026-06-30T14:36:37-07:00 exit=0

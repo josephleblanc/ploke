@@ -1,5 +1,5 @@
-use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
-use ploke_core::TypeId;
+use crate::parser::type_slots::{OrdinaryTypeUseId, TraitTypeUseId};
+use crate::parser::types::{GenericParamNode, TypeWherePredicate}; // Removed define_node_info_struct import
 use serde::{Deserialize, Serialize};
 // removed GenerateNodeInfo
 
@@ -13,15 +13,15 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
 pub struct ImplNode {
     pub id: ImplNodeId, // Use typed ID
-    pub self_type: TypeId,
+    pub self_type: OrdinaryTypeUseId,
     pub span: (usize, usize),
-    pub trait_type: Option<TypeId>,
+    pub trait_type: Option<TraitTypeUseId>,
     pub methods: Vec<MethodNode>, // Changed from FunctionNode
     pub generic_params: Vec<GenericParamNode>,
+    #[serde(default)]
+    pub where_predicates: Vec<TypeWherePredicate>,
     pub cfgs: Vec<String>,
-    // TODO: Add fields for associated consts and types once we are processing them.
-    // pub associated_consts: Vec<ConstNodeId>,
-    // pub associated_types: Vec<TypeAliasNodeId>,
+    // Associated const/type ownership is represented by ImplAssociatedItem relations.
 }
 
 impl ImplNode {
@@ -34,7 +34,7 @@ impl ImplNode {
         self.id
     }
 
-    pub fn self_type(&self) -> TypeId {
+    pub fn self_type(&self) -> OrdinaryTypeUseId {
         self.self_type
     }
 
@@ -42,7 +42,7 @@ impl ImplNode {
         self.span
     }
 
-    pub fn trait_type(&self) -> Option<TypeId> {
+    pub fn trait_type(&self) -> Option<TraitTypeUseId> {
         self.trait_type
     }
 

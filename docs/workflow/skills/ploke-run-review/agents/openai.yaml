@@ -1,0 +1,3 @@
+display_name: Ploke Run Review
+short_description: Reconstruct ploke-eval run traces.
+default_prompt: Use this skill to review a ploke-eval run, compare provider tool calls with recorded tool calls, classify tool-result usefulness, and write a durable run-review report.

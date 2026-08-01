@@ -174,32 +174,65 @@ pub async fn process_with_rag(
     let outcome = state
         .with_system_txn(|txn| {
             let loaded = txn.has_loaded_crates();
+            let workspace_root = txn.loaded_workspace_root();
             let first = !txn.no_workspace_tip_shown();
             if !loaded {
                 txn.mark_no_workspace_tip_shown();
             }
-            (loaded, first)
+            (loaded, workspace_root, first)
         })
         .await;
-    let (crate_loaded, first_tip) = outcome.result;
+    let (crate_loaded, workspace_root, first_tip) = outcome.result;
     // If no crate is loaded, surface a user-facing tip in chat
     if !crate_loaded && first_tip {
         add_msg("No workspace is selected. Tip: use 'index start <path>' to index a project or 'load crate <name>' to load a saved database. Proceeding without code context.").await;
     }
     let mut formatted: Vec<RequestMessage> = Vec::with_capacity(messages.len() + 1);
-    let fallback_note = if ctx_mode == CtxMode::Off {
-        "Context mode is Off; proceeding without code context."
-    } else {
-        "No workspace context loaded; proceeding without code context. Index or load a workspace to enable RAG."
+    let context_off =
+        "Context mode is Off: Context will not automatically be attached to the user message.";
+    let context_on = match ctx_mode {
+        CtxMode::Off => {
+            "Context mode is Off: Context will not automatically be attached to the user message."
+        }
+        CtxMode::Light => {
+            "Context mode set to Light, truncted context will be automatically added to user message."
+        }
+        CtxMode::Heavy => {
+            "Context mode set to Heavy, verbose context will be automatically added to user message."
+        }
     };
-    formatted.push(RequestMessage::new_system(fallback_note.to_string()));
+    let fallback_note = match (ctx_mode, workspace_root.as_ref(), crate_loaded) {
+        (CtxMode::Off, Some(root), _) => {
+            format!(
+                "{context_off}; {workspace_note}.",
+                workspace_note = format_args!("Context search via request_code_context is still available. workspace loaded {}",
+                    root.display())
+            )
+        }
+        (CtxMode::Off, None, _) => {
+            format!("{context_off}; Context search via request_code_context is still available.")
+        }
+        (_, Some(root), _) => {
+            format!(
+                "Workspace loaded at {};",
+                root.display()
+            )
+        }
+        (_, None, false) => {
+            "No workspace context loaded; proceeding without code context. Index or load a workspace to enable RAG.".to_string()
+        }
+        (_, None, true) => {
+            "Workspace state is loaded, but no workspace root is available; proceeding without code context.".to_string()
+        }
+    };
+    formatted.push(RequestMessage::new_system(fallback_note.clone()));
     formatted.extend(messages.into_iter());
     let mut fallback_plan_messages = plan_messages;
     let tokenizer = ApproxCharTokenizer::default();
     fallback_plan_messages.push(ContextPlanMessage {
         message_id: None,
         kind: MessageKind::System,
-        estimated_tokens: tokenizer.count(fallback_note),
+        estimated_tokens: tokenizer.count(&fallback_note),
     });
     let fallback_excluded_messages = excluded_plan_messages;
     let context_plan = build_context_plan(
@@ -278,12 +311,24 @@ fn construct_context_from_rag(
 
 fn reformat_context_to_system(ctx_part: ContextPart) -> String {
     let snippet = truncate_context_text(&ctx_part.text, DEFAULT_CONTEXT_PART_MAX_LINES);
+    let type_context = ctx_part
+        .type_context
+        .map(|ctx| {
+            format!(
+                "\ntype_context: {} from {} at distance {}",
+                ctx.relation.to_static_str(),
+                ctx.seed_id,
+                ctx.distance
+            )
+        })
+        .unwrap_or_default();
     format!(
-        "file_path: {}\ncanon_path: {}\nkind: {}\nscore: {:.3}\ncode_snippet:\n{}",
+        "file_path: {}\ncanon_path: {}\nkind: {}\nscore: {:.3}{}\ncode_snippet:\n{}",
         ctx_part.file_path.as_ref(),
         ctx_part.canon_path.as_ref(),
         ctx_part.kind.to_static_str(),
         ctx_part.score,
+        type_context,
         snippet
     )
 }
@@ -337,6 +382,7 @@ fn build_context_plan(
                 kind: part.kind,
                 estimated_tokens,
                 score: part.score,
+                type_context: part.type_context,
             });
         }
     }
@@ -355,12 +401,28 @@ fn build_context_plan(
 
 #[cfg(test)]
 mod tests {
+    //! Prompt-formatting coverage boundary for typed type context:
+    //!
+    //! - Covered: a `ContextPart` carrying `TypeContextInfo` renders stable
+    //!   model-facing provenance text, and context-plan summaries preserve the
+    //!   type-context carrier.
+    //! - Not covered: whether the provenance came from a where clause, whether
+    //!   RAG selected the right where-derived neighbor, or whether exact
+    //!   `TypeUseCoordinate` values survive into the prompt. Current prompt
+    //!   output intentionally carries relation, seed, and distance only.
+    //! - A future where-specific TUI test should start from the
+    //!   `fixture_type_resolution_v2` DB/RAG path rather than constructing
+    //!   `TypeContextInfo` by hand.
+
     use super::*;
     use crate::chat_history::{
         ChatHistory, ContextStatus, MessageKind, MessageStatus, RetentionClass, TurnsToLive,
     };
     use crate::tools::{ToolName, ToolUiPayload};
-    use ploke_core::rag_types::{CanonPath, ContextPartKind, ContextStats, Modality, NodeFilepath};
+    use ploke_core::rag_types::{
+        CanonPath, ContextPartKind, ContextStats, Modality, NodeFilepath, TypeContextInfo,
+        TypeContextKind,
+    };
     use std::collections::HashMap;
 
     #[test]
@@ -389,6 +451,7 @@ mod tests {
                 text: "fn foo() {}".to_string(),
                 score: 0.5,
                 modality: Modality::Dense,
+                type_context: None,
             }],
             stats: ContextStats {
                 total_tokens: 10,
@@ -396,6 +459,7 @@ mod tests {
                 parts: 1,
                 truncated_parts: 0,
                 dedup_removed: 0,
+                ..Default::default()
             },
         };
 
@@ -430,12 +494,18 @@ mod tests {
             text,
             score: 0.42,
             modality: Modality::Dense,
+            type_context: Some(TypeContextInfo {
+                seed_id: Uuid::from_u128(7),
+                relation: TypeContextKind::TypeDefinitionImpact,
+                distance: 1,
+            }),
         };
 
         let rendered = reformat_context_to_system(part);
 
         assert!(rendered.contains("kind: Doc"));
         assert!(rendered.contains("score: 0.420"));
+        assert!(rendered.contains("type_context: TypeDefinitionImpact"));
         assert!(rendered.contains("line 0"));
         assert!(rendered.contains(&format!("line {}", DEFAULT_CONTEXT_PART_MAX_LINES - 1)));
         assert!(!rendered.contains(&format!("line {}", DEFAULT_CONTEXT_PART_MAX_LINES)));
@@ -499,13 +569,25 @@ mod tests {
         }
         out.push_str("included_rag_parts:\n");
         for part in &plan.included_rag_parts {
+            let type_context = part
+                .type_context
+                .map(|ctx| {
+                    format!(
+                        " type_context: {}:{}:{}",
+                        ctx.relation.to_static_str(),
+                        label_part_id(ctx.seed_id, part_labels),
+                        ctx.distance
+                    )
+                })
+                .unwrap_or_default();
             out.push_str(&format!(
-                "- id: {} path: {} kind: {:?} tokens: {} score: {:.3}\n",
+                "- id: {} path: {} kind: {:?} tokens: {} score: {:.3}{}\n",
                 label_part_id(part.part_id, part_labels),
                 part.file_path,
                 part.kind,
                 part.estimated_tokens,
-                part.score
+                part.score,
+                type_context
             ));
         }
         out.push_str("rag_stats:\n");
@@ -594,6 +676,11 @@ mod tests {
                     text: "fn a() {}".to_string(),
                     score: 0.2,
                     modality: Modality::Dense,
+                    type_context: Some(TypeContextInfo {
+                        seed_id: Uuid::from_u128(101),
+                        relation: TypeContextKind::UsesTypeNested,
+                        distance: 2,
+                    }),
                 },
                 ContextPart {
                     id: Uuid::from_u128(101),
@@ -604,6 +691,7 @@ mod tests {
                     text: "struct B;".to_string(),
                     score: 0.8,
                     modality: Modality::Dense,
+                    type_context: None,
                 },
             ],
             stats: ContextStats {
@@ -612,6 +700,7 @@ mod tests {
                 parts: 2,
                 truncated_parts: 0,
                 dedup_removed: 0,
+                ..Default::default()
             },
         };
 
@@ -645,7 +734,7 @@ excluded_messages:
 - id: assistant kind: Assistant tokens: 4 reason: TtlExpired
 - id: tool kind: Tool tokens: 7 reason: Budget
 included_rag_parts:
-- id: part_a path: src/lib.rs kind: Code tokens: 3 score: 0.200
+- id: part_a path: src/lib.rs kind: Code tokens: 3 score: 0.200 type_context: UsesTypeNested:part_b:2
 - id: part_b path: src/main.rs kind: Doc tokens: 3 score: 0.800
 rag_stats:
 - tokens: 12 files: 2 parts: 2 truncated: 0 dedup: 0

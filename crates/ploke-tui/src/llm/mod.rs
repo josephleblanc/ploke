@@ -1,6 +1,35 @@
 // pub(crate) mod error;
 pub(crate) mod manager;
-pub(crate) use manager::{ChatEvt, ChatHistoryTarget, LlmEvent};
+pub(crate) mod model_overrides;
+pub(crate) use manager::ChatHistoryTarget;
+pub use manager::events::{
+    ContextPlan, ContextPlanExcludedMessage, ContextPlanMessage, ContextPlanRagPart,
+};
+#[cfg(feature = "test_harness")]
+pub use manager::{
+    ChatDebugRunArgs, ChatDebugRunReport, ChatDebugSink, ChatDebugSinkGuard, ChatDebugStep,
+    ChatDebugToolResult, FullResponseTraceRecord, RequestTapGuard, ResponseTapGuard,
+    SessionCapture, clear_chat_debug_sink, clear_recorded_response_tape, clear_request_tap,
+    clear_response_tap, install_chat_debug_sink, install_recorded_response_prefix_then_live,
+    install_recorded_response_prefix_then_live_steps, install_recorded_response_tape,
+    install_request_tap, install_response_tap, run_chat_debug_messages,
+};
+pub use manager::{
+    ChatEvt, LlmEvent, Prototype1TraceContext, RequestMessage, set_prototype1_trace_context,
+};
+
+/// Minimum output-token budget required by the selected model/router quirk,
+/// when one is registered.
+///
+/// Callers that own an explicit maximum must validate it against this floor
+/// instead of silently raising that maximum. Request paths without an explicit
+/// cap may continue to apply the floor at the request-build chokepoint.
+pub fn model_token_floor(
+    router: ploke_llm::router_only::RouterVariants,
+    model: &ploke_llm::ModelId,
+) -> Option<u32> {
+    model_overrides::resolve(router, model).and_then(|item| item.params.max_tokens_floor)
+}
 
 pub(crate) use ploke_llm::error;
 pub(crate) use ploke_llm::registry;

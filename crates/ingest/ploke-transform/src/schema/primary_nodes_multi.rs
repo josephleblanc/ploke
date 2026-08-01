@@ -81,6 +81,11 @@ define_schema!(ImplNodeSchema {
 // NOTE: Flattened `ImportKind` into `import_kind` and `vis_kind`, `vis_path`
 // NOTE: Including redundant name and visible_name for now. They will always be the same but it
 // might help to not surprise me when I look for the name of the import.
+// TODO(import-backlinks): Import nodes are now part of the real structural graph surface, not
+// just helper rows for path text. Keep this schema aligned with the syntactic edge layer
+// (`ModuleImports`, `ReExports`, `ImportedBy`) and with any downstream query/update code that
+// assumes primary-node coverage. If we extend import semantics further, review transform/schema
+// consumers together so imports propagate cleanly into storage and back out again.
 define_schema!(ImportNodeSchema {
     "import",
     id: "Uuid",

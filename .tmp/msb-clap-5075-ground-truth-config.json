@@ -1,0 +1,29 @@
+{
+  "mode": "evaluation",
+  "workdir": "/home/brasides/.ploke-eval/msb/workdir/clap-5075-ground-truth",
+  "patch_files": [
+    "/home/brasides/code/ploke/.tmp/msb-clap-5075-ground-truth.jsonl"
+  ],
+  "dataset_files": [
+    "/home/brasides/.ploke-eval/datasets/clap-rs__clap_dataset.jsonl"
+  ],
+  "force_build": false,
+  "output_dir": "/home/brasides/.ploke-eval/msb/output/clap-5075-ground-truth",
+  "specifics": [
+    "clap-rs/clap:pr-5075"
+  ],
+  "skips": [],
+  "repo_dir": "/home/brasides/.ploke-eval/msb/repos/clap-5075-ground-truth",
+  "need_clone": true,
+  "global_env": [],
+  "clear_env": true,
+  "stop_on_error": true,
+  "max_workers": 1,
+  "max_workers_build_image": 1,
+  "max_workers_run_instance": 1,
+  "fix_patch_run_cmd": "",
+  "log_dir": "/home/brasides/.ploke-eval/msb/logs/clap-5075-ground-truth",
+  "log_level": "DEBUG",
+  "log_to_console": true,
+  "human_mode": true
+}

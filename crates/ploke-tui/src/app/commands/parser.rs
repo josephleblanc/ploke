@@ -46,6 +46,7 @@ pub enum Command {
     Quit,
     Help,
     HelpTopic(String),
+    CheckApi,
     Load {
         kind: LoadKind,
         name: Option<String>,
@@ -58,6 +59,7 @@ pub enum Command {
     ModelList,
     ModelInfo,
     ModelUse(String),
+    ModelRouter(Option<String>),
     ModelRefresh {
         remote: bool,
     },
@@ -172,6 +174,7 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
     match trimmed {
         "quit" => Command::Quit,
         "help" => Command::Help,
+        "check api" => Command::CheckApi,
         s if s.starts_with("help ") => {
             let topic = s.trim_start_matches("help ").trim().to_string();
             if topic.is_empty() {
@@ -188,6 +191,15 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
                 Command::Raw(trimmed.to_string())
             } else {
                 Command::ModelUse(alias)
+            }
+        }
+        "model router" => Command::ModelRouter(None),
+        s if s.starts_with("model router ") => {
+            let router = s.trim_start_matches("model router ").trim().to_string();
+            if router.is_empty() {
+                Command::Raw(trimmed.to_string())
+            } else {
+                Command::ModelRouter(Some(router))
             }
         }
         s if s.starts_with("model refresh") => {

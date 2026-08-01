@@ -1,0 +1,2600 @@
+{
+  "schema_version": "ploke-egui.native-benchmark-report.v3",
+  "suite": "standard",
+  "created_at_unix_ms": 1779029340124,
+  "commit": {
+    "short_sha": "44618b23a9bd",
+    "full_sha": "44618b23a9bdc6e9aa68102d95fa62d32eaaa261"
+  },
+  "dirty_state": {
+    "dirty": true,
+    "classification": "dirty_relevant",
+    "relevant_dirty": true,
+    "paths": [
+      "crates/ploke-egui/src/ui/app/shell.rs"
+    ],
+    "relevant_paths": [
+      "crates/ploke-egui/src/ui/app/shell.rs"
+    ],
+    "unrelated_paths": [],
+    "scope": "git status --short at benchmark start; benchmark-relevant paths are Cargo manifests, ploke-egui inputs except generated benchmark reports, ploke-tree, and ploke-records"
+  },
+  "command": "target/debug/ploke-egui --run-root /home/brasides/.ploke-eval/campaigns/p1-five-gen-1x3-20260516-1/prototype1 --benchmark-suite standard --benchmark-scenario patch_debug_warm_300 --benchmark-scenario inspector_patch_debug_expanded_300",
+  "run_root": "/home/brasides/.ploke-eval/campaigns/p1-five-gen-1x3-20260516-1/prototype1",
+  "feature_set": [
+    "dev",
+    "native-benchmark",
+    "profile-with-puffin"
+  ],
+  "scenarios_requested": [
+    "patch_debug_warm_300",
+    "inspector_patch_debug_expanded_300"
+  ],
+  "run_readiness": {
+    "policy_max_generations": 5,
+    "policy_child_budget_min": 1,
+    "expected_min_history_blocks": 6,
+    "sealed_history_blocks": 6,
+    "max_sealed_block_height": 5,
+    "expected_min_spawned_children": 5,
+    "spawned_child_nodes": 18,
+    "scheduler_node_count": 1,
+    "node_record_count": 19,
+    "ready": true,
+    "reason": "sealed_history_reached_policy_generation"
+  },
+  "startup": {
+    "spans": [
+      {
+        "name": "run_picker_discovery",
+        "duration_ns": 28908938878
+      },
+      {
+        "name": "FsRunStore::load",
+        "duration_ns": 906844893
+      },
+      {
+        "name": "FsRunStore::load_history_blocks",
+        "duration_ns": 23617511
+      },
+      {
+        "name": "FsRunStore::load_transition_journal",
+        "duration_ns": 4775053
+      },
+      {
+        "name": "FsRunStore::load_record_set",
+        "duration_ns": 935241565
+      },
+      {
+        "name": "compressed_run_record_profile_probe",
+        "duration_ns": 117176317
+      },
+      {
+        "name": "Graph::from_records",
+        "duration_ns": 5280722
+      },
+      {
+        "name": "graph_load_total",
+        "duration_ns": 1057700948
+      }
+    ],
+    "compressed_run_records": [
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/BurntSushi__ripgrep-2209/runs/run-1778950623675-structured-current-policy-da5906b1/record.json.gz",
+        "compressed_bytes": 78413,
+        "decompressed_bytes": 692537,
+        "turn_count": 1,
+        "tool_call_count": 18,
+        "failed_tool_call_count": 2,
+        "open_read_ns": 9618,
+        "gzip_decompress_ns": 2477420,
+        "typed_json_deserialize_ns": 4038300
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-001b9e9fc72533ca/instances/BurntSushi__ripgrep-2209/runs/run-1778965589964-structured-current-policy-5dd3b64c/record.json.gz",
+        "compressed_bytes": 148354,
+        "decompressed_bytes": 1040789,
+        "turn_count": 1,
+        "tool_call_count": 57,
+        "failed_tool_call_count": 9,
+        "open_read_ns": 18104,
+        "gzip_decompress_ns": 4262241,
+        "typed_json_deserialize_ns": 6553792
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-191617d9aacf4dda/instances/BurntSushi__ripgrep-2209/runs/run-1778968862624-structured-current-policy-c97a8076/record.json.gz",
+        "compressed_bytes": 66867,
+        "decompressed_bytes": 456406,
+        "turn_count": 1,
+        "tool_call_count": 25,
+        "failed_tool_call_count": 1,
+        "open_read_ns": 13545,
+        "gzip_decompress_ns": 1909995,
+        "typed_json_deserialize_ns": 3126890
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-38a8fc72b0b8bf03/instances/BurntSushi__ripgrep-2209/runs/run-1778963824453-structured-current-policy-61a90854/record.json.gz",
+        "compressed_bytes": 47520,
+        "decompressed_bytes": 316722,
+        "turn_count": 1,
+        "tool_call_count": 20,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 20208,
+        "gzip_decompress_ns": 1707966,
+        "typed_json_deserialize_ns": 2390777
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-53d3c597b864fcf9/instances/BurntSushi__ripgrep-2209/runs/run-1778962530279-structured-current-policy-c6d6a72d/record.json.gz",
+        "compressed_bytes": 61586,
+        "decompressed_bytes": 503774,
+        "turn_count": 1,
+        "tool_call_count": 36,
+        "failed_tool_call_count": 6,
+        "open_read_ns": 12033,
+        "gzip_decompress_ns": 1873136,
+        "typed_json_deserialize_ns": 3536278
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-67233258b489ccf1/instances/BurntSushi__ripgrep-2209/runs/run-1778953273239-structured-current-policy-277d8be9/record.json.gz",
+        "compressed_bytes": 90600,
+        "decompressed_bytes": 630218,
+        "turn_count": 1,
+        "tool_call_count": 34,
+        "failed_tool_call_count": 8,
+        "open_read_ns": 12714,
+        "gzip_decompress_ns": 2578299,
+        "typed_json_deserialize_ns": 4017111
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-7ee6db64779c8019/instances/BurntSushi__ripgrep-2209/runs/run-1778957355110-structured-current-policy-b0e1d500/record.json.gz",
+        "compressed_bytes": 65528,
+        "decompressed_bytes": 430878,
+        "turn_count": 1,
+        "tool_call_count": 24,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 9728,
+        "gzip_decompress_ns": 1839333,
+        "typed_json_deserialize_ns": 2932344
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-8895520341e426aa/instances/BurntSushi__ripgrep-2209/runs/run-1778963824455-structured-current-policy-b4563a68/record.json.gz",
+        "compressed_bytes": 80492,
+        "decompressed_bytes": 485725,
+        "turn_count": 1,
+        "tool_call_count": 24,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 12794,
+        "gzip_decompress_ns": 2225548,
+        "typed_json_deserialize_ns": 3028254
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-9456db3662f9d15a/instances/BurntSushi__ripgrep-2209/runs/run-1778953272443-structured-current-policy-f1847fad/record.json.gz",
+        "compressed_bytes": 125451,
+        "decompressed_bytes": 1127416,
+        "turn_count": 1,
+        "tool_call_count": 59,
+        "failed_tool_call_count": 10,
+        "open_read_ns": 13164,
+        "gzip_decompress_ns": 3902295,
+        "typed_json_deserialize_ns": 7063579
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b2b9bfa6ac855313/instances/BurntSushi__ripgrep-2209/runs/run-1778965588668-structured-current-policy-8957da87/record.json.gz",
+        "compressed_bytes": 72745,
+        "decompressed_bytes": 531868,
+        "turn_count": 1,
+        "tool_call_count": 37,
+        "failed_tool_call_count": 4,
+        "open_read_ns": 12363,
+        "gzip_decompress_ns": 2114689,
+        "typed_json_deserialize_ns": 3778293
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b360573242cfdaf4/instances/BurntSushi__ripgrep-2209/runs/run-1778965588668-structured-current-policy-ba315811/record.json.gz",
+        "compressed_bytes": 94759,
+        "decompressed_bytes": 751078,
+        "turn_count": 1,
+        "tool_call_count": 59,
+        "failed_tool_call_count": 4,
+        "open_read_ns": 12073,
+        "gzip_decompress_ns": 2821566,
+        "typed_json_deserialize_ns": 5470589
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b53a075a894cedf9/instances/BurntSushi__ripgrep-2209/runs/run-1778953269791-structured-current-policy-6d0dc6f7/record.json.gz",
+        "compressed_bytes": 63371,
+        "decompressed_bytes": 510476,
+        "turn_count": 1,
+        "tool_call_count": 39,
+        "failed_tool_call_count": 8,
+        "open_read_ns": 12163,
+        "gzip_decompress_ns": 1920485,
+        "typed_json_deserialize_ns": 3847071
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-b8ec5f10e815fd12/instances/BurntSushi__ripgrep-2209/runs/run-1778957354452-structured-current-policy-9ec5c365/record.json.gz",
+        "compressed_bytes": 44147,
+        "decompressed_bytes": 332582,
+        "turn_count": 1,
+        "tool_call_count": 26,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 11151,
+        "gzip_decompress_ns": 1297897,
+        "typed_json_deserialize_ns": 2662808
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-babdce8b381580ef/instances/BurntSushi__ripgrep-2209/runs/run-1778963824455-structured-current-policy-5e788851/record.json.gz",
+        "compressed_bytes": 62602,
+        "decompressed_bytes": 500893,
+        "turn_count": 1,
+        "tool_call_count": 32,
+        "failed_tool_call_count": 9,
+        "open_read_ns": 10630,
+        "gzip_decompress_ns": 1882434,
+        "typed_json_deserialize_ns": 3467238
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-bd77551f3715f119/instances/BurntSushi__ripgrep-2209/runs/run-1778957354823-structured-current-policy-fadea182/record.json.gz",
+        "compressed_bytes": 50992,
+        "decompressed_bytes": 367261,
+        "turn_count": 1,
+        "tool_call_count": 25,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 11141,
+        "gzip_decompress_ns": 1536945,
+        "typed_json_deserialize_ns": 2724184
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-c1a38306ed49dc1c/instances/BurntSushi__ripgrep-2209/runs/run-1778962529969-structured-current-policy-3204ca08/record.json.gz",
+        "compressed_bytes": 118577,
+        "decompressed_bytes": 884086,
+        "turn_count": 1,
+        "tool_call_count": 53,
+        "failed_tool_call_count": 10,
+        "open_read_ns": 13655,
+        "gzip_decompress_ns": 3434818,
+        "typed_json_deserialize_ns": 5698266
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-c30d784dd5ffb231/instances/BurntSushi__ripgrep-2209/runs/run-1778968862801-structured-current-policy-91092892/record.json.gz",
+        "compressed_bytes": 49619,
+        "decompressed_bytes": 364079,
+        "turn_count": 1,
+        "tool_call_count": 28,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 10430,
+        "gzip_decompress_ns": 1428130,
+        "typed_json_deserialize_ns": 2835583
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-c9841bdf11e59aee/instances/BurntSushi__ripgrep-2209/runs/run-1778962529953-structured-current-policy-9448cde8/record.json.gz",
+        "compressed_bytes": 52601,
+        "decompressed_bytes": 460616,
+        "turn_count": 1,
+        "tool_call_count": 39,
+        "failed_tool_call_count": 5,
+        "open_read_ns": 8917,
+        "gzip_decompress_ns": 1634859,
+        "typed_json_deserialize_ns": 3465014
+      },
+      {
+        "path": "/home/brasides/.ploke-eval/instances/prototype1/p1-five-gen-1x3-20260516-1/treatments/branch-ccfbb42e20f22f5b/instances/BurntSushi__ripgrep-2209/runs/run-1778968862654-structured-current-policy-477c4423/record.json.gz",
+        "compressed_bytes": 46743,
+        "decompressed_bytes": 336339,
+        "turn_count": 1,
+        "tool_call_count": 24,
+        "failed_tool_call_count": 0,
+        "open_read_ns": 11111,
+        "gzip_decompress_ns": 1346608,
+        "typed_json_deserialize_ns": 2478312
+      }
+    ],
+    "notes": [
+      "run_picker_discovery=28908938878 ns (kept in startup spans)",
+      "warning: run_picker_discovery exceeded 250000000 ns",
+      "standard_run_readiness_heuristic: sealed_history_reached_policy_generation; history_blocks=6/6 max_history_height=Some(5) spawned_children=18/5 node_records=19"
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "patch_debug_warm_300",
+      "target_frames": 300,
+      "frame_stats": {
+        "count": 300,
+        "min_ns": 1921858,
+        "median_ns": 1947756,
+        "p95_ns": 2047403,
+        "p99_ns": 2246828,
+        "max_ns": 189286422
+      },
+      "top_frames": [
+        {
+          "frame_index": 1,
+          "duration_ns": 189286422,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 11389068
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 14241012
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 142270591
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 1940292
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 17709652
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 5641
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 26985,
+            "deallocation_count_delta": 21478,
+            "allocated_object_bytes_delta": 11397890,
+            "deallocated_object_bytes_delta": 9746267,
+            "allocated_wrapped_bytes_delta": 11650144,
+            "deallocated_wrapped_bytes_delta": 9946784,
+            "live_object_bytes": 1651623,
+            "live_wrapped_bytes": 1703360
+          }
+        },
+        {
+          "frame_index": 2,
+          "duration_ns": 18202497,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 81033
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 7266259
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 8027348
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 555392
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 75943
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 9383123
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3697
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 4386,
+            "deallocation_count_delta": 3151,
+            "allocated_object_bytes_delta": 3271194,
+            "deallocated_object_bytes_delta": 2954839,
+            "allocated_wrapped_bytes_delta": 3312992,
+            "deallocated_wrapped_bytes_delta": 2984624,
+            "live_object_bytes": 1967978,
+            "live_wrapped_bytes": 2031728
+          }
+        },
+        {
+          "frame_index": 222,
+          "duration_ns": 2255924,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 98975
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 105257
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 452329
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 514696
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 51878
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1042457
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3236
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1319,
+            "deallocation_count_delta": 1309,
+            "allocated_object_bytes_delta": 1072013,
+            "deallocated_object_bytes_delta": 1068263,
+            "allocated_wrapped_bytes_delta": 1084560,
+            "deallocated_wrapped_bytes_delta": 1080704,
+            "live_object_bytes": 2688567,
+            "live_wrapped_bytes": 2772200
+          }
+        },
+        {
+          "frame_index": 285,
+          "duration_ns": 2246828,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 75602
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 69420
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 278032
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 455314
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 51757
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1314077
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3266
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1319,
+            "deallocation_count_delta": 1309,
+            "allocated_object_bytes_delta": 1072000,
+            "deallocated_object_bytes_delta": 1068263,
+            "allocated_wrapped_bytes_delta": 1084544,
+            "deallocated_wrapped_bytes_delta": 1080704,
+            "live_object_bytes": 2950560,
+            "live_wrapped_bytes": 3040832
+          }
+        },
+        {
+          "frame_index": 97,
+          "duration_ns": 2089863,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 92012
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 71625
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 288472
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 475131
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 52439
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1088323
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 6351
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1319,
+            "deallocation_count_delta": 1309,
+            "allocated_object_bytes_delta": 1071968,
+            "deallocated_object_bytes_delta": 1068263,
+            "allocated_wrapped_bytes_delta": 1084512,
+            "deallocated_wrapped_bytes_delta": 1080704,
+            "live_object_bytes": 2208615,
+            "live_wrapped_bytes": 2279048
+          }
+        },
+        {
+          "frame_index": 279,
+          "duration_ns": 2085555,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 75141
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 69340
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 275637
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 576502
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 72656
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1018923
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3176
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1321,
+            "deallocation_count_delta": 1310,
+            "allocated_object_bytes_delta": 1075247,
+            "deallocated_object_bytes_delta": 1068767,
+            "allocated_wrapped_bytes_delta": 1087808,
+            "deallocated_wrapped_bytes_delta": 1081216,
+            "live_object_bytes": 2930951,
+            "live_wrapped_bytes": 3020608
+          }
+        },
+        {
+          "frame_index": 220,
+          "duration_ns": 2081106,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 75743
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 69781
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 276609
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 543811
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 57037
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1060711
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3206
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1319,
+            "deallocation_count_delta": 1309,
+            "allocated_object_bytes_delta": 1071958,
+            "deallocated_object_bytes_delta": 1068263,
+            "allocated_wrapped_bytes_delta": 1084504,
+            "deallocated_wrapped_bytes_delta": 1080704,
+            "live_object_bytes": 2681085,
+            "live_wrapped_bytes": 2764504
+          }
+        },
+        {
+          "frame_index": 99,
+          "duration_ns": 2071869,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 76163
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 69941
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 278082
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 560913
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 59692
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1029172
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3216
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1319,
+            "deallocation_count_delta": 1309,
+            "allocated_object_bytes_delta": 1072018,
+            "deallocated_object_bytes_delta": 1068263,
+            "allocated_wrapped_bytes_delta": 1084568,
+            "deallocated_wrapped_bytes_delta": 1080704,
+            "live_object_bytes": 2216101,
+            "live_wrapped_bytes": 2286752
+          }
+        },
+        {
+          "frame_index": 98,
+          "duration_ns": 2066609,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 78077
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 94908
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 378250
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 465734
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 51717
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1019914
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3206
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1319,
+            "deallocation_count_delta": 1309,
+            "allocated_object_bytes_delta": 1071994,
+            "deallocated_object_bytes_delta": 1068263,
+            "allocated_wrapped_bytes_delta": 1084544,
+            "deallocated_wrapped_bytes_delta": 1080704,
+            "live_object_bytes": 2212346,
+            "live_wrapped_bytes": 2282888
+          }
+        },
+        {
+          "frame_index": 231,
+          "duration_ns": 2053624,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 145834
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 74600
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 313268
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 449144
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 50765
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1023501
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3236
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1319,
+            "deallocation_count_delta": 1309,
+            "allocated_object_bytes_delta": 1072000,
+            "deallocated_object_bytes_delta": 1068263,
+            "allocated_wrapped_bytes_delta": 1084544,
+            "deallocated_wrapped_bytes_delta": 1080704,
+            "live_object_bytes": 2722092,
+            "live_wrapped_bytes": 2806672
+          }
+        }
+      ],
+      "component_timings": [
+        {
+          "component": "capture_overhead",
+          "stats": {
+            "count": 300,
+            "min_ns": 3016,
+            "median_ns": 3156,
+            "p95_ns": 3316,
+            "p99_ns": 5641,
+            "max_ns": 6351
+          },
+          "median_percent_of_frame_x100": 16
+        },
+        {
+          "component": "central_graph",
+          "stats": {
+            "count": 300,
+            "min_ns": 1006319,
+            "median_ns": 1015425,
+            "p95_ns": 1053798,
+            "p99_ns": 1110134,
+            "max_ns": 17709652
+          },
+          "median_percent_of_frame_x100": 5213
+        },
+        {
+          "component": "diagnostics",
+          "stats": {
+            "count": 299,
+            "min_ns": 68579,
+            "median_ns": 69680,
+            "p95_ns": 81223,
+            "p99_ns": 105257,
+            "max_ns": 7266259
+          },
+          "median_percent_of_frame_x100": 357,
+          "nested_under": "run_navigation"
+        },
+        {
+          "component": "run_navigation",
+          "stats": {
+            "count": 300,
+            "min_ns": 273353,
+            "median_ns": 277921,
+            "p95_ns": 319520,
+            "p99_ns": 378250,
+            "max_ns": 14241012
+          },
+          "median_percent_of_frame_x100": 1426
+        },
+        {
+          "component": "selection_inspector",
+          "stats": {
+            "count": 300,
+            "min_ns": 442200,
+            "median_ns": 454173,
+            "p95_ns": 518754,
+            "p99_ns": 556996,
+            "max_ns": 142270591
+          },
+          "median_percent_of_frame_x100": 2331
+        },
+        {
+          "component": "timeline",
+          "stats": {
+            "count": 300,
+            "min_ns": 50154,
+            "median_ns": 51667,
+            "p95_ns": 58470,
+            "p99_ns": 69010,
+            "max_ns": 1940292
+          },
+          "median_percent_of_frame_x100": 265
+        },
+        {
+          "component": "top_strip",
+          "stats": {
+            "count": 300,
+            "min_ns": 73388,
+            "median_ns": 75541,
+            "p95_ns": 82915,
+            "p99_ns": 129052,
+            "max_ns": 11389068
+          },
+          "median_percent_of_frame_x100": 387
+        }
+      ],
+      "allocation_frames": {
+        "per_frame": {
+          "allocation_count": {
+            "count": 300,
+            "min": 1306,
+            "median": 1319,
+            "p95": 1321,
+            "p99": 1386,
+            "max": 26985
+          },
+          "allocated_object_bytes": {
+            "count": 300,
+            "min": 1063873,
+            "median": 1072001,
+            "p95": 1075240,
+            "p99": 1122777,
+            "max": 11397890
+          },
+          "allocated_wrapped_bytes": {
+            "count": 300,
+            "min": 1076280,
+            "median": 1084544,
+            "p95": 1087800,
+            "p99": 1136640,
+            "max": 11650144
+          },
+          "live_object_bytes": {
+            "count": 300,
+            "min": 1651623,
+            "median": 2420645,
+            "p95": 2950560,
+            "p99": 2995273,
+            "max": 3006380
+          },
+          "live_wrapped_bytes": {
+            "count": 300,
+            "min": 1703360,
+            "median": 2496744,
+            "p95": 3040832,
+            "p99": 3086824,
+            "max": 3098248
+          }
+        },
+        "first_50": {
+          "frame_start": 1,
+          "frame_end": 50,
+          "stats": {
+            "allocation_count": {
+              "count": 50,
+              "min": 1306,
+              "median": 1319,
+              "p95": 1461,
+              "p99": 26985,
+              "max": 26985
+            },
+            "allocated_object_bytes": {
+              "count": 50,
+              "min": 1063873,
+              "median": 1072007,
+              "p95": 1122777,
+              "p99": 11397890,
+              "max": 11397890
+            },
+            "allocated_wrapped_bytes": {
+              "count": 50,
+              "min": 1076280,
+              "median": 1084552,
+              "p95": 1136640,
+              "p99": 11650144,
+              "max": 11650144
+            },
+            "live_object_bytes": {
+              "count": 50,
+              "min": 1651623,
+              "median": 1928202,
+              "p95": 2016769,
+              "p99": 2024243,
+              "max": 2024243
+            },
+            "live_wrapped_bytes": {
+              "count": 50,
+              "min": 1703360,
+              "median": 1990968,
+              "p95": 2081888,
+              "p99": 2089576,
+              "max": 2089576
+            }
+          }
+        },
+        "last_50": {
+          "frame_start": 251,
+          "frame_end": 300,
+          "stats": {
+            "allocation_count": {
+              "count": 50,
+              "min": 1319,
+              "median": 1319,
+              "p95": 1320,
+              "p99": 1321,
+              "max": 1321
+            },
+            "allocated_object_bytes": {
+              "count": 50,
+              "min": 1071926,
+              "median": 1071997,
+              "p95": 1072095,
+              "p99": 1125271,
+              "max": 1125271
+            },
+            "allocated_wrapped_bytes": {
+              "count": 50,
+              "min": 1084472,
+              "median": 1084544,
+              "p95": 1084648,
+              "p99": 1137824,
+              "max": 1137824
+            },
+            "live_object_bytes": {
+              "count": 50,
+              "min": 2796807,
+              "median": 2913247,
+              "p95": 2998991,
+              "p99": 3006380,
+              "max": 3006380
+            },
+            "live_wrapped_bytes": {
+              "count": 50,
+              "min": 2883496,
+              "median": 3002480,
+              "p95": 3090648,
+              "p99": 3098248,
+              "max": 3098248
+            }
+          }
+        },
+        "slope": "plateau"
+      },
+      "heap_profile": {
+        "totals": {
+          "allocation_count": 424767,
+          "deallocation_count": 415428,
+          "allocated_object_bytes": 334327824,
+          "deallocated_object_bytes": 331321444,
+          "allocated_wrapped_bytes": 338363656,
+          "deallocated_wrapped_bytes": 335265408,
+          "live_object_bytes": 3006380,
+          "live_wrapped_bytes": 3098248
+        },
+        "unmatched_deallocations": 0,
+        "top_groups_by_allocated_bytes": [
+          {
+            "group_id": 1,
+            "name": "root",
+            "totals": {
+              "allocation_count": 200407,
+              "deallocation_count": 198830,
+              "allocated_object_bytes": 308782996,
+              "deallocated_object_bytes": 307630593,
+              "allocated_wrapped_bytes": 310513776,
+              "deallocated_wrapped_bytes": 309345640,
+              "live_object_bytes": 1152403,
+              "live_wrapped_bytes": 1168136
+            }
+          },
+          {
+            "group_id": 13,
+            "name": "inspector_patch_debug",
+            "totals": {
+              "allocation_count": 22903,
+              "deallocation_count": 18813,
+              "allocated_object_bytes": 6852045,
+              "deallocated_object_bytes": 5622374,
+              "allocated_wrapped_bytes": 7062344,
+              "deallocated_wrapped_bytes": 5793624,
+              "live_object_bytes": 1229671,
+              "live_wrapped_bytes": 1268720
+            }
+          },
+          {
+            "group_id": 7,
+            "name": "central_graph",
+            "totals": {
+              "allocation_count": 95918,
+              "deallocation_count": 95551,
+              "allocated_object_bytes": 5895987,
+              "deallocated_object_bytes": 5815759,
+              "allocated_wrapped_bytes": 6995984,
+              "deallocated_wrapped_bytes": 6912576,
+              "live_object_bytes": 80228,
+              "live_wrapped_bytes": 83408
+            }
+          },
+          {
+            "group_id": 6,
+            "name": "selection_inspector",
+            "totals": {
+              "allocation_count": 45365,
+              "deallocation_count": 44994,
+              "allocated_object_bytes": 5457391,
+              "deallocated_object_bytes": 5308144,
+              "allocated_wrapped_bytes": 5904216,
+              "deallocated_wrapped_bytes": 5751720,
+              "live_object_bytes": 149247,
+              "live_wrapped_bytes": 152496
+            }
+          },
+          {
+            "group_id": 4,
+            "name": "run_navigation",
+            "totals": {
+              "allocation_count": 26002,
+              "deallocation_count": 25523,
+              "allocated_object_bytes": 2812559,
+              "deallocated_object_bytes": 2743842,
+              "allocated_wrapped_bytes": 3057752,
+              "deallocated_wrapped_bytes": 2983648,
+              "live_object_bytes": 68717,
+              "live_wrapped_bytes": 74104
+            }
+          },
+          {
+            "group_id": 5,
+            "name": "diagnostics",
+            "totals": {
+              "allocation_count": 12054,
+              "deallocation_count": 11920,
+              "allocated_object_bytes": 1658584,
+              "deallocated_object_bytes": 1559288,
+              "allocated_wrapped_bytes": 1765904,
+              "deallocated_wrapped_bytes": 1665464,
+              "live_object_bytes": 99296,
+              "live_wrapped_bytes": 100440
+            }
+          },
+          {
+            "group_id": 3,
+            "name": "top_strip",
+            "totals": {
+              "allocation_count": 5551,
+              "deallocation_count": 5521,
+              "allocated_object_bytes": 1177863,
+              "deallocated_object_bytes": 1163542,
+              "allocated_wrapped_bytes": 1230176,
+              "deallocated_wrapped_bytes": 1215568,
+              "live_object_bytes": 14321,
+              "live_wrapped_bytes": 14608
+            }
+          },
+          {
+            "group_id": 2,
+            "name": "frame_update",
+            "totals": {
+              "allocation_count": 10360,
+              "deallocation_count": 8202,
+              "allocated_object_bytes": 984977,
+              "deallocated_object_bytes": 827391,
+              "allocated_wrapped_bytes": 1073584,
+              "deallocated_wrapped_bytes": 893432,
+              "live_object_bytes": 157586,
+              "live_wrapped_bytes": 180152
+            }
+          },
+          {
+            "group_id": 8,
+            "name": "timeline",
+            "totals": {
+              "allocation_count": 4491,
+              "deallocation_count": 4454,
+              "allocated_object_bytes": 514339,
+              "deallocated_object_bytes": 480821,
+              "allocated_wrapped_bytes": 553640,
+              "deallocated_wrapped_bytes": 519816,
+              "live_object_bytes": 33518,
+              "live_wrapped_bytes": 33824
+            }
+          },
+          {
+            "group_id": 9,
+            "name": "graph_projection_cache_refresh",
+            "totals": {
+              "allocation_count": 1716,
+              "deallocation_count": 1620,
+              "allocated_object_bytes": 191083,
+              "deallocated_object_bytes": 169690,
+              "allocated_wrapped_bytes": 206280,
+              "deallocated_wrapped_bytes": 183920,
+              "live_object_bytes": 21393,
+              "live_wrapped_bytes": 22360
+            }
+          }
+        ],
+        "top_groups_by_allocation_count": [
+          {
+            "group_id": 1,
+            "name": "root",
+            "totals": {
+              "allocation_count": 200407,
+              "deallocation_count": 198830,
+              "allocated_object_bytes": 308782996,
+              "deallocated_object_bytes": 307630593,
+              "allocated_wrapped_bytes": 310513776,
+              "deallocated_wrapped_bytes": 309345640,
+              "live_object_bytes": 1152403,
+              "live_wrapped_bytes": 1168136
+            }
+          },
+          {
+            "group_id": 7,
+            "name": "central_graph",
+            "totals": {
+              "allocation_count": 95918,
+              "deallocation_count": 95551,
+              "allocated_object_bytes": 5895987,
+              "deallocated_object_bytes": 5815759,
+              "allocated_wrapped_bytes": 6995984,
+              "deallocated_wrapped_bytes": 6912576,
+              "live_object_bytes": 80228,
+              "live_wrapped_bytes": 83408
+            }
+          },
+          {
+            "group_id": 6,
+            "name": "selection_inspector",
+            "totals": {
+              "allocation_count": 45365,
+              "deallocation_count": 44994,
+              "allocated_object_bytes": 5457391,
+              "deallocated_object_bytes": 5308144,
+              "allocated_wrapped_bytes": 5904216,
+              "deallocated_wrapped_bytes": 5751720,
+              "live_object_bytes": 149247,
+              "live_wrapped_bytes": 152496
+            }
+          },
+          {
+            "group_id": 4,
+            "name": "run_navigation",
+            "totals": {
+              "allocation_count": 26002,
+              "deallocation_count": 25523,
+              "allocated_object_bytes": 2812559,
+              "deallocated_object_bytes": 2743842,
+              "allocated_wrapped_bytes": 3057752,
+              "deallocated_wrapped_bytes": 2983648,
+              "live_object_bytes": 68717,
+              "live_wrapped_bytes": 74104
+            }
+          },
+          {
+            "group_id": 13,
+            "name": "inspector_patch_debug",
+            "totals": {
+              "allocation_count": 22903,
+              "deallocation_count": 18813,
+              "allocated_object_bytes": 6852045,
+              "deallocated_object_bytes": 5622374,
+              "allocated_wrapped_bytes": 7062344,
+              "deallocated_wrapped_bytes": 5793624,
+              "live_object_bytes": 1229671,
+              "live_wrapped_bytes": 1268720
+            }
+          },
+          {
+            "group_id": 5,
+            "name": "diagnostics",
+            "totals": {
+              "allocation_count": 12054,
+              "deallocation_count": 11920,
+              "allocated_object_bytes": 1658584,
+              "deallocated_object_bytes": 1559288,
+              "allocated_wrapped_bytes": 1765904,
+              "deallocated_wrapped_bytes": 1665464,
+              "live_object_bytes": 99296,
+              "live_wrapped_bytes": 100440
+            }
+          },
+          {
+            "group_id": 2,
+            "name": "frame_update",
+            "totals": {
+              "allocation_count": 10360,
+              "deallocation_count": 8202,
+              "allocated_object_bytes": 984977,
+              "deallocated_object_bytes": 827391,
+              "allocated_wrapped_bytes": 1073584,
+              "deallocated_wrapped_bytes": 893432,
+              "live_object_bytes": 157586,
+              "live_wrapped_bytes": 180152
+            }
+          },
+          {
+            "group_id": 3,
+            "name": "top_strip",
+            "totals": {
+              "allocation_count": 5551,
+              "deallocation_count": 5521,
+              "allocated_object_bytes": 1177863,
+              "deallocated_object_bytes": 1163542,
+              "allocated_wrapped_bytes": 1230176,
+              "deallocated_wrapped_bytes": 1215568,
+              "live_object_bytes": 14321,
+              "live_wrapped_bytes": 14608
+            }
+          },
+          {
+            "group_id": 8,
+            "name": "timeline",
+            "totals": {
+              "allocation_count": 4491,
+              "deallocation_count": 4454,
+              "allocated_object_bytes": 514339,
+              "deallocated_object_bytes": 480821,
+              "allocated_wrapped_bytes": 553640,
+              "deallocated_wrapped_bytes": 519816,
+              "live_object_bytes": 33518,
+              "live_wrapped_bytes": 33824
+            }
+          },
+          {
+            "group_id": 9,
+            "name": "graph_projection_cache_refresh",
+            "totals": {
+              "allocation_count": 1716,
+              "deallocation_count": 1620,
+              "allocated_object_bytes": 191083,
+              "deallocated_object_bytes": 169690,
+              "allocated_wrapped_bytes": 206280,
+              "deallocated_wrapped_bytes": 183920,
+              "live_object_bytes": 21393,
+              "live_wrapped_bytes": 22360
+            }
+          }
+        ],
+        "top_groups_by_retained_bytes": [
+          {
+            "group_id": 13,
+            "name": "inspector_patch_debug",
+            "totals": {
+              "allocation_count": 22903,
+              "deallocation_count": 18813,
+              "allocated_object_bytes": 6852045,
+              "deallocated_object_bytes": 5622374,
+              "allocated_wrapped_bytes": 7062344,
+              "deallocated_wrapped_bytes": 5793624,
+              "live_object_bytes": 1229671,
+              "live_wrapped_bytes": 1268720
+            }
+          },
+          {
+            "group_id": 1,
+            "name": "root",
+            "totals": {
+              "allocation_count": 200407,
+              "deallocation_count": 198830,
+              "allocated_object_bytes": 308782996,
+              "deallocated_object_bytes": 307630593,
+              "allocated_wrapped_bytes": 310513776,
+              "deallocated_wrapped_bytes": 309345640,
+              "live_object_bytes": 1152403,
+              "live_wrapped_bytes": 1168136
+            }
+          },
+          {
+            "group_id": 2,
+            "name": "frame_update",
+            "totals": {
+              "allocation_count": 10360,
+              "deallocation_count": 8202,
+              "allocated_object_bytes": 984977,
+              "deallocated_object_bytes": 827391,
+              "allocated_wrapped_bytes": 1073584,
+              "deallocated_wrapped_bytes": 893432,
+              "live_object_bytes": 157586,
+              "live_wrapped_bytes": 180152
+            }
+          },
+          {
+            "group_id": 6,
+            "name": "selection_inspector",
+            "totals": {
+              "allocation_count": 45365,
+              "deallocation_count": 44994,
+              "allocated_object_bytes": 5457391,
+              "deallocated_object_bytes": 5308144,
+              "allocated_wrapped_bytes": 5904216,
+              "deallocated_wrapped_bytes": 5751720,
+              "live_object_bytes": 149247,
+              "live_wrapped_bytes": 152496
+            }
+          },
+          {
+            "group_id": 5,
+            "name": "diagnostics",
+            "totals": {
+              "allocation_count": 12054,
+              "deallocation_count": 11920,
+              "allocated_object_bytes": 1658584,
+              "deallocated_object_bytes": 1559288,
+              "allocated_wrapped_bytes": 1765904,
+              "deallocated_wrapped_bytes": 1665464,
+              "live_object_bytes": 99296,
+              "live_wrapped_bytes": 100440
+            }
+          },
+          {
+            "group_id": 7,
+            "name": "central_graph",
+            "totals": {
+              "allocation_count": 95918,
+              "deallocation_count": 95551,
+              "allocated_object_bytes": 5895987,
+              "deallocated_object_bytes": 5815759,
+              "allocated_wrapped_bytes": 6995984,
+              "deallocated_wrapped_bytes": 6912576,
+              "live_object_bytes": 80228,
+              "live_wrapped_bytes": 83408
+            }
+          },
+          {
+            "group_id": 4,
+            "name": "run_navigation",
+            "totals": {
+              "allocation_count": 26002,
+              "deallocation_count": 25523,
+              "allocated_object_bytes": 2812559,
+              "deallocated_object_bytes": 2743842,
+              "allocated_wrapped_bytes": 3057752,
+              "deallocated_wrapped_bytes": 2983648,
+              "live_object_bytes": 68717,
+              "live_wrapped_bytes": 74104
+            }
+          },
+          {
+            "group_id": 8,
+            "name": "timeline",
+            "totals": {
+              "allocation_count": 4491,
+              "deallocation_count": 4454,
+              "allocated_object_bytes": 514339,
+              "deallocated_object_bytes": 480821,
+              "allocated_wrapped_bytes": 553640,
+              "deallocated_wrapped_bytes": 519816,
+              "live_object_bytes": 33518,
+              "live_wrapped_bytes": 33824
+            }
+          },
+          {
+            "group_id": 9,
+            "name": "graph_projection_cache_refresh",
+            "totals": {
+              "allocation_count": 1716,
+              "deallocation_count": 1620,
+              "allocated_object_bytes": 191083,
+              "deallocated_object_bytes": 169690,
+              "allocated_wrapped_bytes": 206280,
+              "deallocated_wrapped_bytes": 183920,
+              "live_object_bytes": 21393,
+              "live_wrapped_bytes": 22360
+            }
+          },
+          {
+            "group_id": 3,
+            "name": "top_strip",
+            "totals": {
+              "allocation_count": 5551,
+              "deallocation_count": 5521,
+              "allocated_object_bytes": 1177863,
+              "deallocated_object_bytes": 1163542,
+              "allocated_wrapped_bytes": 1230176,
+              "deallocated_wrapped_bytes": 1215568,
+              "live_object_bytes": 14321,
+              "live_wrapped_bytes": 14608
+            }
+          }
+        ],
+        "top_callsites_by_allocated_bytes": [],
+        "top_callsites_by_allocation_count": [],
+        "top_callsites_by_retained_bytes": []
+      },
+      "allocations": {
+        "enabled": true,
+        "allocation_count_delta": 424767,
+        "deallocation_count_delta": 415428,
+        "allocated_bytes_delta": 334327824,
+        "deallocated_bytes_delta": 331321444,
+        "scope": "tracking-allocator heap window; object bytes only, excludes GPU and driver memory"
+      },
+      "action": {
+        "action": "patch_debug_warm",
+        "target_label": "A1",
+        "target_key": "git-commit:06bf3f6c14b833372309cb409d40c137a6832124",
+        "inspector_section": "patch_debug",
+        "notes": [
+          "forced_inspector_section=patch_debug"
+        ]
+      }
+    },
+    {
+      "name": "inspector_patch_debug_expanded_300",
+      "target_frames": 300,
+      "frame_stats": {
+        "count": 300,
+        "min_ns": 1927608,
+        "median_ns": 1945862,
+        "p95_ns": 2093950,
+        "p99_ns": 2503169,
+        "max_ns": 2955107
+      },
+      "top_frames": [
+        {
+          "frame_index": 11,
+          "duration_ns": 2955107,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 104095
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 112121
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 427041
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 712547
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 82775
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1521236
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3516
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1319,
+            "deallocation_count_delta": 1310,
+            "allocated_object_bytes_delta": 1071997,
+            "deallocated_object_bytes_delta": 1070999,
+            "allocated_wrapped_bytes_delta": 1084544,
+            "deallocated_wrapped_bytes_delta": 1083448,
+            "live_object_bytes": 61575,
+            "live_wrapped_bytes": 64000
+          }
+        },
+        {
+          "frame_index": 1,
+          "duration_ns": 2647119,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 80421
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 75201
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 283442
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 445346
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 50875
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1134399
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3266
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1114,
+            "deallocation_count_delta": 1078,
+            "allocated_object_bytes_delta": 108992,
+            "deallocated_object_bytes_delta": 107332,
+            "allocated_wrapped_bytes_delta": 119744,
+            "deallocated_wrapped_bytes_delta": 117752,
+            "live_object_bytes": 4352,
+            "live_wrapped_bytes": 5200
+          }
+        },
+        {
+          "frame_index": 97,
+          "duration_ns": 2588409,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 75742
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 69871
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 279014
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 879931
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 110798
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1171559
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3216
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1319,
+            "deallocation_count_delta": 1309,
+            "allocated_object_bytes_delta": 1072000,
+            "deallocated_object_bytes_delta": 1068263,
+            "allocated_wrapped_bytes_delta": 1084544,
+            "deallocated_wrapped_bytes_delta": 1080704,
+            "live_object_bytes": 393415,
+            "live_wrapped_bytes": 404912
+          }
+        },
+        {
+          "frame_index": 299,
+          "duration_ns": 2503169,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 147978
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 138760
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 559961
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 583996
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 54101
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1025605
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3356
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1319,
+            "deallocation_count_delta": 1309,
+            "allocated_object_bytes_delta": 1071959,
+            "deallocated_object_bytes_delta": 1068263,
+            "allocated_wrapped_bytes_delta": 1084504,
+            "deallocated_wrapped_bytes_delta": 1080704,
+            "live_object_bytes": 1185328,
+            "live_wrapped_bytes": 1218136
+          }
+        },
+        {
+          "frame_index": 183,
+          "duration_ns": 2462893,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 76053
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 68979
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 276509
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 883218
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 108013
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1048048
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3176
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1319,
+            "deallocation_count_delta": 1309,
+            "allocated_object_bytes_delta": 1072028,
+            "deallocated_object_bytes_delta": 1068263,
+            "allocated_wrapped_bytes_delta": 1084576,
+            "deallocated_wrapped_bytes_delta": 1080704,
+            "live_object_bytes": 726749,
+            "live_wrapped_bytes": 747288
+          }
+        },
+        {
+          "frame_index": 56,
+          "duration_ns": 2414082,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 75271
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 69180
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 276990
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 918114
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 54593
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1024072
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3226
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1319,
+            "deallocation_count_delta": 1310,
+            "allocated_object_bytes_delta": 1071989,
+            "deallocated_object_bytes_delta": 1068367,
+            "allocated_wrapped_bytes_delta": 1084536,
+            "deallocated_wrapped_bytes_delta": 1080816,
+            "live_object_bytes": 233687,
+            "live_wrapped_bytes": 240856
+          }
+        },
+        {
+          "frame_index": 84,
+          "duration_ns": 2319063,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 75462
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 70161
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 278182
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 817634
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 58470
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1022659
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3186
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1319,
+            "deallocation_count_delta": 1311,
+            "allocated_object_bytes_delta": 1072004,
+            "deallocated_object_bytes_delta": 1068471,
+            "allocated_wrapped_bytes_delta": 1084552,
+            "deallocated_wrapped_bytes_delta": 1080928,
+            "live_object_bytes": 344751,
+            "live_wrapped_bytes": 354880
+          }
+        },
+        {
+          "frame_index": 71,
+          "duration_ns": 2286942,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 75051
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 69441
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 278653
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 474440
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 55063
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1327581
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 6072
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1319,
+            "deallocation_count_delta": 1309,
+            "allocated_object_bytes_delta": 1071977,
+            "deallocated_object_bytes_delta": 1068263,
+            "allocated_wrapped_bytes_delta": 1084520,
+            "deallocated_wrapped_bytes_delta": 1080704,
+            "live_object_bytes": 296561,
+            "live_wrapped_bytes": 305328
+          }
+        },
+        {
+          "frame_index": 160,
+          "duration_ns": 2285520,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 105768
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 101911
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 403317
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 566483
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 55144
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1075388
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3346
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1319,
+            "deallocation_count_delta": 1309,
+            "allocated_object_bytes_delta": 1071982,
+            "deallocated_object_bytes_delta": 1068263,
+            "allocated_wrapped_bytes_delta": 1084528,
+            "deallocated_wrapped_bytes_delta": 1080704,
+            "live_object_bytes": 640996,
+            "live_wrapped_bytes": 659112
+          }
+        },
+        {
+          "frame_index": 127,
+          "duration_ns": 2198677,
+          "components": [
+            {
+              "component": "top_strip",
+              "duration_ns": 146706
+            },
+            {
+              "component": "diagnostics",
+              "duration_ns": 71254
+            },
+            {
+              "component": "run_navigation",
+              "duration_ns": 451758
+            },
+            {
+              "component": "selection_inspector",
+              "duration_ns": 448762
+            },
+            {
+              "component": "timeline",
+              "duration_ns": 50976
+            },
+            {
+              "component": "central_graph",
+              "duration_ns": 1028972
+            },
+            {
+              "component": "capture_overhead",
+              "duration_ns": 3216
+            }
+          ],
+          "allocations": {
+            "allocation_count_delta": 1319,
+            "deallocation_count_delta": 1309,
+            "allocated_object_bytes_delta": 1072001,
+            "deallocated_object_bytes_delta": 1068263,
+            "allocated_wrapped_bytes_delta": 1084544,
+            "deallocated_wrapped_bytes_delta": 1080704,
+            "live_object_bytes": 505110,
+            "live_wrapped_bytes": 519760
+          }
+        }
+      ],
+      "component_timings": [
+        {
+          "component": "capture_overhead",
+          "stats": {
+            "count": 300,
+            "min_ns": 2985,
+            "median_ns": 3126,
+            "p95_ns": 3266,
+            "p99_ns": 5470,
+            "max_ns": 11101
+          },
+          "median_percent_of_frame_x100": 16
+        },
+        {
+          "component": "central_graph",
+          "stats": {
+            "count": 300,
+            "min_ns": 1006369,
+            "median_ns": 1015967,
+            "p95_ns": 1055040,
+            "p99_ns": 1134399,
+            "max_ns": 1521236
+          },
+          "median_percent_of_frame_x100": 5221
+        },
+        {
+          "component": "diagnostics",
+          "stats": {
+            "count": 300,
+            "min_ns": 68609,
+            "median_ns": 69761,
+            "p95_ns": 76072,
+            "p99_ns": 84388,
+            "max_ns": 138760
+          },
+          "median_percent_of_frame_x100": 358,
+          "nested_under": "run_navigation"
+        },
+        {
+          "component": "run_navigation",
+          "stats": {
+            "count": 300,
+            "min_ns": 274385,
+            "median_ns": 278854,
+            "p95_ns": 292249,
+            "p99_ns": 403317,
+            "max_ns": 559961
+          },
+          "median_percent_of_frame_x100": 1433
+        },
+        {
+          "component": "selection_inspector",
+          "stats": {
+            "count": 300,
+            "min_ns": 443793,
+            "median_ns": 451648,
+            "p95_ns": 519936,
+            "p99_ns": 817634,
+            "max_ns": 918114
+          },
+          "median_percent_of_frame_x100": 2321
+        },
+        {
+          "component": "timeline",
+          "stats": {
+            "count": 300,
+            "min_ns": 50184,
+            "median_ns": 51487,
+            "p95_ns": 58470,
+            "p99_ns": 108013,
+            "max_ns": 125555
+          },
+          "median_percent_of_frame_x100": 264
+        },
+        {
+          "component": "top_strip",
+          "stats": {
+            "count": 300,
+            "min_ns": 74530,
+            "median_ns": 75702,
+            "p95_ns": 81212,
+            "p99_ns": 146706,
+            "max_ns": 154771
+          },
+          "median_percent_of_frame_x100": 389
+        }
+      ],
+      "allocation_frames": {
+        "per_frame": {
+          "allocation_count": {
+            "count": 300,
+            "min": 1114,
+            "median": 1319,
+            "p95": 1320,
+            "p99": 1321,
+            "max": 1325
+          },
+          "allocated_object_bytes": {
+            "count": 300,
+            "min": 108992,
+            "median": 1071989,
+            "p95": 1072613,
+            "p99": 1078651,
+            "max": 1128468
+          },
+          "allocated_wrapped_bytes": {
+            "count": 300,
+            "min": 119744,
+            "median": 1084536,
+            "p95": 1085160,
+            "p99": 1091208,
+            "max": 1141040
+          },
+          "live_object_bytes": {
+            "count": 300,
+            "min": 4352,
+            "median": 603987,
+            "p95": 1133297,
+            "p99": 1177912,
+            "max": 1189026
+          },
+          "live_wrapped_bytes": {
+            "count": 300,
+            "min": 5200,
+            "median": 621056,
+            "p95": 1164624,
+            "p99": 1210512,
+            "max": 1221936
+          }
+        },
+        "first_50": {
+          "frame_start": 1,
+          "frame_end": 50,
+          "stats": {
+            "allocation_count": {
+              "count": 50,
+              "min": 1114,
+              "median": 1319,
+              "p95": 1321,
+              "p99": 1325,
+              "max": 1325
+            },
+            "allocated_object_bytes": {
+              "count": 50,
+              "min": 108992,
+              "median": 1071993,
+              "p95": 1075339,
+              "p99": 1078651,
+              "max": 1078651
+            },
+            "allocated_wrapped_bytes": {
+              "count": 50,
+              "min": 119744,
+              "median": 1084536,
+              "p95": 1087896,
+              "p99": 1091208,
+              "max": 1091208
+            },
+            "live_object_bytes": {
+              "count": 50,
+              "min": 4352,
+              "median": 115238,
+              "p95": 204109,
+              "p99": 211542,
+              "max": 211542
+            },
+            "live_wrapped_bytes": {
+              "count": 50,
+              "min": 5200,
+              "median": 119136,
+              "p95": 210432,
+              "p99": 218080,
+              "max": 218080
+            }
+          }
+        },
+        "last_50": {
+          "frame_start": 251,
+          "frame_end": 300,
+          "stats": {
+            "allocation_count": {
+              "count": 50,
+              "min": 1319,
+              "median": 1319,
+              "p95": 1320,
+              "p99": 1322,
+              "max": 1322
+            },
+            "allocated_object_bytes": {
+              "count": 50,
+              "min": 1071893,
+              "median": 1071984,
+              "p95": 1072099,
+              "p99": 1128468,
+              "max": 1128468
+            },
+            "allocated_wrapped_bytes": {
+              "count": 50,
+              "min": 1084440,
+              "median": 1084528,
+              "p95": 1084656,
+              "p99": 1141040,
+              "max": 1141040
+            },
+            "live_object_bytes": {
+              "count": 50,
+              "min": 980211,
+              "median": 1096064,
+              "p95": 1181632,
+              "p99": 1189026,
+              "max": 1189026
+            },
+            "live_wrapped_bytes": {
+              "count": 50,
+              "min": 1007936,
+              "median": 1126328,
+              "p95": 1214336,
+              "p99": 1221936,
+              "max": 1221936
+            }
+          }
+        },
+        "slope": "plateau"
+      },
+      "heap_profile": {
+        "totals": {
+          "allocation_count": 395545,
+          "deallocation_count": 392472,
+          "allocated_object_bytes": 320774273,
+          "deallocated_object_bytes": 319587939,
+          "allocated_wrapped_bytes": 324536824,
+          "deallocated_wrapped_bytes": 323318096,
+          "live_object_bytes": 1189026,
+          "live_wrapped_bytes": 1221936
+        },
+        "unmatched_deallocations": 46,
+        "top_groups_by_allocated_bytes": [
+          {
+            "group_id": 1,
+            "name": "root",
+            "totals": {
+              "allocation_count": 198877,
+              "deallocation_count": 198233,
+              "allocated_object_bytes": 307638215,
+              "deallocated_object_bytes": 306610243,
+              "allocated_wrapped_bytes": 309353760,
+              "deallocated_wrapped_bytes": 308319448,
+              "live_object_bytes": 1027972,
+              "live_wrapped_bytes": 1034312
+            }
+          },
+          {
+            "group_id": 7,
+            "name": "central_graph",
+            "totals": {
+              "allocation_count": 93900,
+              "deallocation_count": 93870,
+              "allocated_object_bytes": 4879500,
+              "deallocated_object_bytes": 4877364,
+              "allocated_wrapped_bytes": 5961600,
+              "deallocated_wrapped_bytes": 5959112,
+              "live_object_bytes": 2136,
+              "live_wrapped_bytes": 2488
+            }
+          },
+          {
+            "group_id": 6,
+            "name": "selection_inspector",
+            "totals": {
+              "allocation_count": 41100,
+              "deallocation_count": 41079,
+              "allocated_object_bytes": 3205800,
+              "deallocated_object_bytes": 3205064,
+              "allocated_wrapped_bytes": 3612000,
+              "deallocated_wrapped_bytes": 3611064,
+              "live_object_bytes": 736,
+              "live_wrapped_bytes": 936
+            }
+          },
+          {
+            "group_id": 4,
+            "name": "run_navigation",
+            "totals": {
+              "allocation_count": 24000,
+              "deallocation_count": 23695,
+              "allocated_object_bytes": 1725000,
+              "deallocated_object_bytes": 1721364,
+              "allocated_wrapped_bytes": 1951200,
+              "deallocated_wrapped_bytes": 1943624,
+              "live_object_bytes": 3636,
+              "live_wrapped_bytes": 7576
+            }
+          },
+          {
+            "group_id": 5,
+            "name": "diagnostics",
+            "totals": {
+              "allocation_count": 11100,
+              "deallocation_count": 11100,
+              "allocated_object_bytes": 1053600,
+              "deallocated_object_bytes": 1053600,
+              "allocated_wrapped_bytes": 1152000,
+              "deallocated_wrapped_bytes": 1152000,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 2,
+            "name": "frame_update",
+            "totals": {
+              "allocation_count": 10066,
+              "deallocation_count": 7955,
+              "allocated_object_bytes": 946590,
+              "deallocated_object_bytes": 792552,
+              "allocated_wrapped_bytes": 1032480,
+              "deallocated_wrapped_bytes": 856432,
+              "live_object_bytes": 154038,
+              "live_wrapped_bytes": 176048
+            }
+          },
+          {
+            "group_id": 13,
+            "name": "inspector_patch_debug",
+            "totals": {
+              "allocation_count": 7200,
+              "deallocation_count": 7192,
+              "allocated_object_bytes": 587100,
+              "deallocated_object_bytes": 586592,
+              "allocated_wrapped_bytes": 652800,
+              "deallocated_wrapped_bytes": 652224,
+              "live_object_bytes": 508,
+              "live_wrapped_bytes": 576
+            }
+          },
+          {
+            "group_id": 8,
+            "name": "timeline",
+            "totals": {
+              "allocation_count": 4200,
+              "deallocation_count": 4200,
+              "allocated_object_bytes": 349800,
+              "deallocated_object_bytes": 349800,
+              "allocated_wrapped_bytes": 386400,
+              "deallocated_wrapped_bytes": 386400,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 3,
+            "name": "top_strip",
+            "totals": {
+              "allocation_count": 3900,
+              "deallocation_count": 3900,
+              "allocated_object_bytes": 287700,
+              "deallocated_object_bytes": 287700,
+              "allocated_wrapped_bytes": 324000,
+              "deallocated_wrapped_bytes": 324000,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 9,
+            "name": "graph_projection_cache_refresh",
+            "totals": {
+              "allocation_count": 1202,
+              "deallocation_count": 1202,
+              "allocated_object_bytes": 100968,
+              "deallocated_object_bytes": 100968,
+              "allocated_wrapped_bytes": 110584,
+              "deallocated_wrapped_bytes": 110584,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          }
+        ],
+        "top_groups_by_allocation_count": [
+          {
+            "group_id": 1,
+            "name": "root",
+            "totals": {
+              "allocation_count": 198877,
+              "deallocation_count": 198233,
+              "allocated_object_bytes": 307638215,
+              "deallocated_object_bytes": 306610243,
+              "allocated_wrapped_bytes": 309353760,
+              "deallocated_wrapped_bytes": 308319448,
+              "live_object_bytes": 1027972,
+              "live_wrapped_bytes": 1034312
+            }
+          },
+          {
+            "group_id": 7,
+            "name": "central_graph",
+            "totals": {
+              "allocation_count": 93900,
+              "deallocation_count": 93870,
+              "allocated_object_bytes": 4879500,
+              "deallocated_object_bytes": 4877364,
+              "allocated_wrapped_bytes": 5961600,
+              "deallocated_wrapped_bytes": 5959112,
+              "live_object_bytes": 2136,
+              "live_wrapped_bytes": 2488
+            }
+          },
+          {
+            "group_id": 6,
+            "name": "selection_inspector",
+            "totals": {
+              "allocation_count": 41100,
+              "deallocation_count": 41079,
+              "allocated_object_bytes": 3205800,
+              "deallocated_object_bytes": 3205064,
+              "allocated_wrapped_bytes": 3612000,
+              "deallocated_wrapped_bytes": 3611064,
+              "live_object_bytes": 736,
+              "live_wrapped_bytes": 936
+            }
+          },
+          {
+            "group_id": 4,
+            "name": "run_navigation",
+            "totals": {
+              "allocation_count": 24000,
+              "deallocation_count": 23695,
+              "allocated_object_bytes": 1725000,
+              "deallocated_object_bytes": 1721364,
+              "allocated_wrapped_bytes": 1951200,
+              "deallocated_wrapped_bytes": 1943624,
+              "live_object_bytes": 3636,
+              "live_wrapped_bytes": 7576
+            }
+          },
+          {
+            "group_id": 5,
+            "name": "diagnostics",
+            "totals": {
+              "allocation_count": 11100,
+              "deallocation_count": 11100,
+              "allocated_object_bytes": 1053600,
+              "deallocated_object_bytes": 1053600,
+              "allocated_wrapped_bytes": 1152000,
+              "deallocated_wrapped_bytes": 1152000,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 2,
+            "name": "frame_update",
+            "totals": {
+              "allocation_count": 10066,
+              "deallocation_count": 7955,
+              "allocated_object_bytes": 946590,
+              "deallocated_object_bytes": 792552,
+              "allocated_wrapped_bytes": 1032480,
+              "deallocated_wrapped_bytes": 856432,
+              "live_object_bytes": 154038,
+              "live_wrapped_bytes": 176048
+            }
+          },
+          {
+            "group_id": 13,
+            "name": "inspector_patch_debug",
+            "totals": {
+              "allocation_count": 7200,
+              "deallocation_count": 7192,
+              "allocated_object_bytes": 587100,
+              "deallocated_object_bytes": 586592,
+              "allocated_wrapped_bytes": 652800,
+              "deallocated_wrapped_bytes": 652224,
+              "live_object_bytes": 508,
+              "live_wrapped_bytes": 576
+            }
+          },
+          {
+            "group_id": 8,
+            "name": "timeline",
+            "totals": {
+              "allocation_count": 4200,
+              "deallocation_count": 4200,
+              "allocated_object_bytes": 349800,
+              "deallocated_object_bytes": 349800,
+              "allocated_wrapped_bytes": 386400,
+              "deallocated_wrapped_bytes": 386400,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 3,
+            "name": "top_strip",
+            "totals": {
+              "allocation_count": 3900,
+              "deallocation_count": 3900,
+              "allocated_object_bytes": 287700,
+              "deallocated_object_bytes": 287700,
+              "allocated_wrapped_bytes": 324000,
+              "deallocated_wrapped_bytes": 324000,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 9,
+            "name": "graph_projection_cache_refresh",
+            "totals": {
+              "allocation_count": 1202,
+              "deallocation_count": 1202,
+              "allocated_object_bytes": 100968,
+              "deallocated_object_bytes": 100968,
+              "allocated_wrapped_bytes": 110584,
+              "deallocated_wrapped_bytes": 110584,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          }
+        ],
+        "top_groups_by_retained_bytes": [
+          {
+            "group_id": 1,
+            "name": "root",
+            "totals": {
+              "allocation_count": 198877,
+              "deallocation_count": 198233,
+              "allocated_object_bytes": 307638215,
+              "deallocated_object_bytes": 306610243,
+              "allocated_wrapped_bytes": 309353760,
+              "deallocated_wrapped_bytes": 308319448,
+              "live_object_bytes": 1027972,
+              "live_wrapped_bytes": 1034312
+            }
+          },
+          {
+            "group_id": 2,
+            "name": "frame_update",
+            "totals": {
+              "allocation_count": 10066,
+              "deallocation_count": 7955,
+              "allocated_object_bytes": 946590,
+              "deallocated_object_bytes": 792552,
+              "allocated_wrapped_bytes": 1032480,
+              "deallocated_wrapped_bytes": 856432,
+              "live_object_bytes": 154038,
+              "live_wrapped_bytes": 176048
+            }
+          },
+          {
+            "group_id": 4,
+            "name": "run_navigation",
+            "totals": {
+              "allocation_count": 24000,
+              "deallocation_count": 23695,
+              "allocated_object_bytes": 1725000,
+              "deallocated_object_bytes": 1721364,
+              "allocated_wrapped_bytes": 1951200,
+              "deallocated_wrapped_bytes": 1943624,
+              "live_object_bytes": 3636,
+              "live_wrapped_bytes": 7576
+            }
+          },
+          {
+            "group_id": 7,
+            "name": "central_graph",
+            "totals": {
+              "allocation_count": 93900,
+              "deallocation_count": 93870,
+              "allocated_object_bytes": 4879500,
+              "deallocated_object_bytes": 4877364,
+              "allocated_wrapped_bytes": 5961600,
+              "deallocated_wrapped_bytes": 5959112,
+              "live_object_bytes": 2136,
+              "live_wrapped_bytes": 2488
+            }
+          },
+          {
+            "group_id": 6,
+            "name": "selection_inspector",
+            "totals": {
+              "allocation_count": 41100,
+              "deallocation_count": 41079,
+              "allocated_object_bytes": 3205800,
+              "deallocated_object_bytes": 3205064,
+              "allocated_wrapped_bytes": 3612000,
+              "deallocated_wrapped_bytes": 3611064,
+              "live_object_bytes": 736,
+              "live_wrapped_bytes": 936
+            }
+          },
+          {
+            "group_id": 13,
+            "name": "inspector_patch_debug",
+            "totals": {
+              "allocation_count": 7200,
+              "deallocation_count": 7192,
+              "allocated_object_bytes": 587100,
+              "deallocated_object_bytes": 586592,
+              "allocated_wrapped_bytes": 652800,
+              "deallocated_wrapped_bytes": 652224,
+              "live_object_bytes": 508,
+              "live_wrapped_bytes": 576
+            }
+          },
+          {
+            "group_id": 3,
+            "name": "top_strip",
+            "totals": {
+              "allocation_count": 3900,
+              "deallocation_count": 3900,
+              "allocated_object_bytes": 287700,
+              "deallocated_object_bytes": 287700,
+              "allocated_wrapped_bytes": 324000,
+              "deallocated_wrapped_bytes": 324000,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 5,
+            "name": "diagnostics",
+            "totals": {
+              "allocation_count": 11100,
+              "deallocation_count": 11100,
+              "allocated_object_bytes": 1053600,
+              "deallocated_object_bytes": 1053600,
+              "allocated_wrapped_bytes": 1152000,
+              "deallocated_wrapped_bytes": 1152000,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 8,
+            "name": "timeline",
+            "totals": {
+              "allocation_count": 4200,
+              "deallocation_count": 4200,
+              "allocated_object_bytes": 349800,
+              "deallocated_object_bytes": 349800,
+              "allocated_wrapped_bytes": 386400,
+              "deallocated_wrapped_bytes": 386400,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          },
+          {
+            "group_id": 9,
+            "name": "graph_projection_cache_refresh",
+            "totals": {
+              "allocation_count": 1202,
+              "deallocation_count": 1202,
+              "allocated_object_bytes": 100968,
+              "deallocated_object_bytes": 100968,
+              "allocated_wrapped_bytes": 110584,
+              "deallocated_wrapped_bytes": 110584,
+              "live_object_bytes": 0,
+              "live_wrapped_bytes": 0
+            }
+          }
+        ],
+        "top_callsites_by_allocated_bytes": [],
+        "top_callsites_by_allocation_count": [],
+        "top_callsites_by_retained_bytes": []
+      },
+      "allocations": {
+        "enabled": true,
+        "allocation_count_delta": 395545,
+        "deallocation_count_delta": 392472,
+        "allocated_bytes_delta": 320774273,
+        "deallocated_bytes_delta": 319587939,
+        "scope": "tracking-allocator heap window; object bytes only, excludes GPU and driver memory"
+      },
+      "action": {
+        "action": "patch_debug_warm",
+        "target_label": "A1",
+        "target_key": "git-commit:06bf3f6c14b833372309cb409d40c137a6832124",
+        "inspector_section": "patch_debug",
+        "notes": [
+          "forced_inspector_section=patch_debug"
+        ]
+      }
+    }
+  ],
+  "puffin_artifacts": [
+    {
+      "path": "/home/brasides/code/ploke/crates/ploke-egui/data/profiling/puffin/benchmarks/20260517-44618b23a9bd-standard/standard.puffin",
+      "bytes": 1995018,
+      "sha256": "f850dbe7d30c3ae7cccc53b61fb1aeba82f26e525a157d40f589827c5a6061d5",
+      "tracked": false
+    }
+  ],
+  "heap_artifacts": [
+    {
+      "path": "/home/brasides/code/ploke/crates/ploke-egui/data/profiling/heap/benchmarks/20260517-44618b23a9bd-standard/patch_debug_warm_300.heap.json",
+      "bytes": 4560,
+      "sha256": "d4de9118e47082e3010681b7010c756cecd74bd21a797f1f3f3eb88ab12d5fd1",
+      "tracked": false
+    },
+    {
+      "path": "/home/brasides/code/ploke/crates/ploke-egui/data/profiling/heap/benchmarks/20260517-44618b23a9bd-standard/inspector_patch_debug_expanded_300.heap.json",
+      "bytes": 4500,
+      "sha256": "5e28c2a5ab0db647144ecd9e0768b130a13dbb7f244a38f0d5f75e6c85b7a504",
+      "tracked": false
+    }
+  ],
+  "notes": [
+    "reporting-only benchmark; no pass/fail thresholds applied",
+    "allocation deltas use tracking-allocator object bytes and wrapped bytes; GPU and driver memory are outside the measured surface",
+    "standard heap attribution is driven by #[tracing::instrument] span names and uses cheap totals/group counters; callsite backtraces are not captured in standard mode",
+    "report.json and README.md are rewritten after each completed scenario so interrupted runs keep partial evidence",
+    "puffin captures are local ignored artifacts under crates/ploke-egui/data/",
+    "full heap profiles are local ignored artifacts under crates/ploke-egui/data/profiling/heap/benchmarks/"
+  ]
+}

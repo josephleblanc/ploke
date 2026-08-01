@@ -1,0 +1,1594 @@
+Capability Self-Assessment:
+Teaching LLMs to Know Their Limits
+
+Haoyan Yang1∗, Reza Shirkavand2∗, Yukai Jin3 ,
+Jiawei Zhou1†, Shangqian Gao3†, Heng Huang2†
+
+Stony Brook University
+
+University of Maryland
+
+Florida State University
+
+Abstract
+The ability to recognize one’s own limitations and decide whether to solve a problem or delegate is fundamental for reliable intelligent systems. Yet we show that modern large language models systematically lack this ability: across diverse model families and scales, they overestimate their competence and attempt queries they cannot solve. We refer to this ability as Capability Self-Assessment (CSA) and formulate it as a policy-learning problem, aiming to improve self-assessment while preserving the model’s original capabilities. Our results show that reinforcement learning teaches CSA effectively, significantly outperforming supervised finetuning while preserving original capabilities. In contrast, supervised fine-tuning severely degrades the capabilities the model is meant to assess. Moreover, learned self-assessment behavior generalizes well out of distribution, suggesting that CSA is a transferable model trait. Finally, CSA is practically useful: it improves local– cloud decision making at inference time and provides a signal for targeted data selection during training.3
+
+Introduction
+
+An ideal intelligent system not only solves problems well, but also recognizes its limits. It asks for help when a problem exceeds its ability or uses failure to identify what it should learn next,
+as humans do [43]. However, large language models (LLMs) are trained to produce answers, not
+to decide whether they should answer. We empirically find systematic capability overestimation across diverse model families and scales: LLMs choose to answer even on queries they cannot solve reliably. The consequences are concrete. Models answer beyond their capability boundary, producing
+hallucinations [16] and wasted compute [55]. This decision of whether to answer is often as important
+as the answer itself: before attempting a query, a model should assess whether the problem lies within its own competence or whether it should delegate to a stronger model or a human. We define Capability Self-Assessment (CSA) as a model’s ability to judge whether a query falls within its solvable set, and use it as our central lens. Prior work has studied related problems
+through calibration [34], confidence estimation [72, 35], instruction tuning [74], and abstention [64].
+However, these lines of work do not treat self-assessment as an independent capability-learning problem. Calibration and confidence estimation mainly extract scores tied to model predictions, while instruction tuning and abstention typically mix solve-or-defer behavior into specific tasks. To isolate capability assessment from execution and directly test whether a model can learn its own capability boundary, we formulate an actionable CSA task in a simple format: a binary choice ∗ Equal Contributions. † Correspondence to: Jiawei Zhou (jiawei.zhou.1@stonybrook.edu), Shangqian Gao (sgao@cs.fsu.edu), Heng Huang (heng@cs.umd.edu). 3 Code is available at https://github.com/Joyyang158/llm-csa.
+
+between SELF-SOLVE, attempting the query with the model itself, and DELEGATE, handing off the query to a stronger model. We view this task as a policy learning problem, not as an ordinary supervised classification. The goal is not to train a separate judge, nor merely to elicit a calibrated confidence score. Rather, we want the model itself to acquire CSA as a behavioral capability while retaining the underlying abilities whose limits it must assess. This makes reinforcement learning (RL) particularly natural. The object of interest is an action, not a label in isolation, and correctness is outcome-based. A SELF-SOLVE decision is correct if the model can in fact solve the query, and DELEGATE is
+correct otherwise. This gives a clean verifiable reward [39, 54, 28], making CSA a natural instance
+of policy optimization with outcome-based feedback. By contrast, Supervised Finetuning (SFT) on decision labels or rationales can teach the model to imitate the desired outputs without preserving the competence those outputs are meant to reflect. Across a broad range of model families, scales, and domains, we show that CSA is a teachable trait. RL substantially improves this capability, outperforming supervised alternatives while preserving the model’s original problem-solving ability. The resulting behavior also transfers across domains, suggesting that CSA is not just a domain-specific heuristic, but a more general and reusable capabilityassessment skill. We demonstrate the broader view of CSA as a learnable model capability in two concrete applications. At inference time, learned CSA improves local–cloud routing by identifying which queries should be routed to a stronger model, yielding a better cost–accuracy tradeoff. Moreover, because DELEGATE samples lie near or beyond the model’s current capability boundary, CSA-based signal can be used during training for targeted data selection. In this way, learned CSA can play a dual role analogous to competence assessment in effective problem solving, guiding when to act or delegate at inference time, and guiding what to learn next during training. In summary, our contributions are:
+1. We formalize Capability Self-Assessment (CSA) as a policy learning problem, where the model decides between SELF-SOLVE and DELEGATE, motivated by the severe capability overestimation we observe in current LLMs.
+2. We show that CSA is a teachable trait: unlike SFT, RL improves capability assessment across model scales and domains without degrading task ability. The learned policy further generalizes to out-of-distribution settings.
+3. We demonstrate that learned CSA is useful in practice for both local–cloud routing and capability-aware data selection.
+
+Related Work and Motivation
+
+2.1
+
+Related Work
+
+Self-evaluation, calibration, and selective prediction and abstention. A central line of work
+studies whether language models can assess the correctness of their own outputs. Kadavath et al. [34]
+show that LLMs can produce useful self-evaluation signals such as P (True) and P (IK), motivating
+a view of self-knowledge as a calibration problem [20, 27]. Follow-up work studies unanswerable
+questions and uncertainty-aware fine-tuning, showing that uncertainty estimation can improve with
+explicit training rather than prompting alone [72, 35]. Closely related work on selective prediction
+and abstention asks when a model should answer versus refrain from answering, often through
+confidence thresholding or risk–coverage tradeoffs [12, 15, 5, 18, 66, 25, 64]. Together, these lines
+of work largely treat self-knowledge as a scalar confidence estimation problem. Uncertainty signals and RL-trained decision behavior. A related literature studies uncertainty and hallucination detection through self-consistency, semantic uncertainty, or hidden-state probes [44, 16, 36, 3, 56, 30, 8]. These works suggest that models contain useful signals about their own unreliability,
+but they are largely aimed at post-hoc detection. On the optimization side, DeepSeek-R1 [28] shows
+that RL can induce useful behavioral traits such as self-reflection and verification, while recent
+RL-based help-seeking work studies when models should rely on external tools [17, 26].
+Positioning our contribution. Rather than treating self-assessment as a scalar confidence estimate or a detection method, we study whether the model itself can learn an explicit SELF-SOLVE/DELEGATE
+
+Figure 1: Current models lack CSA, across model families and sizes, evaluated on a combined math test set. ▼ marks each model’s self-solve rate and ▲ marks its actual accuracy. The shaded bar spans the gap between the two, with a larger gap indicating weaker CSA.
+policy. The goal is to instill CSA as an internal capability of the model, not to train a separate router or judge. This makes policy learning more appropriate than supervised classification: a confidence score or delegation label specifies only the desired output, while RL lets the model develop its own internal strategy for capability assessment. Our experiments confirm this distinction is consequential (Section 4.2). A full discussion of related work is provided in Appendix A. 2.2
+
+Empirical Study: Current Models Lack CSA
+
+Similar to prior work showing that LLMs overestimate their likelihood of success or answer correctness [4, 67, 58, 11], we empirically find that most current models lack reliable CSA. Our evaluation
+spans the Qwen3 [69], Gemma3 [59], Llama3 [22], OLMo2 [47], GPT-5 [48], and Gemini-3.1 [21]
+families, covering both open-weight and frontier closed-weight models. For each model, we use queries from a combined math test set and ask it to choose between SELF-SOLVE and DELEGATE. We record the self-solve rate, the percentage of samples on which it chooses SELF-SOLVE and compare it with actual accuracy, the percentage it answers correctly when solving. As shown in Figure 1, comparing these two metrics reveals that across all evaluated models the self-solve rate is substantially higher than the actual accuracy. This indicates that current models systematically over-estimate their own capability. See Appendices B.1, D.2, and D.3 for the prompt template, Math test set details, and inference setup.
+
+CSA through Training
+
+Motivated by the finding that current models lack reliable CSA (Section 2.2), in this section we investigate whether CSA can be acquired through training. Figure 2 illustrates our approach. 3.1
+
+CSA Label Construction
+
+Teaching a model CSA requires ground-truth labels, which we construct by probing the model itself.
+Given a dataset D = {(qi , a∗i )}N
+i=1 of queries and answers, we run model M on each query K times (k)
+to obtain predictions {âi }K
+k=1 . Sampling K times reduces decoding noise, so the label reflects the model’s underlying capability. Then assign labels by aggregating their comparisons to ground truth: (
+
+(k)
+SELF-SOLVE, if g {1[âi = a∗i ]}K
+= 1, k=1
+yi = (1)
+DELEGATE,
+otherwise, where g(·) is an aggregation function (e.g., pass@K or majority vote). The resulting labels capture which queries the model can and cannot solve, and are shared across all training strategies. Importantly, these labels are constructed before training and remain fixed throughout. Their validity therefore rests on a key assumption: that acquiring CSA does not degrade the model’s underlying
+
+1 CSA Label Construction
+
+Probe Model to yield Capability Self-Assessment (CSA) label
+
+…
+
+query 𝑥𝑖 ground truth answer 𝑎𝑖∗
+
+model ℳ
+try to answer
+
+𝑘
+
+compare with 𝒂∗𝒊
+
+aggregate {𝑐𝑖 }
+
+… (1) (2) 𝑐𝑖 , 𝑐𝑖 … 𝑐𝑖 𝐾
+
+∑
+
+(1) (2)
+(𝐾)
+𝑎ො 𝑖 , 𝑎ො 𝑖 … 𝑎ො 𝑖
+
+(𝐾 model answers)
+
+(k) 𝑐𝑖 ∈
+
+obtain label 𝒚𝒊
+
+𝑦𝑖 ∈ {Self-Solve, Delegate}
+
+Self-Solve
+Delegate
+
+e.g. majority, any-correct
+
+0,1
+
+2 CSA Training Strategies Four strategies for training model
+
+(d) RLVR
+
+to acquire CSA
+
+phase 1: Diversity-Filtered Warm-up (DFW)
+
+(b) SFTself
+
+(a) SFTlabel
+
+(c) SFTteacher
+
+query
+
+query 𝑥𝑖
+
+query 𝑥𝑖
+
+rationale
+
+label 𝑦𝑖
+
+query 𝑥𝑖
+
+𝑦𝑖
+
+rationale from
+ℳ itself
+
+directly use the label
+
+rationale and label
+
+rationale
+
+𝐷𝑑𝑖𝑣
+
+Can I
+solve this?
+
+trained model ℳ ′
+
+decision 𝑦ො𝑖 with rationale
+
+Delegate
+
+or
+
+Self-Solve
+
+delegate decision correct +1 (reward=1)
+
+𝐷𝑑𝑖𝑣
+
+incorrect -1 (reward=-1)
+
+base model
+
+phase 2: Full GRPO Training
+
+-1
+
+-1
+
+GRPO
+
+𝑥𝑖
+
+new query 𝑥𝑖
+
+𝑥𝑁
+
+warm-up model
+
++1
+
++1
+
+-1
+
+final model
+
+-1
+
+CSA Evaluation
+
+𝑦෤𝑖
+
+…
+
+GRPO
+
+𝑥𝑖
+
+rationale and label
+
+𝑥2
+
+diversified samples
+
+𝑦𝑖
+
+𝐷
+
+new query 𝑥𝑖
+
+…
+
+𝑥𝑁
+
+full dataset
+
+3 CSA Inference
+
+𝑥1
+
+𝑥2
+
+rationale from teacher ℳ ∗
+
+self-solve decision
+
+rollout 𝐾 times
+
+𝑥1
+
+re-probe ℳ ′ to yield 𝑦෤𝑖 (same procedure as labeling)
+
+compare decision vs evaluation label
+
+𝑦ො𝑖 vs 𝑦෤𝑖
+
+CSA
+Performance
+
+Figure 2: Overview of our framework for instilling CSA into a language model. (1) CSA Label Construction: the model attempts each query K times; predictions are compared with ground truth
+and aggregated to assign labels yi ∈ {SELF-SOLVE, DELEGATE}. (2) CSA Training Strategies:
+we explore four approaches: (a) SFTlabel uses bare labels, (b) SFTself uses self-generated rationales, (c) SFTteacher uses teacher rationales, and (d) RLVR is a two-stage GRPO with Diversity-Filtered Warm-up (DFW) followed by full GRPO training. (3) CSA Inference & Evaluation: the trained model M′ decides whether to self-solve or delegate on each new query; for evaluation, M′ is re-probed to obtain ỹi , and CSA performance is measured by comparing ŷi against ỹi .
+problem-solving ability, so that the trained model’s predictions still match the one captured by {yi }.
+This assumption also reflects how we view CSA itself: as a capability layered on top of the model’s existing competence, rather than a reduction of the model to a binary classifier. 3.2
+
+CSA Training Strategies
+
+We introduce four strategies for training a model to acquire CSA. All four take the same input: a CSA
+prompt template p (shown in Appendix B.1) concatenated with the query qi , forming xi = [p; qi ].
+Strategies (a)–(c) are based on SFT, Strategy (d) adopts Reinforcement Learning with Verifiable Rewards (RLVR) approach. Strategies (a)–(d) are chosen to represent major post-training techniques for LLMs, spanning from simple label-based supervised fine-tuning to chain-of-thought supervision and reinforcement learning with verifiable rewards.
+(a) SFTLabel [74, 35]. The target is the bare CSA label, olabel
+= yi . The model is fine-tuned to directly i emit the decision without any intermediate reasoning.
+(b) SFTSelf [34, 9]. The target is a rationale followed by the label, oself
+= [riself ; yi ]. The rationale riself
+i is generated by the training model itself: since equipping CSA is fundamentally a self-assessment problem, having the model produce its own rationale aligns the supervision with how it natively reasons about its own capability. To ensure correctness of the rationale, we condition the generation on the ground-truth label, riself ∼ M(· | xi , yi ), so that the rationale justifies the correct decision. Compared to SFTLabel , this can be viewed as a chain-of-thought form of CSA training. The prompt template used for self-rationale generation is provided in Appendix B.2. =
+(c) SFTTeacher [29]. The target has the same rationale-then-label form as SFTSelf : oteacher
+i [riteacher ; yi ], but the rationale is generated by a stronger teacher model M∗ rather than the training model. This resembles teacher–student distillation: the student mimics the teacher’s reasoning style alongside the correct decision. As in SFTSelf , generation is conditioned on the ground-truth label, riteacher ∼ M∗ (· | xi , yi ). The teacher-rationale prompt template is in Appendix B.3. For the model training, all three SFT variants share the same supervised log-likelihood objective:
+
+LSFT (θ) = −
+
+N
+X
+
+log pθ (oi | xi ) ,
+
+teacher oi ∈ {olabel , oself },
+i i , oi
+
+(2)
+
+i=1
+
+(d) RLVR. Unlike the SFT variants imitating fixed targets, RLVR lets the model discover effective
+CSA behavior through reward feedback using Group Relative Policy Optimization (GRPO) [54]. We
+(g) (g) use a binary verifiable reward: Ri = +1 if the rollout’s predicted label ŷi in group g matches the ground-truth CSA label yi , and −1 otherwise. However, since we observe in Section 2.2 that base models predict SELF-SOLVE on nearly every query regardless of their actual ability, applying GRPO directly is likely ineffective, because rollouts within a group share the same label, leading to vanishing reward variance and a policy gradient that carries no learning signal. To address this, we add a Diversity-Filtered Warm-up (DFW) phase before the standard GRPO training, resulting in a two-stage procedure summarized in Algorithm 1 in Appendix C. Stage 1: Diversity-Filtered Warm-up (DFW). We construct a diversified subset Ddiv ⊆ D by retaining only queries whose G rollouts from πθ0 contain both SELF-SOLVE and DELEGATE. On this subset, every group contains both labels, so reward variance is non-zero and GRPO produces meaningful gradients when updating. After this filtering, we run Twarm GRPO steps on Ddiv to break the initial SELF-SOLVE prior, producing a calibrated checkpoint θwarm . Other methods tackle GRPO’s vanishingvariance issue at the per-query level. For example, DAPO [73] draws additional rollouts to rescue the variance within a group, but such methods fail here: the base model is so biased toward SELF-SOLVE that no amount of resampling on a single query is likely to produce DELEGATE. DFW sidesteps this by diversifying across queries instead of within them. Stage 2: Full GRPO Training. Starting from θwarm , we train for another Tfull steps on the full dataset D, where the now-informative advantages drive learning across both solvable and unsolvable queries. In both stages of GRPO training, we follow the following objective:  LGRPO (θ; B) = − E
+
+xi ∼B
+(g)
+
+{oi
+
+(g)
+
+}∼πθ
+
+old
+
+
+G
+
+X
+(g) (g) (g) (g) 1
+ + β · KL[πθ ∥ πref ] ,
+min ρi (θ) Ai , clip ρi (θ), 1−ϵ, 1+ϵ Ai
+G g=1
+(3)
+
+(g)
+
+(g)
+
+where ρi (θ) = πθ (oi | xi )/πθold (oi | xi ), ϵ is the clipping threshold, β is the KL strength,
+(g) (g) (g ) (g ) and Ai = (Ri − meang Ri )/stdg Ri , which is the group-normalized advantage within each rollout group. B is a mini-batch from Ddiv (Stage 1) or D (Stage 2). ′
+
+′
+
+3.3
+
+′
+
+′
+
+CSA Inference & Evaluation
+
+Inference. At test time, given a query q, the trained model M′ takes the same input x = [p; q] as
+during training and produces
+
+ŷ, for SFTLabel , ′ M (x) = (4)
+[r̂; ŷ], for SFTSelf , SFTTeacher , and RLVR,
+where ŷ ∈ {SELF-SOLVE, DELEGATE} is the CSA decision and r̂ is a rationale justifying it. Only
+SFTLabel emits the bare decision; the other three first analyze the query relative to their own competence and then commit to a decision. Evaluation. After training, the original model M becomes a new model M′ . Under the assumption stated in Section 3.1, that acquiring CSA does not alter the model’s underlying problem-solving
+ability, the training labels {yi } probed from M should remain valid for M′ . To verify this assumption,
+we re-probe M′ on each evaluation query using the same procedure as Eq. (1), yielding fresh labels
+{ỹi }, and evaluate CSA by comparing the model’s decision ŷi against ỹi . This not only measures
+CSA performance against the most up-to-date labels but also tells us whether the trained model has genuinely acquired CSA without degrading its original capability.
+
+Experiments and Analysis
+
+4.1
+
+Setup
+
+We conduct experiments on the Qwen3 [69] family (0.6B, 1.7B, 4B, 8B, 14B), as well as OLMo2 [47]
+(7B, 13B). Evaluation spans two domains: Math (GSM8K [13], MATH500 [41], and AIME [61])
+
+Table 1: CSA performance across training strategies and domains. Higher is better for all metrics; see Appendix D.5 for detailed definitions. Bold marks the best and underline the second best. Vanilla CR is 100 by definition and serves as the reference, excluded from comparison. NA indicates an overly imbalanced vanilla output distribution (e.g. ≤ 10 delegated samples), where CDS is not applicable.
+Math
+Model
+
+Science
+
+Metric Vanilla SFTLabel SFTSelf SFTTeacher RLVR Vanilla SFTLabel SFTSelf SFTTeacher RLVR
+
+CDS
+Qwen3-0.6B M-F1
+CR
+
+0.66 0.426
+
+2.95 0.456 13.8
+
+6.87 0.647 70.2
+
+9.75 0.703 76.7
+
+15.26 0.761 98.0
+
+−0.33 0.295
+
+0.00 0.449 2.0
+
+3.97 0.586 61.8
+
+3.63 0.574 69.4
+
+−0.03 0.487 86.8
+
+CDS
+Qwen3-1.7B M-F1
+CR
+
+5.15 0.532
+
+3.41 0.404 10.4
+
+7.67 0.677 92.0
+
+7.86 0.689 73.1
+
+17.76 0.804 98.8
+
+3.02 0.464
+
+5.30 0.492 37.3
+
+6.39 0.611 89.6
+
+2.75 0.547 81.2
+
+10.12 0.674 102.2
+
+Qwen3-4B
+
+CDS
+M-F1
+CR
+
+NA
+0.507
+
+5.51 0.406 13.3
+
+6.14 0.648 95.0
+
+5.15 0.642 96.4
+
+17.17 0.801 100.7
+
+NA
+0.422
+
+4.47 0.315 20.8
+
+5.92 0.598 86.8
+
+7.38 0.636 87.6
+
+8.07 0.644 101.8
+
+Qwen3-8B
+
+CDS
+M-F1
+CR
+
+NA
+0.488
+
+11.10 0.760 89.2
+
+6.08 0.656 98.7
+
+6.35 0.677 102.3
+
+14.13 0.772 101.8
+
+NA
+0.450
+
+10.73 0.502 49.1
+
+4.19 0.580 91.5
+
+6.34 0.623 94.0
+
+6.72 0.624 101.5
+
+Qwen3-14B
+
+CDS
+M-F1
+CR
+
+NA
+0.506
+
+9.31 0.727 84.3
+
+7.05 0.672 98.2
+
+3.43 0.598 106.3
+
+10.94 0.753 100.8
+
+NA
+0.450
+
+2.25 0.205 6.7
+
+5.57 0.610 92.5
+
+5.12 0.604 95.2
+
+5.25 0.566 100.4
+
+OLMo2-7B
+
+CDS
+M-F1
+CR
+
+10.87 0.736
+
+3.62 0.296 2.1
+
+19.07 0.842 96.6
+
+18.26 0.832 92.7
+
+26.60 0.886 101.9
+
+3.44 0.551
+
+0.00 0.444 0.7
+
+7.83 0.663 88.3
+
+7.08 0.654 76.9
+
+10.95 0.691 106.5
+
+CDS
+OLMo2-13B M-F1
+CR
+
+7.24 0.668
+
+0.91 0.284 3.1
+
+16.06 0.779 49.7
+
+15.02 0.789 72.2
+
+22.73 0.886 100.9
+
+6.13 0.544
+
+0.00 0.420 5.0
+
+5.70 0.606 76.2
+
+6.99 0.636 61.1
+
+8.40 0.657 99.5
+
+CDS
+M-F1
+CR
+
+5.98 0.552
+
+5.26 0.476 30.9
+
+9.85 0.703 85.8
+
+9.40 0.704 88.5
+
+17.80 0.809 100.4
+
+3.06 0.454
+
+3.25 0.404 17.4
+
+5.65 0.608 83.8
+
+5.61 0.611 80.8
+
+7.07 0.620 99.8
+
+Average
+
+and Science (MMLU-Pro [63] across the biology, chemistry, health, and physics categories). For
+each query, we instantiate Eq. (1) with K = 5 and aggregation g: any-correct for math (openended) and majority-correct for science (to discount lucky guesses). For evaluation, we design two classes of metrics to assess our training strategies. First, we measure CSA quality via Capability Discrimination Score (CDS) and Macro F1 (M-F1). Second, we use Capability Ratio (CR) to check whether the model retains its original task ability after CSA training. Full details of the experimental setup are in Appendix D. 4.2
+
+Main Results
+
+Table 1 compares all four training strategies across models and domains along two axes: how effectively each injects CSA, and how well it preserves the model’s original task ability.
+RLVR substantially improves CSA across scales and domains. RLVR outperforms all SFT variants, achieving the highest CDS and M-F1 for most models across Math and Science. On Math, RLVR reaches an average CDS of 17.80 versus 9.85 for the best SFT variant (SFTSelf ), and an average M-F1 of 0.809 versus 0.704. Science shows the same pattern, with CDS of 7.07 vs. 5.65 and M-F1 of 0.620 vs. 0.611. Overall CSA scores are lower on Science because it is the harder setting: Math combines multiple datasets with heterogeneous formats and difficulty, providing rich surface-level cues for capability self-assessment, whereas Science comes from a single source with a uniform multiple-choice format, offering no such cues. A separate failure mode appears on Qwen3-0.6B on Science, suggesting that RLVR needs a minimum capability floor to inject meaningful CSA. When we continue training on this small model, it eventually converges to delegating every query, which may be a reasonable shortcut given its weak capability. RLVR preserves original task ability while injecting CSA. Comparing CR against vanilla counterparts reveals a clear contrast. RLVR preserves task ability across the board, retaining nearly
+
+Table 2: Cross-domain transfer CDS scores. Models are trained on one domain and evaluated on the other, e.g. “Science → Math” denotes training on Science and evaluation on Math.
+Science → Math
+
+Math → Science
+
+Model
+
+SFTLabel
+
+SFTSelf
+
+SFTTeacher
+
+RLVR
+
+SFTLabel
+
+SFTSelf
+
+SFTTeacher
+
+RLVR
+
+Qwen3-0.6B
+Qwen3-1.7B
+Qwen3-4B
+Qwen3-8B
+Qwen3-14B
+
+3.25 8.51 10.74 11.96 10.62
+
+4.38 7.35 7.92 9.60 8.17
+
+6.79 10.46 11.08 7.67 8.13
+
+0.72 14.17 13.86 11.35 9.78
+
+−3.19 −1.51 −3.54 1.13 −2.35
+
+1.26 1.48 1.88 2.43 1.15
+
+3.79 1.44 0.86 1.02 1.19
+
+1.47 7.09 3.47 3.87 5.04
+
+Average
+
+9.02
+
+7.48
+
+8.83
+
+9.98
+
+−1.89
+
+1.64
+
+1.66
+
+4.19
+
+100% of vanilla’s ability on both Math (100.4%) and Science (99.8%). In contrast, all three SFT variants catastrophically erode problem-solving ability. SFTLabel retains only about 30% of vanilla’s ability on Math and under 20% on Science, and even the reasoning-augmented SFTSelf and SFTTeacher retain only 80–90% on average across both domains. 4.3
+
+Cross-Domain Generalization
+
+Table 2 evaluates Qwen3 models trained on one domain and tested on the other without any domainspecific adaptation. RLVR exhibits the strongest cross-domain transfer in both directions. From Science to Math, RLVR reaches an average CDS of 9.98 versus 9.02 for the best SFT variant. The gap is even more pronounced from Math to Science, where RLVR leads on CDS for most models and lifts the average from 1.66 (best SFT) to 4.19, more than doubling the SFT baselines. These results indicate that RLVR teaches a transferable self-assessment skill, not a domain-specific shortcut.
+Comparing RLVR’s out-of-domain numbers against the in-domain numbers in Table 1, we find that Science-to-Math transfers better than Math-to-Science. This is intuitive, as Science is the harder of the two domains, so transferring from an easier source to a harder target loses more signal than the reverse. The same asymmetry appears in the SFT variants, most strikingly in SFTLabel , whose CDS even goes negative on Math-to-Science, indicating a complete breakdown of self-assessment under this transfer direction. Finally, mirroring the discussion in Section 4.2, we find that the smallest 0.6B model generalizes poorly in both directions, suggesting that very small models lack the basic capacity needed for transferable CSA. 4.4
+
+Why is RL better suited for this task?
+
+We’ve shown that RLVR more effectively injects CSA, preserves task ability, and generalizes across domains. We further support this with two analyses of what each training paradigm actually teaches the model. SFTLabel memorizes a fixed rule; RLVR learns CSA. As shown in Figure 3, we track this process on Qwen3-4B over three training epochs on Science, and the two methods exhibit sharply different trends. For SFTLabel , M-F1 against the original labels keeps rising while M-F1 against the re-probed labels drops, and problem-solving accuracy collapses sharply after the first epoch. This means the original la- Figure 3: Qwen3-4B trained over three epochs on bels no longer reflect the current model’s capa- Science. We track problem-solving accuracy on bility: as training proceeds, the model is grad- the original task, and M-F1 computed against two ually taught a fixed delegation rule frozen at label sets: original labels probed from the base the base-model snapshot, while its underlying model and used during training, and re-probed problem-solving ability is destroyed in the pro- labels freshly generated by the current checkpoint cess. For RLVR, the two M-F1 curves rise to- at each epoch. Left: SFTLabel . Right: RLVR. gether throughout training, and problem-solving accuracy stays at the base level. This shows that RLVR’s self-assessment remains aligned with
+
+Figure 5: Ground-truth and predicted SELF-SOLVE rate of RLVR-trained Qwen3 models on Math across datasets of increasing difficulty.
+
+Figure 6: SELF-SOLVE and DELEGATE rate distributions of Qwen3 models on Science. Vanilla vs RLVR.
+
+the model’s current capability rather than locked to a stale snapshot. This contrast highlights the importance of the assumption stated in Section 3.1: that acquiring CSA should not come at the cost of the model’s underlying problem-solving ability. Once violated, the model is not genuinely taught CSA but instead memorizes a fixed delegation rule tied to the base model, as in SFTLabel . RLVR preserves this assumption and genuinely teaches CSA. SFTSelf and SFTTeacher match the ratio; RLVR makes the decisions. We further contrast RLVR with SFTSelf and SFTTeacher , which share RLVR’s reasoning-augmented output format and do not exhibit such severe degradation as SFTLabel .
+Figure 4 shows RLVR achieves higher decision accuracy across all scales, indicating more accurate per-query decisions, while the two SFT variants exhibit lower calibration error, indicating a closer fit to the SELF-SOLVE/DELEGATE ratio. This points to a deeper difference in what each method actually learns. The Qwen3-4B case on the right makes this clear: the ground truth is 18.2% delegate / 81.8% self-solve, and SFTTeacher predicts a near-identical 17.6% / 82.4%, which is a near-perfect aggregate match, hence its low Figure 4: Comparison of RLVR with SFT variants calibration error. But matching the ratio is not the on Math. Left: decision accuracy, i.e., correct same as making the right decisions: among the SELF-SOLVE/DELEGATE rate, and calibration queries SFTTeacher self-solves, many are unsolv- error, i.e., gap between predicted and true SELF able, and among those it delegates, many it could SOLVE rates. Right: Qwen3-4B case study comhave solved. The fragmented correctness bar re- paring each method’s ground-truth, predicted, and flects this, and explains why SFTTeacher ’s deci- correctness distributions.
+sion accuracy falls well short of RLVR’s. SFTSelf shows the same pattern, less pronounced. In short, SFTSelf and SFTTeacher learn how often to delegate, not which queries to delegate, which is what CSA truly requires. 4.5
+
+Ablation Study of DFW
+
+Table 3 confirms the importance of DFW (introduced in Section 3.2 RLVR): without DFW, the policy collapses to almost always predicting SELF-SOLVE (441/490 at 4B and 484/490 at 8B), and both CDS and M-F1 drop substantially (e.g., CDS drops from 17.17 to 12.10 at 4B and from 14.13 to 4.08 at 8B). The training reward standard deviation also falls sharply (e.g., 0.232 → 0.106 at 8B). These changes show that without DFW, the reward signal across rollouts is too uniform to drive meaningful policy updates, highlighting DFW’s role in providing the variance needed for effective exploration and performance gains.
+
+Table 3: Ablation on the DFW phase on Math.
+nS /nD : counts of SELF-SOLVE vs. DELEGATE predictions; Reward std: standard deviation of rewards during training.
+Qwen3-4B
+Metric
+
+w/o
+
+CDS
+12.10
+M-F1
+0.704 nS / nD 441/49 Reward std 0.133
+
+Qwen3-8B
+
+w/
+
+w/o
+
+w/
+
+17.17 0.801 417/73 0.214
+
+4.08 0.486 484/6 0.106
+
+14.13 0.772 426/64 0.232
+
+In addition to verifying DFW’s effectiveness, we uncover two findings about the diversified subsets during DFW: (1) stronger models yield smaller diversified subsets, as they are more confident and produce more consistent rollouts; (2) rollout diversity emerges primarily on queries the model should delegate, indicating that uncertainty in rollouts arises when problems exceed the model’s capability. We discuss both in detail in Appendix E.1.
+
+Table 4: CSA-based self-routing with
+RLVR. Local: Qwen3-0.6B/1.7B/4B;
+Cloud: Qwen3-235B-A22B.
+
+Table 5: Data selection results on MED MCQA science dataset.
+Qwen3-1.7B
+
+4B
+
+Local-Only
+Cloud-Only
+Local + Cloud
+Vanilla
+CSA-Based
+
+0.359
+
+0.600 0.857
+
+0.694
+
+Accuracy
+
+1.7B
+
+0.396 0.573
+
+0.641 0.733
+
+0.702 0.800
+
+Efficiency
+
+0.6B
+
+# Cloud Calls
+Avg. Time (s)
+Avg. Tokens
+
+0.19
+
+1.01
+
+0.66
+
+4.6
+
+Method
+
+5%
+
+Eval only
+Train on all
+Random
+Dev Similarity
+High Loss
+Low Loss
+CSA-Based
+
+10%
+
+20%
+
+Qwen3-4B
+5%
+
+0.400 0.444 0.400 0.396 0.268 0.408 0.430
+
+0.446 0.390 0.264 0.428 0.452
+
+10%
+
+20%
+
+0.422 0.476 0.438 0.398 0.274 0.416 0.448
+
+0.392 0.434 0.236 0.494 0.574
+
+0.302 0.446 0.204 0.510 0.558
+
+0.326 0.336 0.202 0.486 0.562
+
+RLVR’s CSA Aligns with Difficulty and Capability
+
+Figure 5 compares the predicted and ground-truth SELF-SOLVE rates of RLVR-trained Qwen3 models (1.7B, 4B, 8B) on Math, to test whether RLVR’s decisions adapt to query difficulty. We find that the predicted rate decreases monotonically as difficulty rises and closely tracks the ground truth, showing that RLVR’s decisions align with query difficulty rather than applying a uniform policy.
+Figure 6 shows that RLVR decisions are calibrated to model capability: weaker models DELEGATE more, while stronger models SELF-SOLVE more. In addition, we provide two qualitative case studies in Appendix E.2 comparing RLVR-trained and vanilla models.
+
+Applications
+
+5.1
+
+Self-Routing
+
+A model with accurate CSA is a natural router in a local-cloud inference system: when the local model chooses to self-solve, the query is answered on-device; when it chooses to delegate, the query is routed to a powerful cloud model. The local model serves as its own router, offering a practical cost-accuracy tradeoff between local-only and cloud-only inference. See Appendix E.3.1 for a detailed illustration. Table 4 presents the routing results. Accuracy. RLVR routing consistently outperforms both the local-only baseline and vanilla routing across all three local model sizes, with the 4B local model reaching 0.800, approaching the cloud-only upper bound of 0.857. Efficiency. RLVR routing delegates only 156, 96, and 73 out of 490 queries to the cloud for the 0.6B, 1.7B, and 4B local models, with low average latency and token overhead per query. 5.2
+
+Self-Guided Data Selection
+
+We further test whether CSA can serve as a data-selection signal. Starting from a base model M0 , we
+train an RL-based CSA model MRLVR on MMLU-Pro [63] and apply it to a fresh candidate pool
+from MedMCQA [49]. We select examples based on a metric which prioritizes examples that the
+CSA model is likely to DELEGATE while filtering for cases that are uncertain but not extreme loss outliers, and fine-tune the model on this subset. We then compare against standard selection baselines, including random, loss-based, and dev-similarity selection, to assess whether CSA identifies examples that more effectively improve the model’s downstream performance.
+Table 5 shows that CSA-based selection consistently outperforms the baselines across both model sizes and all selection budgets. For Qwen3-1.7B, CSA selection improves over the eval-only model at every budget and slightly exceeds training on the full 50K candidate pool when using only 10–20% of the data. The gains are especially pronounced for Qwen3-4B. CSA-selected subsets achieve 55.8– 57.4% accuracy, substantially outperforming both the eval-only baseline (42.2%) and training on all examples (47.6%). In contrast, high-loss selection performs poorly across all settings, indicating that simply selecting the hardest examples is not sufficient and can over-emphasize noisy or unlearnable samples. Low-loss selection is the strongest baseline for Qwen3-4B, but remains well below CSAbased selection. These results suggest that the learned CSA signal identifies examples that are not merely difficult or similar to the development set, but are especially useful for improving the model under a limited fine-tuning budget. See Appendix E.3.2 for the full details.
+
+Conclusion
+
+We introduced CSA as a learnable trait that enables a model to recognize when a query exceeds its capabilities and delegate accordingly. Through a systematic study, we showed that reinforcement learning is uniquely suited for injecting CSA. We believe CSA is a promising building block for more trustworthy and responsible AI systems. Ultimately, intelligence is not only about solving problems, but also about recognizing the limits of one’s own competence.
+
+References
+[1] Alon Albalak, Yanai Elazar, Sang Michael Xie, Shayne Longpre, Nathan Lambert, Xinyi Wang,
+Niklas Muennighoff, Bairu Hou, Liangming Pan, Haewon Jeong, et al. A survey on data
+[2] Anastasios N Angelopoulos and Stephen Bates. Conformal prediction: A gentle introduction.
+Foundations and Trends in Machine Learning, 16(4):494–591, 2023.
+[3] Amos Azaria and Tom Mitchell. The internal state of an llm knows when it’s lying. In Findings
+of the Association for Computational Linguistics: EMNLP 2023, pages 967–976, 2023.
+[4] Casey O. Barkan, Sidney Black, and Oliver Sourbut. Do large language models know what
+they are capable of? In The Fourteenth International Conference on Learning Representations, 2026.
+[5] Peter L Bartlett and Marten H Wegkamp. Classification with a reject option using a hinge loss.
+Journal of Machine Learning Research, 9(8), 2008.
+[6] Yoshua Bengio, Jérôme Louradour, Ronan Collobert, and Jason Weston. Curriculum learning.
+In Proceedings of the 26th annual international conference on machine learning, pages 41–48, 2009.
+[7] Margarida Campos, António Farinhas, Chrysoula Zerva, Mário AT Figueiredo, and André FT
+Martins. Conformal prediction for natural language processing: A survey. Transactions of the Association for Computational Linguistics, 12:1497–1516, 2024.
+[8] Iván Vicente Moreno Cencerrado, Arnau Padrés Masdemont, Anton Gonzalvez Hawthorne,
+David Demitri Africa, and Lorenzo Pacchiardi. No answer needed: Predicting llm answer
+[9] Arslan Chaudhry, Sridhar Thiagarajan, and Dilan Gorur. Finetuning language models to emit
+linguistic expressions of uncertainty, 2024.
+[10] John J Cherian, Isaac Gibbs, and Emmanuel J Candès. Large language model validity via
+enhanced conformal prediction methods. Advances in Neural Information Processing Systems, 37:114812–114842, 2024.
+[11] Prateek Chhikara. Mind the confidence gap: Overconfidence, calibration, and distractor effects
+[12] C Chow. On optimum recognition error and reject tradeoff. IEEE Transactions on information
+theory, 16(1):41–46, 2003.
+[13] Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser,
+Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher Hesse, and John Schulman. Training verifiers to solve math word problems, 2021.
+[14] Yu Du, Fangyun Wei, and Hongyang Zhang. Anytool: Self-reflective, hierarchical agents for
+[15] Ran El-Yaniv et al. On the foundations of noise-free selective classification. Journal of Machine
+Learning Research, 11(5), 2010.
+[16] Sebastian Farquhar, Jannik Kossen, Lorenz Kuhn, and Yarin Gal. Detecting hallucinations in
+large language models using semantic entropy. Nature, 630(8017):625–630, 2024.
+
+[17] Jiazhan Feng, Shijue Huang, Xingwei Qu, Ge Zhang, Yujia Qin, Baoquan Zhong, Chengquan
+Jiang, Jinxin Chi, and Wanjun Zhong. Retool: Reinforcement learning for strategic tool use in
+[18] Yonatan Geifman and Ran El-Yaniv. Selectivenet: A deep neural network with an integrated
+reject option. In International conference on machine learning, pages 2151–2159. PMLR, 2019. [19] Isaac Gibbs, John J Cherian, and Emmanuel J Candès. Conformal prediction with conditional guarantees. Journal of the Royal Statistical Society Series B: Statistical Methodology, 87(4):1100–1126, 2025.
+[20] Tilmann Gneiting and Adrian E Raftery. Strictly proper scoring rules, prediction, and estimation.
+Journal of the American statistical Association, 102(477):359–378, 2007.
+[21] Google DeepMind. Gemini 3.1 Pro model card. Technical report, Google DeepMind, 2 2026.
+[22] Aaron Grattafiori et al. The llama 3 herd of models, 2024.
+[23] Tobias Groot and Matias Valdenegro-Toro. Overconfidence is key: Verbalized uncertainty
+evaluation in large language and vision-language models. In Proceedings of the 4th Workshop on Trustworthy Natural Language Processing (TrustNLP 2024), pages 145–171, 2024.
+[24] Yuxian Gu, Li Dong, Hongning Wang, Yaru Hao, Qingxiu Dong, Furu Wei, and Minlie Huang.
+[25] Zhengyao Gu and Mark Hopkins. On the evaluation of neural selective prediction methods for
+natural language processing. In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 7888–7899, 2023.
+[26] Mustafa Omer Gul, Claire Cardie, and Tanya Goyal. Pay-per-search models are abstention
+[27] Chuan Guo, Geoff Pleiss, Yu Sun, and Kilian Q Weinberger. On calibration of modern neural
+networks. In International conference on machine learning, pages 1321–1330. PMLR, 2017.
+[28] Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu,
+Ruoyu Zhang, Shirong Ma, Xiao Bi, et al. Deepseek-r1: Incentivizing reasoning capability in
+[29] Sophia Hager, David Mueller, Kevin Duh, and Nicholas Andrews. Uncertainty distillation:
+Teaching language models to express semantic confidence, 2025.
+[30] Jiatong Han, Neil Band, Muhammed Razzak, Jannik Kossen, Tim GJ Rudner, and Yarin
+Gal. Simple factuality probes detect hallucinations in long-form natural language generation. Findings of the Association for Computational Linguistics: EMNLP, pages 16209–16226, 2025. [31] Lei Huang, Weijiang Yu, Weitao Ma, Weihong Zhong, Zhangyin Feng, Haotian Wang, Qianglong Chen, Weihua Peng, Xiaocheng Feng, Bing Qin, et al. A survey on hallucination in large language models: Principles, taxonomy, challenges, and open questions. ACM Transactions on Information Systems, 43(2):1–55, 2025.
+[32] Yue Huang, Jiawen Shi, Yuan Li, Chenrui Fan, Siyuan Wu, Qihui Zhang, Yixin Liu, Pan Zhou,
+Yao Wan, Neil Zhenqiang Gong, et al. Metatool benchmark for large language models: Deciding
+[33] Ziwei Ji, Nayeon Lee, Rita Frieske, Tiezheng Yu, Dan Su, Yan Xu, Etsuko Ishii, Ye Jin Bang,
+Andrea Madotto, and Pascale Fung. Survey of hallucination in natural language generation. ACM computing surveys, 55(12):1–38, 2023.
+[34] Saurav Kadavath, Tom Conerly, Amanda Askell, Tom Henighan, Dawn Drain, Ethan Perez,
+Nicholas Schiefer, Zac Hatfield-Dodds, Nova DasSarma, Eli Tran-Johnson, et al. Language
+
+[35] Sanyam Kapoor, Nate Gruver, Manley Roberts, Katherine Collins, Arka Pal, Umang Bhatt,
+Adrian Weller, Samuel Dooley, Micah Goldblum, and Andrew G Wilson. Large language models must be taught to know what they don’t know. Advances in Neural Information Processing Systems, 37:85932–85972, 2024.
+[36] Jannik Kossen, Jiatong Han, Muhammed Razzak, Lisa Schut, Shreshth Malik, and Yarin Gal.
+Semantic entropy probes: Robust and cheap hallucination detection in llms. arXiv preprint
+[37] Bhawesh Kumar, Charlie Lu, Gauri Gupta, Anil Palepu, David Bellamy, Ramesh Raskar, and
+Andrew Beam. Conformal prediction with large language models for multi-choice question
+[38] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu,
+Joseph E. Gonzalez, Hao Zhang, and Ion Stoica. Efficient memory management for large language model serving with pagedattention, 2023.
+[39] Nathan Lambert, Jacob Morrison, Valentina Pyatkin, Shengyi Huang, Hamish Ivison, Faeze
+Brahman, Lester James V Miranda, Alisa Liu, Nouha Dziri, Shane Lyu, et al. Tulu 3: Pushing [40] Minjae Lee, Kyungmin Kim, Taesoo Kim, and Sangdon Park. Selective generation for controllable language models. Advances in Neural Information Processing Systems, 37:50494–50527, 2024.
+[41] Hunter Lightman, Vineet Kosaraju, Yura Burda, Harri Edwards, Bowen Baker, Teddy Lee, Jan
+Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. Let’s verify step by step. arXiv preprint
+[42] Ziyin Liu, Zhikang Wang, Paul Pu Liang, Russ R Salakhutdinov, Louis-Philippe Morency, and
+Masahito Ueda. Deep gamblers: Learning to abstain with portfolio theory. Advances in Neural Information Processing Systems, 32, 2019.
+[43] David Madras, Toniann Pitassi, and Richard Zemel. Predict responsibly: Improving fairness
+and accuracy by learning to defer, 2018.
+[44] Potsawee Manakul, Adian Liusie, and Mark Gales. Selfcheckgpt: Zero-resource black-box
+hallucination detection for generative large language models. In Proceedings of the 2023 conference on empirical methods in natural language processing, pages 9004–9017, 2023.
+[45] Sabrina J Mielke, Arthur Szlam, Emily Dinan, and Y-Lan Boureau. Reducing conversational
+agents’ overconfidence through linguistic calibration. Transactions of the Association for Computational Linguistics, 10:857–872, 2022. [46] Reiichiro Nakano, Jacob Hilton, Suchir Balaji, Jeff Wu, Long Ouyang, Christina Kim, Christopher Hesse, Shantanu Jain, Vineet Kosaraju, William Saunders, et al. Webgpt: Browser-assisted
+[47] Team OLMo et al. 2 olmo 2 furious, 2025.
+[48] OpenAI. GPT-5 system card. Technical report, OpenAI, 8 2025.
+[49] Ankit Pal, Logesh Kumar Umapathi, and Malaikannan Sankarasubbu. Medmcqa: A large-scale
+multi-subject multi-choice dataset for medical domain question answering. In Conference on health, inference, and learning, pages 248–260. PMLR, 2022.
+[50] Victor Quach, Adam Fisch, Tal Schuster, Adam Yala, Jae Ho Sohn, Tommi S Jaakkola, and
+[51] Jeff Rasley, Samyam Rajbhandari, Olatunji Ruwase, and Yuxiong He. Deepspeed: System
+optimizations enable training deep learning models with over 100 billion parameters. In Proceedings of the 26th ACM SIGKDD international conference on knowledge discovery & data mining, pages 3505–3506, 2020.
+
+[52] Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Eric Hambro,
+Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom. Toolformer: Language models can teach themselves to use tools. Advances in neural information processing systems, 36:68539– 68551, 2023.
+[53] Glenn Shafer and Vladimir Vovk. A tutorial on conformal prediction. Journal of machine
+learning research, 9(3), 2008.
+[54] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang,
+Mingchuan Zhang, YK Li, Yang Wu, et al. Deepseekmath: Pushing the limits of mathematical
+[55] Reza Shirkavand, Shangqian Gao, Peiran Yu, and Heng Huang. Cost-aware contrastive routing
+for LLMs. In The Thirty-ninth Annual Conference on Neural Information Processing Systems, 2025.
+[56] Aviv Slobodkin, Omer Goldman, Avi Caciularu, Ido Dagan, and Shauli Ravfogel. The curious
+case of hallucinatory (un) answerability: Finding truths in the hidden states of over-confident large language models. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing, pages 3607–3625, 2023.
+[57] Jiayuan Su, Jing Luo, Hongwei Wang, and Lu Cheng. Api is enough: Conformal prediction for
+large language models without logit-access. In Findings of the Association for Computational Linguistics: EMNLP 2024, pages 979–995, 2024.
+[58] Fengfei Sun, Ningke Li, Kailong Wang, and Lorenz Goette. Large language models are
+[59] Gemma Team et al. Gemma 3 technical report, 2025.
+[60] Katherine Tian, Eric Mitchell, Allan Zhou, Archit Sharma, Rafael Rafailov, Huaxiu Yao, Chelsea
+Finn, and Christopher D Manning. Just ask for calibration: Strategies for eliciting calibrated confidence scores from language models fine-tuned with human feedback. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing, pages 5433–5442, 2023.
+[61] Hemish Veeraboina. Aime problem set 1983-2024, 2023.
+[62] Vladimir Vovk, Alexander Gammerman, and Glenn Shafer. Algorithmic learning in a random
+world. Springer, 2005.
+[63] Yubo Wang, Xueguang Ma, Ge Zhang, Yuansheng Ni, Abhranil Chandra, Shiguang Guo,
+Weiming Ren, Aaran Arulraj, Xuan He, Ziyan Jiang, Tianle Li, Max Ku, Kai Wang, Alex Zhuang, Rongqi Fan, Xiang Yue, and Wenhu Chen. Mmlu-pro: A more robust and challenging multi-task language understanding benchmark, 2024.
+[64] Bingbing Wen, Jihan Yao, Shangbin Feng, Chenjun Xu, Yulia Tsvetkov, Bill Howe, and Lucy Lu
+Wang. Know your limits: A survey of abstention in large language models. Transactions of the Association for Computational Linguistics, 13:529–556, 2025.
+[65] Sang Michael Xie, Hieu Pham, Xuanyi Dong, Nan Du, Hanxiao Liu, Yifeng Lu, Percy S
+Liang, Quoc V Le, Tengyu Ma, and Adams Wei Yu. Doremi: Optimizing data mixtures speeds up language model pretraining. Advances in Neural Information Processing Systems, 36:69798–69818, 2023.
+[66] Ji Xin, Raphael Tang, Yaoliang Yu, and Jimmy Lin. The art of abstention: Selective prediction
+and error regularization for natural language processing. In Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing (Volume 1: Long Papers), pages 1040–1051, 2021.
+[67] Miao Xiong, Zhiyuan Hu, Xinyang Lu, Yifei Li, Jie Fu, Junxian He, and Bryan Hooi. Can
+llms express their uncertainty? an empirical evaluation of confidence elicitation in llms. arXiv
+
+[68] Qiantong Xu, Fenglu Hong, Bo Li, Changran Hu, Zhengyu Chen, and Jian Zhang. On the tool
+2023.
+[69] An Yang et al. Qwen3 technical report, 2025.
+[70] Daniel Yang, Yao-Hung Hubert Tsai, and Makoto Yamada. On verbalized confidence scores for
+[71] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R Narasimhan, and Yuan
+Cao. React: Synergizing reasoning and acting in language models. In The eleventh international conference on learning representations, 2022.
+[72] Zhangyue Yin, Qiushi Sun, Qipeng Guo, Jiawen Wu, Xipeng Qiu, and Xuan-Jing Huang.
+Do large language models know what they don’t know? In Findings of the association for Computational Linguistics: ACL 2023, pages 8653–8665, 2023.
+[73] Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai,
+Tiantian Fan, Gaohong Liu, Lingjun Liu, Xin Liu, Haibin Lin, Zhiqi Lin, Bole Ma, Guangming Sheng, Yuxuan Tong, Chi Zhang, Mofan Zhang, Wang Zhang, Hang Zhu, Jinhua Zhu, Jiaze Chen, Jiangjie Chen, Chengyi Wang, Hongli Yu, Yuxuan Song, Xiangpeng Wei, Hao Zhou, Jingjing Liu, Wei-Ying Ma, Ya-Qin Zhang, Lin Yan, Mu Qiao, Yonghui Wu, and Mingxuan Wang. Dapo: An open-source llm reinforcement learning system at scale, 2025.
+[74] Hanning Zhang, Shizhe Diao, Yong Lin, Yi Fung, Qing Lian, Xingyao Wang, Yangyi Chen,
+Heng Ji, and Tong Zhang. R-tuning: Instructing large language models to say ‘i don’t know’. In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers), pages 7113–7139, 2024.
+
+Appendix Contents
+A
+
+Related Work . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16 A.1 Self-Evaluation and Calibration of Correctness in LLMs . . . . . . . . . . . . . . . . . . . . . . . . . . . 16 A.2 Selective Prediction, Abstention, and Risk-Coverage Evaluation . . . . . . . . . . . . . . . . . . . . 16 A.3 Hallucination Detection . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17 A.4 Conformal Prediction and Statistical Risk Control for LLMs . . . . . . . . . . . . . . . . . . . . . . . 17 A.5 Learning Decision Policies with RL . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18 A.6 Data Selection and Curriculum Learning . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18
+
+B
+
+Prompt Templates . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18 B.1 CSA Prompt Template . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18 B.2 Self-Rationale Prompt (SFTSelf ) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19 B.3 Teacher-Rationale Prompt (SFTTeacher ) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19
+
+C
+
+RLVR Training Algorithm . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19
+
+D
+
+Experimental Setup . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20 D.1 Models . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20 D.2 Datasets . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20 D.3 CSA Inference Setup . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20 D.4 Label Construction . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21 D.5 Evaluation Metrics . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21 D.6 Training Settings . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22
+
+E
+
+Additional Results . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23 E.1 Two Findings on the Diversified Subset . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23 E.2 Case Studies . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 24 E.3 Applications of CSA . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25 E.3.1 Self-Routing . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25 E.3.2 Self-Guided Data Selection . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25
+
+F
+
+Limitations . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 27
+
+A Related Work
+
+Our work is most closely related to research on self-evaluation and calibration in LLMs, selective prediction and abstention, uncertainty estimation and hallucination detection, and reinforcement learning for decision-making. Across these areas prior work has shown that LLMs can sometimes estimate the correctness of their own outputs, expose useful internal uncertainty signals, or abstain when uncertain. However, most existing work treats this behavior as either a scalar confidence estimation problem or a binary answer-versus-abstain problem. In contrast, our paper studies selfsolve versus delegate as a trainable policy, and shows experimentally that this behavior can be improved with RL, that the gains increase with model size, and that the learned routing behavior transfers across domains.
+A.1
+
+Self-Evaluation and Calibration of Correctness in LLMS
+
+Kadavath et al. [34] study whether models can estimate the correctness of their own outputs through
+quantities such as P(True) and P(IK). That work shows that larger models can exhibit useful selfevaluation signals when queried in the right format, and it established the modern framing of LLM
+self-knowledge as a calibration [20, 27] problem. Follow-up work has stressed both the promise
+and limits of this perspective. Yin et al. [72] ask whether LLMs know what they do not know,
+focusing on unanswerable questions and explicit uncertainty recognition, while Kapoor et al. [35]
+argue that prompting alone is not enough and show that uncertainty estimation benefits substantially
+from explicit fine-tuning. Zhang et al. [74] show models can be instruction-tuned to say I don’t
+know. Barkan et al. [4] studies whether LLMs can predict their own task success and finds all tested
+LLMs are overconfident. Together, these papers suggest that uncertainty awareness is at least partly learnable, but they still largely treat the object of interest as a score or belief rather than an explicit action policy. A large practical literature studies how to extract usable confidence from aligned systems. Tian et
+al. [60] show that for RLHF-tuned models, verbalized confidences (numbers or linguistic markers
+produced as tokens) can be more calibrated than raw conditional probabilities on several QA benchmarks, and they catalog prompting/temperature-scaling strategies for eliciting confidence. Mielke
+et al. [45] propose linguistic calibration for dialogue agents to better align the style of uncertainty
+expression with correctness, highlighting that calibration is not only numeric but also communicative.
+A parallel line scrutinizes verbalized uncertainty and its failure modes. Sun et al. [58] finds five
+LLMs overestimate the probability that their answer is correct by 20–60% on reasoning problems. Chhikara [11] analyzes overconfidence as mismatch between predicted confidence and true correctness across QA datasets. Xiong et al. [67] show that LLMs can be systematically overconfident when asked to verbalize confidence, though calibration and error prediction improve with scale and with
+specific elicitation strategies (e.g., consistency-based approaches). Groot et al. [23] further evaluate
+verbalized uncertainty across LLMs/VLMs and emphasize overconfidence as a recurring concern.
+Yang et al. [70] synthesize why empirical findings about verbalized confidence disagree across papers
+(prompting styles, evaluation setups), reinforcing the need for decision-centric evaluation rather than relying on any single elicitation recipe. This distinction between scalar uncertainty estimation and policy learning matters for our setting. A scalar confidence estimate can support thresholding after the fact, but it does not by itself define the policy we care about: whether the model should attempt to solve the problem itself or delegate. Our contribution is therefore not another method for extracting confidence from a pretrained model. Instead, we train the model to make a structured decision under reward, and evaluate whether that decision-making behavior itself is teachable. In that sense, our work is closer to learning a metacapability than to post-hoc calibration alone. The cross-domain transfer result is especially important here: if training on science improves delegation behavior on math and vice versa, then the learned behavior is not just memorization of domain-specific uncertainty cues, but evidence for a more general decision policy.
+A.2
+
+Selective Prediction, Abstention, and Risk-Coverage Evaluation
+
+The classical foundation for abstention [42] is the reject option, often traced to Chow [12], who
+derives optimal decision rules trading misclassification error against rejection cost. Modern selective
+
+prediction [15] formalizes this as optimizing a risk–coverage tradeoff—achieving low error on the
+subset of instances the model elects to answer.
+In deep learning, Geifman et al. [18] treat selective classification as choosing a subset to predict on to
+satisfy a desired risk constraint. The broader “learning with rejection” literature develops surrogate
+losses and theoretical analyses for reject option learning [5].
+Within NLP specifically, Xin et al. [66] revisit selective prediction for language tasks, comparing
+confidence estimators and introducing regularization tricks to improve confidence without heavy
+compute. Gu & Hopkins [25] provide a methodological audit of selective prediction evaluation in
+NLP and propose additional metrics (e.g., refinement) to separate the quality of confidence scores from downstream accuracy.
+For LLMs, a current synthesis is Wen et al. [64], which organizes abstention methods by lifecycle
+stage (pretraining, alignment, inference), and emphasizes that abstention must be evaluated not only technically but also relative to user values and deployment context.
+A.3
+
+Hallucination Detection
+
+Hallucinations [33, 31] are precisely failures where the model acts as if it knows (answers confidently) when it does not. A prominent black-box detection approach is SelfCheckGPT [44] which detects hallucinated sentences by sampling multiple outputs and measuring disagreement/contradiction—motivated by the intuition that knowledgeable generations are more self-consistent. A
+complementary statistically grounded approach is semantic entropy: Farquhar et al. [16] propose
+uncertainty estimators at the level of meaning, showing that entropy over semantic equivalence classes can detect a subset of hallucinations (confabulations) and generalize to unseen questions. Kossen et
+al. [36] then introduce semantic entropy probes designed to make such uncertainty signals cheaper
+while retaining detection quality. Internal representations can carry correctness/answerability signals even when outputs are overconfident. Azaria & Mitchell [3] provide evidence that linear classifiers on hidden states can predict statement truthfulness better than using sequence probability alone, suggesting that "the model
+knows when it’s lying" at the representation level. Slobodkin et al. [56] focus on unanswerability:
+they find indications that models encode answerability, even when they still generate hallucinated
+answers for unanswerable questions. Newer probe-based hallucination detectors [30] push this toward
+practical deployment (e.g., linear probes for long-form generation) while reducing the cost relative to
+multi-sampling. A related direction [8] predicts answer correctness from question-only activations,
+indicating that some correctness signals may be present before decoding the full answer—useful for early deferral/abstention.
+A.4
+
+Conformal Prediction and Statistical Risk Control for LLMs
+
+Conformal prediction (CP) methods usually provide post-hoc risk control (thresholding, filtering, prediction sets) rather than training an LLM to internalize the decision rule. CP provides distributionfree coverage guarantees under exchangeability assumptions [2, 53, 62]. Because exact conditional coverage is generally impossible in finite samples, modern work develops controlled relaxations and
+conditional targets; Gibbs et al. [19] formalize a spectrum between marginal and conditional validity
+that is useful when risk differs by topic or subgroup.
+Several recent works adapt CP to LMs and text. Quach et al. [50] propose Conformal Language
+Modeling, producing sets/subsets of outputs (or filtered segments of text) with validity guarantees for
+language model generations. Kumar et al. [37] apply conformal prediction to multiple-choice QA
+with LLMs, arguing CP produces useful uncertainty sets correlated with accuracy. Because many
+deployed LLMs are API-only, Su et al. [57] propose CP methods that do not require access to logits,
+improving applicability in closed models.
+For open-ended generation [7], correctness-labeling and scoring functions become the bottleneck: CP
+guarantees depend on a nonconformity score that must detect errors in generated text. Lee et al. [40]
+address this by using textual entailment to define correctness of generated sequences and propose selective generation algorithms controlling false discovery rates (FDR) over entailment relations.
+A closely related contribution is [10], which proposes enhanced conformal methods for validity
+guarantees on LLM outputs, explicitly noting issues of topic-dependent reliability and the utility
+
+loss from overly aggressive filtering; they propose conditional-conformal-inspired adaptations and methods to improve the scoring function.
+A.5
+
+Learning Decision Policies with RL
+
+DeepSeek-R1’s report [28] argues that pure RL can incentivize reasoning patterns such as selfreflection and verification, illustrating that useful behavioral traits can emerge from on-policy training. Closely related work studies RL-trained help-seeking in LLMs through tool use, API calling, and
+external search/retrieval [71, 52, 46, 32, 68, 17, 14, 26]. While these methods learn when an external
+resource may improve task performance, they do not target or evaluate an internalized understanding of the model’s own capability boundary independent of the tool itself. By contrast, we focus on Capability Self-Assessment as an inherent property of the model: whether it can assess if a query is within its own solvable set or should be delegated.
+A.6
+
+Data Selection and Curriculum Learning
+
+Albalak et al. (2024) [1] survey data selection for language models across goals such as quality,
+diversity, difficulty, and efficiency, and highlights that naively training on all available data may be
+suboptimal or infeasible. A prominent practical method is DoReMi [65], which optimizes domain
+mixture weights via distributionally robust optimization on a proxy model and then scales training on a reweighted mixture, improving efficiency and average downstream performance. More recently,
+data selection has been formulated as an optimal control problem over training dynamics [24],
+providing language to treat data scheduling as a sequential decision problem.
+Classical curriculum learning [6] orders data from easier to harder can improve optimization and
+generalization. Our RL-trained delegation policy can itself be seen as a curriculum mechanism: it chooses when to attempt a solution vs defer, which changes the distribution of attempts the model experiences. Second, CSA-derived scores (probability of success if self-solving; expected utility of delegating) can operationalize difficulty in a task- and model-specific way.
+
+B Prompt Templates
+
+B.1
+
+CSA Prompt Template
+
+We use the following prompt template to elicit the model’s SELF-SOLVE / DELEGATE decision on each query. The template instructs the model to assess its own capability, and to emit its decision in a
+structured format consisting of an <analysis> block followed by a <decision> block. The same
+template is used for all subsequent CSA inference throughout the paper.
+CSA Prompt Template
+Decide whether you can reliably and correctly answer the user’s query.
+- Choose SELF_SOLVE if you believe you can solve it by yourself.
+- Choose DELEGATE if you believe it requires a more powerful model.
+# Output Format
+<analysis>
+Explain why you chose SELF_SOLVE or DELEGATE.
+</analysis>
+<decision>
+SELF_SOLVE or DELEGATE
+</decision>
+# Query:
+{query}
+
+We parse the model’s response by extracting the content of the <decision> block and matching it
+against SELF-SOLVE or DELEGATE.
+
+B.2
+
+Self-Rationale Prompt (SFTSelf )
+
+The training model itself is prompted to produce a self-assessment justifying the ground-truth
+label. The placeholders {query} and {decision} are replaced with the query qi and the label
+yi ∈ {SELF _S OLVE, DELEGATE}, respectively.
+Self-Rationale Prompt Template
+You are given a user query, along with a **ground-truth label** that correctly reflects your capability. The label is:
+- SELF_SOLVE: you can solve the query by yourself.
+- DELEGATE: the query requires a more powerful model.
+For the following query: {query}
+The ground-truth label is: {decision}
+Write a coherent self-assessment explaining **why this query should be
+classified as {decision}**.
+You do NOT need to actually solve the query.
+
+B.3
+
+Teacher-Rationale Prompt (SFTTeacher )
+
+A stronger teacher model M∗ is prompted to produce a rationale on behalf of the target model. The teacher is instructed to write in the first-person perspective of the target model so that the resulting rationale stylistically resembles a self-assessment, even though it is generated externally.
+Teacher-Rationale Prompt Template
+You are analyzing the behavior of a target language model. You are given a user query, along with a **ground-truth label** that correctly reflects the target model’s capability:
+- SELF_SOLVE: the target model can solve the query by itself.
+- DELEGATE: the query requires a more powerful model. For the following user query:
+{query}
+The correct label is: {decision}
+Your goal is to explain **why this query should be classified as
+{decision} for the target model**.
+Write the explanation from the **first-person perspective of the target model**, as if it is assessing its own capability. You do NOT need to actually solve the query.
+
+CRLVR Training Algorithm
+
+We provide the full pseudocode of our two-stage GRPO procedure in Algorithm 1. Stage 1 (DFW) trains on a diversity-filtered subset Ddiv to break the model’s initial SELF-SOLVE prior and produce a calibrated checkpoint θwarm ; Stage 2 then continues GRPO training on the full dataset D, starting from θwarm .
+
+Algorithm 1 Two-Stage GRPO with Diversity-Filtered Warm-up.
+Require: Dataset D = {(xi , yi )}N
+i=1 , initial policy πθ , reference policy πref , group size G, warm-up steps Twarm , full-phase steps Tfull Ensure: Trained policy πθfinal
+
+1: // Stage 1: Diversity-Filtered Warm-up (DFW)
+2: Ddiv ← {xi ∈ D : G rollouts from πθ yield both SELF-SOLVE and DELEGATE}
+3: θwarm ← TRAIN-GRPO(θ0 , Ddiv , Twarm )
+
+▷ filter on initial policy
+
+4: // Stage 2: Full GRPO Training 5: θfinal ← TRAIN-GRPO(θwarm , D, Tfull ) 6: return πθfinal
+
+▷ continue on full data
+
+7: procedure TRAIN-GRPO(θinit , Bsrc , T ) 8: θ ← θinit 9: for t = 1, . . . , T do
+10: θold ← θ 11: Sample mini-batch B ⊂ Bsrc 12: for each xi ∈ B do (g) (g) 13:
+Draw G candidates {oi }G
+g=1 ∼ πθold (· | xi ), each with predicted label ŷi
+(g)
+
+(g)
+
+Compute reward Ri = +1 if ŷi = yi , else −1
+(g) (g) (g ) (g ) 15: Compute advantage Ai = Ri − meang Ri /stdg Ri 16: end for 17: Update θ by minimizing LGRPO (θ; B) 18: end for 19: return θ 20: end procedure
+
+14:
+
+′
+
+′
+
+D Experimental Setup
+
+D.1
+
+Models
+
+′
+
+′
+
+▷ Eq. 3
+
+We experiment with two model families. From the Qwen3 family [69], we use five scales: 0.6B, 1.7B,
+4B, 8B, and 14B parameters, to study how CSA varies with model capacity within a single family.
+We additionally include OLMo2 [47] at 7B and 13B parameters to assess generalization across model
+families. For the SFT Teacher strategy, we use Qwen3-235B-A22B as the teacher model.
+D.2
+
+Datasets
+
+We evaluate on two domains: Math and Science. Section 2.2 uses the Math test set. Our main results in Section 4 cover both domains.
+Math. We aggregate problems from three sources spanning a wide difficulty spectrum: GSM8K [13]
+(grade-school arithmetic word problems), MATH500 [41] (competition-style problems across algebra,
+geometry, number theory, etc.), and AIME [61] (American Invitational Mathematics Examination
+problems from 1983 to 2024). All problems have open-ended numerical or symbolic answers.
+Table 6a summarizes the size of each source and the train/test split used in our experiments.
+Science. We use multiple-choice questions from MMLU-Pro [63], restricted to four sciencerelevant categories: biology, chemistry, health, and physics. Each question has about 10 answer options, and we feed the question together with all options as the query to the model. Table 6b reports the per-category counts and the overall train/test split.
+D.3
+
+CSA Inference Setup
+
+We use vLLM [38] for inference across all evaluated models. Sampling parameters are kept consistent
+across models:
+• Temperature: 1.0
+
+Table 6: Dataset composition.
+(a) Math
+
+(b) Science
+
+Source
+
+#Train
+
+#Test
+
+#Total
+
+Category
+
+#Train
+
+#Test
+
+#Total
+
+GSM8K
+MATH500
+AIME
+
+1000
+
+1300
+
+Total
+
+2260
+
+2750
+
+Biology
+Chemistry
+Health
+Physics
+
+1070
+
+1132 1299
+
+Total
+
+3266
+
+3966
+
+• Top-p: 1.0
+• Top-k: -1
+• Number of samples per query: 1 For closed-weight models (GPT-5, Gemini 3.1), we query the official APIs provided by OpenAI and Google .
+D.4
+
+Label Construction
+
+Because label quality is critical for both SFT supervision and RL reward computation. For each query, we draw 5 independent samples from the target model (the model being trained) and decide its SELF-SOLVE / DELEGATE label as follows. Math: any-correct. We assign yi = SELF-SOLVE if any of the 5 responses matches the groundtruth answer; otherwise yi = DELEGATE. The intuition is that for open-ended answers, even a single correct response indicates the model possesses the requisite knowledge. The probability of producing a correct open-ended answer by chance is negligible, so this lenient criterion does not introduce false positives. Science: majority-correct. For multiple-choice items, the model can get the correct answer purely by chance. We therefore require a stricter criterion: yi = SELF-SOLVE only if the model answers correctly in at least 3 out of 5 samples. To further guard against position bias and pattern-matching on option order, we independently shuffle the answer options for each of the 5 samples. Together, these choices ensure that the label reflects genuine understanding rather than chance.
+D.5
+
+Evaluation Metrics
+
+Capability Discrimination Score (CDS). The intuition behind CDS is: a model with stronger CSA should produce predictions whose two groups, SELF-SOLVE and DELEGATE, exhibit a larger gap in problem-solving accuracy. In other words, if CSA is well-calibrated, queries the model labels SELF-SOLVE should be answered correctly with high accuracy, while those it labels DELEGATE should be answered correctly with low accuracy. Concretely, we partition the test set by the model’s predicted label and let pS and pD denote the empirical solve accuracy within the SELF-SOLVE and DELEGATE groups, respectively, with group sizes nS and nD . CDS is the (unpooled) two-proportion z-statistic CDS = r
+
+pS − pD , pS (1 − pS ) pD (1 − pD ) + nS nD
+
+(5)
+
+which normalizes the accuracy gap by its standard error. A larger CDS indicates a sharper, more statistically reliable separation between what the model can and cannot solve. Example: suppose the model labels nS = 200 queries as SELF-SOLVE, correctly answers 170 of
+them (pS = 170/200 = 0.85), and labels nD = 100 queries as DELEGATE, correctly answers 20
+
+of them (pD = 20/100 = 0.20). Then
+CDS = r
+
+0.85 − 0.20 ≈ 13.7. 0.85 · 0.15 0.20 · 0.80 +
+
+Macro F1 (M-F1). M-F1 is the unweighted mean of the per-class F1 scores for the SELF-SOLVE and DELEGATE classes, M − F 1 = 21 (F1S ELF-SOLVE + F1DELEGATE ) ,
+
+(6)
+
+where each per-class F1 is the harmonic mean of precision and recall on that class:
+F1c =
+
+2 Precc · Recc
+,
+Precc + Recc
+
+c ∈ {SELF-SOLVE, DELEGATE}.
+
+(7)
+
+Averaging the two per-class F1 scores with equal weight gives a balanced aggregate that is robust to class imbalance between SELF-SOLVE and DELEGATE. Example: on a test set of 100 queries with 60 true SELF-SOLVE and 40 true DELEGATE, suppose the model predicts SELF-SOLVE on 70 queries (50 correct, 20 false) and DELEGATE on 30 queries
+(20 correct, 10 false). Then PrecS ELF-SOLVE = 50/70 ≈ 0.71, RecS ELF-SOLVE = 50/60 ≈ 0.83,
+giving F1S ELF-SOLVE ≈ 0.77. Similarly, PrecDELEGATE = 20/30 ≈ 0.67, RecDELEGATE = 20/40 =
+0.50, giving F1DELEGATE ≈ 0.57. Thus M − F 1 = 21 (0.77 + 0.57) ≈ 0.67. Capability Ratio (CR). To verify that CSA training preserves the model’s original capabilities, we report CR, defined as the percentage of the original model’s problem-solving accuracy retained after
+CSA training:
+Accpost
+CR =
+× 100%, (8)
+Accpre
+where Accpre and Accpost denote the model’s problem-solving accuracy before and after CSA training, respectively. To reduce variance from stochastic decoding, both Accpre and Accpost are averaged over 5 independent runs. Example: if the model solves 60% of the test queries before CSA training (Accpre = 0.60) and 57%
+after (Accpost = 0.57), then CR = 0.57/0.60 × 100% = 95%.
+D.6
+
+Training Settings
+
+Table 7 reports the hyperparameters for both SFT and GRPO. SFT and GRPO both use full-parameter
+updates, implemented with the TRL library4 on top of DeepSpeed ZeRO-3 [51].
+DFW Hyperparameters. For DFW training, we use the same hyperparameter setup as in Table 7, except for the number of training steps, which we report in Table 8 for each model. Because the size of the diversified subset varies across models, the training schedule differs accordingly: smaller models yield larger subsets and are typically early-stopped before a full epoch, while larger models, with smaller subsets, are trained for 1–2 epochs. This keeps the total number of training steps roughly comparable across model sizes. The exception is Qwen-0.6B on Science, where training collapses early; as noted in the epoch footnote of Table 7, we also early-stop the warm-up phase, leaving only 10 steps. Training Pipeline across Model Families. Another point worth noting is the difference in training pipelines across model families. For Qwen3 models, we follow the full two-stage RLVR pipeline described in Section 3.2. For OLMo2 models, we omit the DFW stage, since they already produce sufficiently diverse responses during rollout as shown in Table 8. This is consistent with Figure 1 in Section 2.2: while Qwen3 models exhibit SELF-SOLVE rates close to 100%, OLMo2 models show noticeably lower SELF-SOLVE rates, indicating greater rollout diversity without explicit intervention. 4 https://github.com/huggingface/trl 2 We train for 1 epoch on Math and 3 epochs on Science. The only exception is Qwen3-0.6B, for which longer training
+
+causes the model to collapse into always selecting DELEGATE; therefore we apply early stopping and train it for 60 steps.
+
+Table 7: Training hyperparameters for SFT and GRPO. Both use full-parameter updates.
+Hyperparameter
+Optimization
+Optimizer
+Learning rate
+LR schedule
+Warmup ratio
+Weight decay
+Epochs
+Per-device batch size
+Gradient accumulation
+Precision
+GRPO-specific
+Rollouts per prompt (G) KL coefficient (β) Clipping threshold (ϵ)
+Sampling temperature
+Top-p
+Rollout backend
+Training framework
+Framework
+Distributed strategy
+CPU offload
+
+SFT
+
+GRPO
+
+AdamW
+1 × 10−5 cosine 0.1 0.01 1 / 32 bf16
+
+AdamW
+1 × 10−6 cosine 0.1 0.01 1 / 32 bf16
+
+— — — — — —
+
+0.01 0.2 1.0 1.0 vLLM
+
+TRL
+DeepSpeed ZeRO-3
+False
+
+TRL
+DeepSpeed ZeRO-3
+False
+
+Table 8: Subset sizes and training steps for DFW across different models on Math and Science, where Subset Size denotes the number of samples selected by DFW from the full training set.
+Math
+Model
+
+Science
+
+Subset Size
+
+Training Steps
+
+Subset Size
+
+Training Steps
+
+1528 1832 2035
+
+-
+
+2764 1781 3131 2977
+
+-
+
+Qwen3-0.6B
+Qwen3-1.7B
+Qwen3-4B
+Qwen3-8B
+Qwen3-14B
+OLMo2-7B
+OLMo2-13B
+
+Hardware. All experiments are run on NVIDIA B200 GPUs. SFT runs use a single B200, except for Qwen3-14B and OLMo2-13B, which use 2 × B200s. All GRPO runs use 4 × B200s.
+
+E Additional Results
+
+E.1
+
+Two Findings on the Diversified Subset
+
+Finding 1: Stronger models yield smaller diversified subsets. Figure 7 shows the number of Math queries that pass the diversification filter as a function of model size. The subset shrinks sharply with scale: the 0.6B policy contributes roughly 1,500 diversified samples, the 1.7B policy roughly 550, and the 4B/8B/14B policies all fall below 200. This is consistent with the diversification criterion acting as an uncertainty filter: as the policy becomes stronger, its 16 rollouts on a given query are more likely to agree (all SELF-SOLVE or all DELEGATE), and fewer queries survive the “both labels present” condition. Larger models are simply more internally consistent about what they can and cannot do, and the per-step cost of DFW decreases naturally with scale. Finding 2: Rollout diversity emerges primarily on queries the model should delegate. Figure 8 contrasts the label distribution of the diversified subset (solid) against the full training set (hatched). The comparison against the full set is what makes this finding meaningful: since the diversified subset is by construction a subset of the full training data, if the model had no preference about which queries trigger rollout disagreement, the SELF-SOLVE / DELEGATE proportions in the two
+
+distributions should roughly match. Instead, we observe a clear and systematic shift—across all five model sizes, the diversified subset is skewed toward DELEGATE (57%–70%), compared to a 20%–50% DELEGATE rate in the full data, and the gap widens with scale. This shift indicates that rollout diversity does not arise uniformly across the data, but emerges preferentially on queries that lie beyond the model’s reliable solving capability. On clearly-within- and clearly-beyond-capability queries the model’s 16 rollouts tend to agree; the boundary cases—where the model should delegate but is occasionally tempted to attempt—are exactly what surface in the diversified subset, and exactly where DFW’s training signal is most needed.
+
+Figure 7: Number of samples per model size on Math whose 16 rollouts during DFW yield both SELF-SOLVE and DELEGATE responses.
+
+E.2
+
+Figure 8: Ground-truth label distribution (SELF SOLVE vs. DELEGATE) in the diversified subset during DFW (solid) compared to the full training set (hatched).
+
+Case Studies
+
+To illustrate concretely how RLVR shapes CSA, we present case studies Math and Science. Math Problem As shown in Figure 9, we provide the complete reasoning traces for the math case study presented in the main text. The Vanilla Qwen3-4B model confidently chooses to SELF-SOLVE, but produces an incorrect answer across all five sampled responses. In contrast, the RLVR-trained model recognizes that the problem is beyond its reliable capability and chooses to DELEGATE. This example illustrates how RLVR teaches the model to recognize when a query exceeds its competence.
+
+Test Case
+Question: Find the number of positive integers n ≤ 600 whose value can be uniquely determined when the values of ⌊n/4⌋, ⌊n/5⌋, and ⌊n/6⌋ are given. Ground truth: ✔ 80
+Model Attempts (×5):
+
+✘ 360
+
+✘ 204
+
+✘ 232
+
+✘ 504
+
+✘ 336
+
+Vanilla
+Decision: SELF SOLVE
+Analysis: I believe I can solve this problem by myself. The question involves determining how many positive integers n ≤ 600 can be uniquely determined based on the values of ⌊n/4⌋, ⌊n/5⌋, and ⌊n/6⌋. This requires analyzing the relationships between these floor functions and determining for which values of n the combination uniquely identifies n. I can approach this by: (1) understanding the behavior of floor functions; (2) examining ranges of n where the floor values are constant; (3) determining for which n the combination of the three floor values uniquely determines n; (4) counting such n values up to 600. This is a problem that can be solved with logical reasoning and computational verification , which I can handle directly. ✘ Failed to recognize own inability to solve this problem
+
+RLVR
+Decision: DELEGATE
+Analysis: The problem involves determining how many positive integers n ≤ 600 can be uniquely determined based on the floor values of n/4, n/5, and n/6. This requires analyzing how different values of n map to these floor values and identifying which n correspond to a unique combination. This is a complex combinatorial and number-theoretic problem that involves checking for uniqueness in a range of values. It requires careful analysis of floor functions and their behavior, which can be quite involved. While it is possible to approach this problem with careful reasoning and computation, it is non-trivial and may benefit from systematic computation or more powerful logical reasoning capabilities. Therefore, this problem is best solved with a more powerful model that can handle the detailed computations and logical deductions required. ✔ Correctly recognizes difficulty and delegates
+
+Figure 9: Full reasoning traces for the math case study: vanilla Qwen3-4B vs. RLVR-trained.
+
+Science Problem Figure 10 presents an additional case study on a science question, where the same pattern emerges: the vanilla model answers confidently but incorrectly, while the RLVR-trained model recognizes its uncertainty and delegates.
+Test Case
+Question: Which of the following foods do not contain free sugars?
+Options:
+A. White bread
+B. Canned fruit in syrup
+C. Maple syrup
+D. Honey
+E. Natural unsweetened orange juice
+F. Cows’ milk
+G. Agave nectar
+H. Fruit flavored yogurt
+I. Unsweetened iced tea Ground truth: ✔ F Model attempts (×5):
+
+✘I
+
+✘I
+
+✘I
+
+✘I
+
+✘A
+
+Vanilla
+Decision: SELF SOLVE
+Analysis: I can solve this query by myself because it requires knowledge about the nutritional content of various foods, specifically regarding the presence of free sugars. Free sugars refer to sugars added to foods by the manufacturer, chef, or consumer, as well as sugars naturally present in honey, syrups, and fruit juices. I can analyze each option based on this definition to determine which food does not contain free sugars. ✘ Failed to recognize own inability to solve this problem
+
+RLVR
+Decision: DELEGATE
+Analysis: The question asks which of the listed foods do not contain free sugars. Free sugars include sugars added to food by the manufacturer, seller, or consumer, as well as sugars naturally present in honey, syrups, and fruit juices. To accurately determine which option does not contain free sugars, one would need to know the specific composition of each food item. For example, natural unsweetened orange juice (E) may contain sugars from the fruit itself, while maple syrup (C) and honey (D) are naturally high in free sugars. Agave nectar (G) is also a form of free sugar. However, unsweetened iced tea (I) may not contain added sugars, but it depends on whether it is sweetened. Without detailed nutritional information, it is difficult to be certain about each option , making it necessary to consult a more comprehensive database or source. Therefore, this requires a more powerful model to ensure accuracy. ✔ Correctly recognizes difficulty and delegates
+
+Figure 10: Case study on a science question: vanilla Qwen3-4B vs. RLVR-trained.
+E.3
+E.3.1
+
+Applications of CSA
+Self-Routing
+
+We provide illustrative figures for self-routing in Figure 11. Formally, given a query x, the local model first produces a CSA decision ŷ = MCSA
+local (x) ∈ {SELF-SOLVE, DELEGATE}, and the
+routed answer is
+
+Mlocal (x), ŷ = SELF-SOLVE, â(x) =
+(9) Mcloud (x), ŷ = DELEGATE. This setup exposes a direct cost-accuracy trade-off between the two extremes of local-only inference (cheap but limited by the local model’s capability) and cloud-only inference (accurate but expensive on every query). An ideal CSA policy delegates exactly the queries the local model cannot solve, approaching cloud-only accuracy at a fraction of the cost.
+E.3.2
+
+Self-Guided Data Selection
+
+Our main data-selection experiment tests whether examples preferred by an RLVR-trained CSA model are better fine-tuning data than examples selected by standard data-selection baselines. We begin with a base model M0 and train a CSA model MRLVR to decide whether a problem should be answered directly or delegated. After training, the model is used as a scorer: it is applied to a fresh candidate training pool
+Dpool = {(xi , yi )}N
+(10) i=1 , and assigns each candidate a delegation-derived score. Let ziself and zidel denote the logits assigned by RRLVR to the SELF _S OLVE and DELEGATE decision tokens for example xi . We convert these logits into a normalized delegation probability exp(zidel ) . (11) pdel = i del exp(zi ) + exp(ziself )
+
+Self-solve
+
+Local Model
+Inference
+
+user query 𝑥
+Local Model
+with CSA
+
+Cloud Model
+Inference
+
+Delegate
+
+Figure 11: Illustration of self-routing. Upon receiving a user query x, a local model equipped with CSA assesses whether the query falls within its reliable solving capability and decides between two actions: SELF-SOLVE, where the local model answers directly, or DELEGATE, where the query is routed to a cloud model for inference.
+Decision for Each Query
+
+Training
+Dataset
+
+query 𝑥1
+
+Delegate
+
+query 𝑥2
+
+Self-solve
+
+query 𝑥3
+
+Delegate
+
+…
+
+Model
+with CSA
+
+Delegate Set
+Delegate
+Confidence
+
+Delegate
+
+query 𝑥𝑛
+
+query 𝑥1 query 𝑥3
+
+… query 𝑥𝑛
+
+Train the model with delegate set
+
+Figure 12: Overview of CSA-based data selection. ACSA-equipped model scores a fresh candidate pool, prioritizing examples it would delegate while filtering out extreme outliers. the selected subset is then used to fine-tune the model.
+Intuitively, pdel
+i estimates how strongly the trained CSA router believes that M0 should not solve xi directly. A naive delegate-only selector would choose examples with the largest pdel i . However, this can overselect extreme examples that are far beyond the model’s current capabilities or are noisy, ambiguous, or mismatched to the target distribution. To avoid this, we use a delegate-based loss-bandpass selector. First, we compute the base model’s supervised loss on each candidate:
+|y |
+1 X
+log pM (yi,t | xi , yi,<t ).
+|yi | t=1
+i
+
+ℓi = −
+
+We then retain only examples whose loss lies within a middle band:
+
+N
+Bα,β = i : Qα ({ℓj }N
+j=1 ) ≤ ℓi ≤ Qβ ({ℓj }j=1 ) ,
+
+(12)
+
+(13)
+
+where Qα and Qβ are empirical loss quantiles. This removes examples that are already too easy for M0 as well as extreme high-loss outliers. Among the remaining examples, we rank by delegation probability: sDLB = pdel (14) i
+i · 1{i ∈ Bα,β }.
+For a target selection budget k, the selected subset is
+
+SDLB (k) = TopKi∈{1,...,N } sDLB
+,k . i
+
+(15)
+
+We then fine-tune the model on SDLB (k). Figure 12 provides an overview of the method.
+For the science-pool experiments, we train M0 on MMLU-Pro [63] to get MRLVR . The candidate
+pool is MedMCQA [49]. We randomly sample N = 50,000 examples from the MedMCQA training
+split and score them using our method and all baselines. We conduct experiments on Qwen3-1.7B and
+Qwen3-4B [69]. We use loss-bandpass quantiles Qα = 0.2, Qβ = 0.8. We compare delegate-based
+
+loss-bandpass against random selection, high-loss selection, low-loss selection, and developmentset similarity selection. We also include an all-samples condition, which fine-tunes on the full 50,000-example candidate pool. For development-set similarity, we reserve a held-out set dev m
+Ddev = {(xdev
+j , yj )}j=1
+
+(16)
+
+of m = 500 randomly selected MedMCQA training examples that are excluded from the candidate pool. The baseline selectors are defined as follows. Random selection samples a subset uniformly without replacement:
+Srand (k) ∼ Unif ({S ⊂ Dpool : |S| = k}) .
+(17) High-loss selection ranks examples by the base model loss in Eq. 12 and selects the largest-loss examples: Shigh (k) = TopKi (ℓi , k) . (18) This baseline tests whether our method is simply performing hard-example mining. Low-loss selection selects the examples with the smallest base-model loss: Slow (k) = TopKi (−ℓi , k) .
+
+(19)
+
+This baseline tests whether improvements can instead be obtained by emphasizing examples that are already easy and likely to be clean. For development-set similarity, we embed each candidate xi and each development example xdev j using a fixed sentence encoder f (·). We compute the maximum cosine similarity between each candidate and the held-out development set: ssim = max i
+
+f (xi )⊤ f (xdev j )
+
+1≤j≤m ∥f (xi )∥2 ∥f (xdev )∥2
+j
+
+The selected subset is then
+
+Ssim (k) = TopKi ssim i ,k .
+
+.
+
+(20)
+
+(21)
+
+This baseline controls for the possibility that delegate-based selection works only because it selects examples similar to the evaluation distribution. Finally, the all-samples condition uses Sall = Dpool ,
+
+(22)
+
+and therefore measures the performance obtained when no data selection is performed. All selected subsets of size k are fine-tuned using the same optimization hyperparameters, number of epochs, and training budget, so differences in downstream performance can be attributed to the selection rule rather than to changes in compute or training procedure. Given the scored candidate pool, we run fixed-budget SFT experiments. For each selection method, we fine-tune on one of seven budget fractions of the 50,000-example pool: 5%, 10%, and 20% corresponding to 2,500, 5,000, and 10,000 selected examples. Fine-tuning is performed with fullparameter training on Nvidia L40S nodes. The main hyperparameters are a learning rate of 5 × 10−5 , per-device batch size 4, maximum sequence length 4096, maximum training steps 2000, and bfloat16 training. Evaluation is performed on the MedMCQA validation split rather than the official test split. Each run evaluates on 500 randomly sampled validation examples a maximum generation length of 256 tokens. The primary metric is validation accuracy after fine-tuning.
+
+F Limitations
+
+While our results demonstrate that CSA is a teachable and transferable trait, several aspects merit further investigation. First, our experiments focus on the Qwen3 and OLMo2 model families and on math and science domains; extending the study to additional model families and to more diverse domains such as
+
+coding, commonsense reasoning, and multilingual tasks would help further characterize the generality of CSA. Second, we frame CSA as a binary SELF-SOLVE/DELEGATE decision, which isolates the core capability-assessment problem; richer action spaces (e.g., multi-tier routing, partial answers, or clarification requests) are a natural next step. Third, the ground-truth CSA labels are constructed by sampling-based probing, which is effective but introduces some sensitivity to the sampling budget and aggregation rule; exploring alternative labeling strategies could further improve label quality. Fourth, our data-selection experiments are constrained by the difficulty of constructing clean, contamination-free candidate pools for modern LLMs. Since many open-weight models are trained on large and only partially documented internet-scale corpora, it is difficult to determine whether a benchmark appeared directly in pretraining or whether the model has seen closely related QA content. Thus, our data-selection results should not be interpreted as a fully controlled study of learning from entirely novel data. At the same time, this setting resembles many realistic deployment scenarios: a model may have seen some related material during pretraining, but still fail on particular questions or subdomains. In this sense, based on results, MedMCQA provides a useful testbed for whether CSA can identify examples that are valuable for continued fine-tuning under partial prior exposure.

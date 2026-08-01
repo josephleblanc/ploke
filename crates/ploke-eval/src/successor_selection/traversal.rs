@@ -1,0 +1,6061 @@
+// TODO(prototype1-history-traversal): split this file by responsibility before
+// adding more traversal behavior. The current root carries strategy definitions,
+// History candidate projection/filtering, candidate accessors, score assembly,
+// sealed decision material, and tests. Move toward modules such as `strategy`,
+// `candidate`, `score`, and `history` so new scoring sources do not turn this
+// file into another flattened catch-all.
+
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet},
+    marker::PhantomData,
+};
+
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use super::{
+    HISTORY_TRAVERSAL_PROCEDURE_ID, OracleGate, OracleMode, PATCH_REVIEW_PROCEDURE_ID,
+    PATCH_REVIEW_RECORD_NAME, PROCEDURE_ID, PatchGate, PatchReview, PatchVerdict, SelectionInput,
+    SuccessorDecision, candidate_review_ref, decide as decide_candidate,
+    decision::SuccessorOutcome, disposition_as_str, domains::Confidence,
+    metrics as selection_metrics,
+};
+use crate::{
+    BranchDisposition,
+    cli::prototype1_state::history::{
+        CandidateArtifact, CandidateMembershipId, CandidateOccurrenceId, CandidateSetCommitment,
+        CandidateSetMembership, CandidateSetRoot, EvaluationPayload, HistoryCandidate,
+        HistoryCandidateSource, HistoryCandidates, HistoryError, HistoryHash,
+        SealedCandidateEvidence, SealedComparedRunEvidence, SealedRunEvidence,
+        SelectionDecisionEntry, SelectionProjectionFailure, SelectionProjectionFailureKind,
+        SelectionScope, SubjectRef, TraversalCandidateSource, TraversalEvidence,
+    },
+    metric::{self, Summary},
+};
+
+#[cfg(test)]
+use super::PatchChange;
+#[cfg(test)]
+use crate::cli::prototype1_state::history::{
+    SealedEvalSetIdentity, SealedEvaluatorIdentity, SealedProtocolArtifactEvidence,
+    SealedRunProtocolEvidence,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SourceSet {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DecisionSet {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Membership<S> {
+    inner: CandidateSetMembership,
+    _set: PhantomData<fn() -> S>,
+}
+
+pub(crate) type SourceMembership = Membership<SourceSet>;
+type DecisionMembership = Membership<DecisionSet>;
+
+impl<S> Membership<S> {
+    fn new(inner: CandidateSetMembership) -> Self {
+        Self {
+            inner,
+            _set: PhantomData,
+        }
+    }
+
+    fn as_inner(&self) -> &CandidateSetMembership {
+        &self.inner
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum StrategyKind {
+    FrontierMax {
+        normalize_frontier: bool,
+        #[serde(default)]
+        metrics: metric::Inputs,
+        #[serde(default)]
+        oracle: OracleMode,
+        #[serde(default = "default_oracle_require_evidence")]
+        require_evidence: bool,
+        #[serde(default)]
+        gate: OracleGate,
+        #[serde(default, skip_serializing_if = "PatchGate::is_disabled")]
+        patch_gate: PatchGate,
+    },
+    ScoreChildProp {
+        top_m: usize,
+        lambda_millis: u32,
+        #[serde(default)]
+        metrics: metric::Inputs,
+        #[serde(default)]
+        oracle: OracleMode,
+        #[serde(default = "default_oracle_require_evidence")]
+        require_evidence: bool,
+        #[serde(default)]
+        gate: OracleGate,
+        #[serde(default, skip_serializing_if = "PatchGate::is_disabled")]
+        patch_gate: PatchGate,
+    },
+}
+
+impl StrategyKind {
+    pub(crate) fn score_child_prop() -> Self {
+        ScoreChildProp::default().evidence()
+    }
+
+    pub(crate) fn with_metrics(self, metrics: metric::Inputs) -> Self {
+        match self {
+            Self::FrontierMax {
+                normalize_frontier,
+                oracle,
+                require_evidence,
+                gate,
+                patch_gate,
+                ..
+            } => Self::FrontierMax {
+                normalize_frontier,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                patch_gate,
+            },
+            Self::ScoreChildProp {
+                top_m,
+                lambda_millis,
+                oracle,
+                require_evidence,
+                gate,
+                patch_gate,
+                ..
+            } => Self::ScoreChildProp {
+                top_m,
+                lambda_millis,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                patch_gate,
+            },
+        }
+    }
+
+    pub(crate) fn with_oracle_policy(self, oracle: OracleMode, require_evidence: bool) -> Self {
+        match self {
+            Self::FrontierMax {
+                normalize_frontier,
+                metrics,
+                gate,
+                patch_gate,
+                ..
+            } => Self::FrontierMax {
+                normalize_frontier,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                patch_gate,
+            },
+            Self::ScoreChildProp {
+                top_m,
+                lambda_millis,
+                metrics,
+                gate,
+                patch_gate,
+                ..
+            } => Self::ScoreChildProp {
+                top_m,
+                lambda_millis,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                patch_gate,
+            },
+        }
+    }
+
+    pub(crate) fn with_oracle_gate(self, gate: OracleGate) -> Self {
+        match self {
+            Self::FrontierMax {
+                normalize_frontier,
+                metrics,
+                oracle,
+                require_evidence,
+                patch_gate,
+                ..
+            } => Self::FrontierMax {
+                normalize_frontier,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                patch_gate,
+            },
+            Self::ScoreChildProp {
+                top_m,
+                lambda_millis,
+                metrics,
+                oracle,
+                require_evidence,
+                patch_gate,
+                ..
+            } => Self::ScoreChildProp {
+                top_m,
+                lambda_millis,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                patch_gate,
+            },
+        }
+    }
+
+    pub(crate) fn with_patch_gate(self, patch_gate: PatchGate) -> Self {
+        match self {
+            Self::FrontierMax {
+                normalize_frontier,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                ..
+            } => Self::FrontierMax {
+                normalize_frontier,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                patch_gate,
+            },
+            Self::ScoreChildProp {
+                top_m,
+                lambda_millis,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                ..
+            } => Self::ScoreChildProp {
+                top_m,
+                lambda_millis,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                patch_gate,
+            },
+        }
+    }
+
+    pub(crate) fn patch_gate(self) -> PatchGate {
+        match self {
+            Self::FrontierMax { patch_gate, .. } | Self::ScoreChildProp { patch_gate, .. } => {
+                patch_gate
+            }
+        }
+    }
+}
+
+impl Default for StrategyKind {
+    fn default() -> Self {
+        Self::FrontierMax {
+            normalize_frontier: true,
+            metrics: metric::Inputs::default(),
+            oracle: OracleMode::RecordOnly,
+            require_evidence: default_oracle_require_evidence(),
+            gate: OracleGate::Disabled,
+            patch_gate: PatchGate::Disabled,
+        }
+    }
+}
+
+fn default_oracle_require_evidence() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FrontierMax<'a> {
+    normalize_frontier: bool,
+    metrics: metric::Inputs,
+    oracle: OracleMode,
+    require_evidence: bool,
+    gate: OracleGate,
+    patch_gate: PatchGate,
+    oracle_targets: &'a [String],
+}
+
+impl Default for FrontierMax<'static> {
+    fn default() -> Self {
+        Self {
+            normalize_frontier: true,
+            metrics: metric::Inputs::default(),
+            oracle: OracleMode::RecordOnly,
+            require_evidence: default_oracle_require_evidence(),
+            gate: OracleGate::Disabled,
+            patch_gate: PatchGate::Disabled,
+            oracle_targets: &[],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ScoreChildProp<'a> {
+    top_m: usize,
+    lambda_millis: u32,
+    metrics: metric::Inputs,
+    oracle: OracleMode,
+    require_evidence: bool,
+    gate: OracleGate,
+    patch_gate: PatchGate,
+    oracle_targets: &'a [String],
+}
+
+impl Default for ScoreChildProp<'static> {
+    fn default() -> Self {
+        Self {
+            top_m: 3,
+            lambda_millis: 10_000,
+            metrics: metric::Inputs::default(),
+            oracle: OracleMode::RecordOnly,
+            require_evidence: default_oracle_require_evidence(),
+            gate: OracleGate::Disabled,
+            patch_gate: PatchGate::Disabled,
+            oracle_targets: &[],
+        }
+    }
+}
+
+pub(crate) trait Strategy: Copy {
+    type Item;
+
+    fn evidence(self) -> StrategyKind;
+
+    fn select(
+        self,
+        items: &[Self::Item],
+        child_counts: &BTreeMap<String, usize>,
+        metric_set: &selection_metrics::Set,
+        seed: u64,
+    ) -> Result<Option<StrategySelection>, HistoryError>;
+}
+
+impl Strategy for FrontierMax<'_> {
+    type Item = Item;
+
+    fn evidence(self) -> StrategyKind {
+        StrategyKind::FrontierMax {
+            normalize_frontier: self.normalize_frontier,
+            metrics: self.metrics,
+            oracle: self.oracle,
+            require_evidence: self.require_evidence,
+            gate: self.gate,
+            patch_gate: self.patch_gate,
+        }
+    }
+
+    fn select(
+        self,
+        items: &[Self::Item],
+        child_counts: &BTreeMap<String, usize>,
+        metric_set: &selection_metrics::Set,
+        seed: u64,
+    ) -> Result<Option<StrategySelection>, HistoryError> {
+        select_frontier_max(
+            items,
+            child_counts,
+            metric_set,
+            seed,
+            self.normalize_frontier,
+            self.metrics,
+            self.oracle,
+            self.require_evidence,
+            self.gate,
+            self.patch_gate,
+            self.oracle_targets,
+        )
+    }
+}
+
+impl Strategy for ScoreChildProp<'_> {
+    type Item = Item;
+
+    fn evidence(self) -> StrategyKind {
+        StrategyKind::ScoreChildProp {
+            top_m: self.top_m,
+            lambda_millis: self.lambda_millis,
+            metrics: self.metrics,
+            oracle: self.oracle,
+            require_evidence: self.require_evidence,
+            gate: self.gate,
+            patch_gate: self.patch_gate,
+        }
+    }
+
+    fn select(
+        self,
+        items: &[Self::Item],
+        child_counts: &BTreeMap<String, usize>,
+        metric_set: &selection_metrics::Set,
+        seed: u64,
+    ) -> Result<Option<StrategySelection>, HistoryError> {
+        select_score_child_prop(
+            items,
+            child_counts,
+            metric_set,
+            seed,
+            self.top_m,
+            self.lambda_millis,
+            self.metrics,
+            self.oracle,
+            self.require_evidence,
+            self.gate,
+            self.patch_gate,
+            self.oracle_targets,
+        )
+    }
+}
+
+pub(crate) trait Traversal<S>
+where
+    S: Strategy<Item = Self::Item>,
+{
+    type Candidate;
+    type Item;
+    type Selection;
+
+    fn traverse(self, seed: u64, strategy: S) -> Result<Option<Self::Selection>, HistoryError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Selection {
+    pub(crate) decision: SuccessorDecision,
+    pub(crate) selected_payload: EvaluationPayload,
+    selected_decision_membership: Option<DecisionMembership>,
+    pub(crate) considered: Vec<EvaluationPayload>,
+    pub(crate) considered_sources: Vec<TraversalCandidateSource>,
+    pub(crate) projection_failures: Vec<SelectionProjectionFailure>,
+    pub(crate) child_counts: BTreeMap<String, usize>,
+    pub(crate) metrics: selection_metrics::Set,
+    pub(crate) selected_from_current_generation: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum SelectionAttempt {
+    Selected(Selection),
+    NoSelection(NoSelection),
+}
+
+impl SelectionAttempt {
+    fn into_selection(self) -> Option<Selection> {
+        match self {
+            Self::Selected(selection) => Some(selection),
+            Self::NoSelection(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct NoSelection {
+    pub(crate) considered: Vec<EvaluationPayload>,
+    pub(crate) considered_sources: Vec<TraversalCandidateSource>,
+    pub(crate) projection_failures: Vec<SelectionProjectionFailure>,
+    pub(crate) child_counts: BTreeMap<String, usize>,
+    pub(crate) metrics: selection_metrics::Set,
+}
+
+impl Selection {
+    pub(crate) fn selected_occurrence_id(&self) -> Option<CandidateOccurrenceId> {
+        self.selected_decision_membership
+            .as_ref()
+            .and_then(|membership| membership.as_inner().occurrence_id.clone())
+    }
+
+    pub(crate) fn selected_membership_id(&self) -> Option<CandidateMembershipId> {
+        self.selected_decision_membership
+            .as_ref()
+            .and_then(|membership| membership.as_inner().membership_id.clone())
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn select_from_history(
+    history: HistoryCandidates,
+    seed: u64,
+    strategy: StrategyKind,
+) -> Result<Option<Selection>, HistoryError> {
+    select(Candidates::from_history(history), seed, strategy)
+}
+
+#[cfg(test)]
+fn select_from_history_with_targets(
+    history: HistoryCandidates,
+    seed: u64,
+    strategy: StrategyKind,
+    oracle_targets: &[String],
+) -> Result<Option<Selection>, HistoryError> {
+    select_with_policy(
+        Candidates::from_history(history),
+        seed,
+        strategy,
+        selection_metrics::Policy::default(),
+        oracle_targets,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn select(
+    candidates: Candidates,
+    seed: u64,
+    strategy: StrategyKind,
+) -> Result<Option<Selection>, HistoryError> {
+    select_with_policy(
+        candidates,
+        seed,
+        strategy,
+        selection_metrics::Policy::default(),
+        &[],
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn select_with_policy(
+    candidates: Candidates,
+    seed: u64,
+    strategy: StrategyKind,
+    metrics_policy: selection_metrics::Policy,
+    oracle_targets: &[String],
+) -> Result<Option<Selection>, HistoryError> {
+    select_attempt_with_policy(candidates, seed, strategy, metrics_policy, oracle_targets)
+        .map(SelectionAttempt::into_selection)
+}
+
+pub(crate) fn select_attempt_with_policy(
+    candidates: Candidates,
+    seed: u64,
+    strategy: StrategyKind,
+    metrics_policy: selection_metrics::Policy,
+    oracle_targets: &[String],
+) -> Result<SelectionAttempt, HistoryError> {
+    match strategy {
+        StrategyKind::FrontierMax {
+            normalize_frontier,
+            metrics,
+            oracle,
+            require_evidence,
+            gate,
+            patch_gate,
+        } => candidates.traverse_attempt_with_policy(
+            seed,
+            FrontierMax {
+                normalize_frontier,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                patch_gate,
+                oracle_targets,
+            },
+            metrics_policy,
+        ),
+        StrategyKind::ScoreChildProp {
+            top_m,
+            lambda_millis,
+            metrics,
+            oracle,
+            require_evidence,
+            gate,
+            patch_gate,
+        } => candidates.traverse_attempt_with_policy(
+            seed,
+            ScoreChildProp {
+                top_m,
+                lambda_millis,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                patch_gate,
+                oracle_targets,
+            },
+            metrics_policy,
+        ),
+    }
+}
+
+pub(crate) fn validate_patch_replay(entry: &SelectionDecisionEntry) -> Result<(), HistoryError> {
+    let Some(traversal) = entry.traversal.as_ref() else {
+        return Ok(());
+    };
+    if traversal.strategy.patch_gate() == PatchGate::Disabled {
+        return Ok(());
+    }
+    let items = entry_items(
+        entry,
+        "strict patch replay",
+        "persisted strict patch frontier",
+    )?;
+
+    if let Some((node_id, _)) = traversal
+        .child_counts
+        .iter()
+        .find(|(_, count)| **count == 0)
+    {
+        return Err(HistoryError::InvalidSelectionDecision {
+            detail: format!(
+                "persisted strict patch frontier contains zero child count for '{node_id}'"
+            ),
+        });
+    }
+    let frontier_counts = successful_child_counts(&entry.considered);
+    for (node_id, count) in frontier_counts {
+        let committed = traversal
+            .child_counts
+            .get(&node_id)
+            .copied()
+            .unwrap_or_default();
+        if committed < count {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "persisted strict patch child count understates frontier evidence for '{node_id}': committed={committed}, frontier={count}"
+                ),
+            });
+        }
+    }
+    if let Some(item) = items
+        .iter()
+        .find(|item| candidate_has_successful_children(item, &traversal.child_counts))
+    {
+        return Err(HistoryError::InvalidSelectionDecision {
+            detail: format!(
+                "persisted strict patch considered candidate '{}' is not a frontier leaf",
+                item.payload.candidate.as_str()
+            ),
+        });
+    }
+
+    let replay = replay_frontier(
+        items,
+        entry.projection_failures.clone(),
+        traversal.child_counts.clone(),
+        traversal.seed,
+        traversal.strategy,
+        entry.metrics.policy,
+        &traversal.oracle_targets,
+    )?;
+
+    let mismatch = |detail: String| HistoryError::InvalidSelectionDecision { detail };
+    match (entry.decision.as_ref(), replay) {
+        (Some(decision), SelectionAttempt::Selected(selection)) => {
+            let replay_source = if selection.selected_from_current_generation {
+                TraversalCandidateSource::CurrentGeneration
+            } else {
+                TraversalCandidateSource::History
+            };
+            if &selection.decision != decision
+                || entry.selected_candidate.as_ref() != Some(&selection.selected_payload.candidate)
+                || entry.selected_occurrence_id != selection.selected_occurrence_id()
+                || entry.selected_membership_id != selection.selected_membership_id()
+                || traversal.selected_source != Some(replay_source)
+                || entry.considered != selection.considered
+                || entry.considered_sources != selection.considered_sources
+                || entry.projection_failures != selection.projection_failures
+                || traversal.child_counts != selection.child_counts
+                || entry.metrics != selection.metrics
+            {
+                return Err(mismatch(
+                    "persisted strict patch selection does not match deterministic replay"
+                        .to_string(),
+                ));
+            }
+        }
+        (None, SelectionAttempt::NoSelection(receipt)) => {
+            if entry.considered != receipt.considered
+                || entry.considered_sources != receipt.considered_sources
+                || entry.projection_failures != receipt.projection_failures
+                || traversal.child_counts != receipt.child_counts
+                || entry.metrics != receipt.metrics
+            {
+                return Err(mismatch(
+                    "persisted strict patch no-selection receipt does not match deterministic replay"
+                        .to_string(),
+                ));
+            }
+        }
+        (Some(_), SelectionAttempt::NoSelection(_)) => {
+            return Err(mismatch(
+                "persisted strict patch selection replays to no selection".to_string(),
+            ));
+        }
+        (None, SelectionAttempt::Selected(_)) => {
+            return Err(mismatch(
+                "persisted strict patch no-selection receipt replays to a selected candidate"
+                    .to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_patch_gate(
+    entry: &SelectionDecisionEntry,
+    gate: PatchGate,
+) -> Result<(), HistoryError> {
+    if gate == PatchGate::Disabled {
+        return Ok(());
+    }
+    entry.validate_shape()?;
+    let items = entry_items(entry, "strict patch gate", "strict patch gate")?;
+    let eligibility = patch_eligibility(&items, gate)?;
+    if let Some(selected) = entry.selected_candidate.as_ref() {
+        let index = items
+            .iter()
+            .position(|item| &item.payload.candidate == selected)
+            .ok_or_else(|| HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "strict patch gate selected candidate '{}' is not in the considered set",
+                    selected.as_str()
+                ),
+            })?;
+        if !eligibility.admits(index) {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "strict patch gate rejects selected candidate '{}'",
+                    selected.as_str()
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn entry_items(
+    entry: &SelectionDecisionEntry,
+    source_context: &str,
+    grade_context: &str,
+) -> Result<Vec<Item>, HistoryError> {
+    if entry.considered.len() != entry.considered_sources.len() {
+        return Err(HistoryError::InvalidSelectionDecision {
+            detail: format!(
+                "{source_context} source count mismatch: considered={}, sources={}",
+                entry.considered.len(),
+                entry.considered_sources.len()
+            ),
+        });
+    }
+
+    let root = entry
+        .candidate_set
+        .as_ref()
+        .map(|candidate_set| candidate_set.root.clone());
+    let candidates = entry
+        .considered
+        .iter()
+        .zip(&entry.considered_sources)
+        .enumerate()
+        .map(|(index, (payload, source))| {
+            let membership = entry
+                .candidate_set_membership_for_payload(index, payload)?
+                .cloned();
+            Ok(Candidate {
+                source: match source {
+                    TraversalCandidateSource::CurrentGeneration => Source::CurrentGeneration {
+                        scope: entry.scope.clone(),
+                    },
+                    TraversalCandidateSource::History => Source::SealedDecisionReplay,
+                },
+                decision_scope: entry.scope.clone(),
+                selected_by_decision: *source == TraversalCandidateSource::History,
+                payload: payload.clone(),
+                payload_hash: payload.payload_hash()?,
+                candidate_set_root: root.clone(),
+                candidate_set_membership: membership.map(SourceMembership::new),
+            })
+        })
+        .collect::<Result<Vec<_>, HistoryError>>()?;
+    let mut items = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        match decision_grade(candidate)? {
+            CandidateGrade::Eligible(item) => items.push(item),
+            CandidateGrade::Excluded(failure) => {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "{grade_context} candidate is no longer decision-grade: {}",
+                        failure.id.0.as_str()
+                    ),
+                });
+            }
+        }
+    }
+    Ok(items)
+}
+
+pub(crate) fn validate_patch_config(
+    entry: &SelectionDecisionEntry,
+    expected: &HistoryHash,
+) -> Result<(), HistoryError> {
+    let strict = entry
+        .traversal
+        .as_ref()
+        .is_some_and(|traversal| traversal.strategy.patch_gate() == PatchGate::ReviewedAdmissible);
+    if !strict {
+        return Ok(());
+    }
+    for payload in &entry.considered {
+        let review = payload.patch_review.as_ref().ok_or_else(|| {
+            HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "strict patch receipt has no review for '{}'",
+                    payload.candidate.as_str()
+                ),
+            }
+        })?;
+        if &review.config_hash != expected {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "candidate patch review config does not match admitted policy for '{}'",
+                    payload.candidate.as_str()
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn replay_frontier(
+    items: Vec<Item>,
+    failures: Vec<SelectionProjectionFailure>,
+    child_counts: BTreeMap<String, usize>,
+    seed: u64,
+    strategy: StrategyKind,
+    metrics_policy: selection_metrics::Policy,
+    oracle_targets: &[String],
+) -> Result<SelectionAttempt, HistoryError> {
+    match strategy {
+        StrategyKind::FrontierMax {
+            normalize_frontier,
+            metrics,
+            oracle,
+            require_evidence,
+            gate,
+            patch_gate,
+        } => select_frontier(
+            items,
+            failures,
+            child_counts,
+            seed,
+            FrontierMax {
+                normalize_frontier,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                patch_gate,
+                oracle_targets,
+            },
+            metrics_policy,
+        ),
+        StrategyKind::ScoreChildProp {
+            top_m,
+            lambda_millis,
+            metrics,
+            oracle,
+            require_evidence,
+            gate,
+            patch_gate,
+        } => select_frontier(
+            items,
+            failures,
+            child_counts,
+            seed,
+            ScoreChildProp {
+                top_m,
+                lambda_millis,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                patch_gate,
+                oracle_targets,
+            },
+            metrics_policy,
+        ),
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ScoreChildPropReplay {
+    pub(crate) seed: u64,
+    pub(crate) top_m: usize,
+    pub(crate) lambda: f64,
+    pub(crate) metric_inputs: &'static str,
+    pub(crate) oracle_mode: &'static str,
+    pub(crate) oracle_require_evidence: bool,
+    pub(crate) oracle_gate: &'static str,
+    pub(crate) patch_gate: &'static str,
+    pub(crate) oracle_targets: Vec<String>,
+    pub(crate) total_weight: f64,
+    pub(crate) sample: f64,
+    pub(crate) selected_index: Option<usize>,
+    pub(crate) selected_candidate: Option<String>,
+    pub(crate) rows: Vec<ScoreChildPropReplayRow>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ScoreChildPropReplayRow {
+    pub(crate) index: usize,
+    pub(crate) candidate: String,
+    pub(crate) node_id: Option<String>,
+    pub(crate) branch_id: Option<String>,
+    pub(crate) branch_disposition: Option<String>,
+    pub(crate) base_outcome: SuccessorOutcome,
+    pub(crate) performance: i64,
+    pub(crate) oracle_resolved: Option<usize>,
+    pub(crate) oracle_configured: Option<usize>,
+    pub(crate) child_count: usize,
+    pub(crate) alpha: f64,
+    pub(crate) exploitation: f64,
+    pub(crate) exploration: f64,
+    pub(crate) weight: f64,
+    pub(crate) selectable: bool,
+    pub(crate) exclusion_reason: Option<String>,
+    pub(crate) selected: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct SelectionFormula {
+    pub(crate) metric_set_id: HistoryHash,
+    pub(crate) formula: Formula,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum Formula {
+    ScoreChildProp(ScoreChildPropFormula),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct ScoreChildPropFormula {
+    pub(crate) schema_version: u32,
+    pub(crate) seed: u64,
+    pub(crate) top_m: usize,
+    pub(crate) lambda_millis: u32,
+    pub(crate) lambda: f64,
+    pub(crate) metric_inputs: String,
+    pub(crate) oracle_mode: String,
+    pub(crate) oracle_require_evidence: bool,
+    #[serde(default)]
+    pub(crate) oracle_gate: OracleGate,
+    #[serde(default, skip_serializing_if = "PatchGate::is_disabled")]
+    pub(crate) patch_gate: PatchGate,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) oracle_targets: Vec<String>,
+    pub(crate) total_weight: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) sample: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) sample_threshold: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) uniform_fallback_slot: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) selected_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) selected_candidate: Option<String>,
+    pub(crate) alpha_mid: f64,
+    pub(crate) oracle_used_for_alpha: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) rows: Vec<ScoreChildPropFormulaRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct ScoreChildPropFormulaRow {
+    pub(crate) payload_index: usize,
+    pub(crate) candidate: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) branch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) branch_disposition: Option<String>,
+    pub(crate) base_outcome: SuccessorOutcome,
+    pub(crate) outcome_points: i64,
+    pub(crate) operational_points: i64,
+    pub(crate) protocol_points: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) imp_at_k_delta: Option<i64>,
+    pub(crate) imp_at_k_score_excluded: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) performance: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) oracle_resolved: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) oracle_configured: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) oracle_rate: Option<f64>,
+    pub(crate) oracle_used_for_alpha: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) child_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) alpha: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) alpha_mid: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) exploitation: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) exploration: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) weight: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) cumulative_lower: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) cumulative_upper: Option<f64>,
+    pub(crate) sample_hit: bool,
+    pub(crate) selectable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) exclusion_reason: Option<String>,
+    pub(crate) performance_present: bool,
+    pub(crate) selection_input_present: bool,
+    pub(crate) decision_present: bool,
+    pub(crate) selected: bool,
+}
+
+pub(crate) fn replay_score_child_prop(
+    entry: &SelectionDecisionEntry,
+) -> Result<Option<ScoreChildPropReplay>, HistoryError> {
+    let Some(traversal) = entry.traversal.as_ref() else {
+        return Ok(None);
+    };
+    let StrategyKind::ScoreChildProp {
+        top_m,
+        lambda_millis,
+        metrics,
+        oracle,
+        require_evidence,
+        gate,
+        patch_gate,
+    } = traversal.strategy
+    else {
+        return Ok(None);
+    };
+    let items = entry
+        .considered
+        .iter()
+        .cloned()
+        .map(|payload| Item {
+            payload,
+            source: Source::SealedDecisionReplay,
+            candidate_set_root: None,
+            candidate_set_membership: None,
+        })
+        .collect::<Vec<_>>();
+    let child_counts = traversal_child_counts(traversal, &entry.considered);
+    let calculation = score_child_prop_calculation_with_set(
+        &items,
+        &child_counts,
+        &entry.metrics,
+        top_m,
+        lambda_millis,
+        metrics,
+        oracle,
+        require_evidence,
+        gate,
+        patch_gate,
+        &traversal.oracle_targets,
+    )?;
+    let weights = &calculation.weights;
+    let total_weight = weights.iter().map(|weight| weight.weight).sum::<f64>();
+    let sample = sample_unit(traversal.seed, &items)?;
+    let selected_index = if weights.is_empty() {
+        None
+    } else {
+        sample_weighted_index(weights, total_weight, sample)
+    };
+    let selected_candidate = selected_index
+        .and_then(|index| items.get(index))
+        .map(|item| item.payload.candidate.as_str().to_string());
+    let rows = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let case = CandidateCase::from_payload(&item.payload);
+            let input = case.selection_input();
+            let decision = traversal_decision(&case);
+            let breakdown = performance_breakdown_with_set(index, case, metrics, &entry.metrics);
+            let performance = breakdown.and_then(PerformanceBreakdown::total);
+            let weight = weights.iter().find(|weight| weight.index == index);
+            ScoreChildPropReplayRow {
+                index,
+                candidate: item.payload.candidate.as_str().to_string(),
+                node_id: input.map(|value| value.candidate.node_id.clone()),
+                branch_id: input.map(|value| value.candidate.branch_id.clone()),
+                branch_disposition: input
+                    .map(|value| disposition_as_str(value.branch_disposition.clone()).to_string()),
+                base_outcome: decision
+                    .as_ref()
+                    .map(|decision| decision.outcome)
+                    .unwrap_or(SuccessorOutcome::Stop),
+                performance: performance.map(|score| score.0).unwrap_or_default(),
+                oracle_resolved: calculation
+                    .resolutions
+                    .get(&index)
+                    .map(|score| score.resolved),
+                oracle_configured: calculation
+                    .resolutions
+                    .get(&index)
+                    .map(|score| score.configured),
+                child_count: weight.map(|weight| weight.child_count).unwrap_or_default(),
+                alpha: weight.map(|weight| weight.alpha).unwrap_or_default(),
+                exploitation: weight.map(|weight| weight.exploitation).unwrap_or_default(),
+                exploration: weight.map(|weight| weight.exploration).unwrap_or_default(),
+                weight: weight.map(|weight| weight.weight).unwrap_or_default(),
+                selectable: weight.is_some(),
+                exclusion_reason: exclusion_reason(
+                    input.is_some(),
+                    decision.is_some(),
+                    &breakdown,
+                    calculation.exclusions.get(&index).map(String::as_str),
+                ),
+                selected: selected_index == Some(index),
+            }
+        })
+        .collect();
+    Ok(Some(ScoreChildPropReplay {
+        seed: traversal.seed,
+        top_m,
+        lambda: lambda_millis as f64 / 1_000.0,
+        metric_inputs: metric_inputs_name(metrics),
+        oracle_mode: oracle_mode_name(oracle),
+        oracle_require_evidence: require_evidence,
+        oracle_gate: oracle_gate_name(gate),
+        patch_gate: patch_gate_name(patch_gate),
+        oracle_targets: traversal.oracle_targets.clone(),
+        total_weight,
+        sample,
+        selected_index,
+        selected_candidate,
+        rows,
+    }))
+}
+
+pub(crate) fn score_child_prop_formula(
+    entry: &SelectionDecisionEntry,
+) -> Result<Option<SelectionFormula>, HistoryError> {
+    let Some(traversal) = entry.traversal.as_ref() else {
+        return Ok(None);
+    };
+    let StrategyKind::ScoreChildProp {
+        top_m,
+        lambda_millis,
+        metrics,
+        oracle,
+        require_evidence,
+        gate,
+        patch_gate,
+    } = traversal.strategy
+    else {
+        return Ok(None);
+    };
+    let items = entry
+        .considered
+        .iter()
+        .cloned()
+        .map(|payload| Item {
+            payload,
+            source: Source::SealedDecisionReplay,
+            candidate_set_root: None,
+            candidate_set_membership: None,
+        })
+        .collect::<Vec<_>>();
+    let child_counts = traversal_child_counts(traversal, &entry.considered);
+    let calculation = score_child_prop_calculation_with_set(
+        &items,
+        &child_counts,
+        &entry.metrics,
+        top_m,
+        lambda_millis,
+        metrics,
+        oracle,
+        require_evidence,
+        gate,
+        patch_gate,
+        &traversal.oracle_targets,
+    )?;
+    let total_weight = calculation
+        .weights
+        .iter()
+        .map(|weight| weight.weight)
+        .sum::<f64>();
+    let sample = if calculation.weights.is_empty() {
+        None
+    } else {
+        Some(sample_unit(traversal.seed, &items)?)
+    };
+    let selected_index =
+        sample.and_then(|sample| sample_weighted_index(&calculation.weights, total_weight, sample));
+    let selected_candidate = selected_index
+        .and_then(|index| items.get(index))
+        .map(|item| item.payload.candidate.as_str().to_string());
+    let sample_threshold = sample
+        .filter(|_| total_weight > 0.0 && total_weight.is_finite())
+        .map(|sample| sample * total_weight);
+    let uniform_fallback_slot = sample
+        .filter(|_| !calculation.weights.is_empty())
+        .filter(|_| total_weight <= 0.0 || !total_weight.is_finite())
+        .map(|sample| {
+            let slot = (sample * calculation.weights.len() as f64).floor() as usize;
+            slot.min(calculation.weights.len().saturating_sub(1))
+        });
+    let ranges = cumulative_ranges(&calculation.weights, total_weight, sample);
+    let rows = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let case = CandidateCase::from_payload(&item.payload);
+            let input = case.selection_input();
+            let decision = traversal_decision(&case);
+            let breakdown = performance_breakdown_with_set(index, case, metrics, &entry.metrics);
+            let performance = breakdown.and_then(PerformanceBreakdown::total);
+            let weight = calculation
+                .weights
+                .iter()
+                .find(|weight| weight.index == index);
+            let range = ranges.iter().find(|range| range.index == index);
+            ScoreChildPropFormulaRow {
+                payload_index: index,
+                candidate: item.payload.candidate.as_str().to_string(),
+                node_id: input.map(|value| value.candidate.node_id.clone()),
+                branch_id: input.map(|value| value.candidate.branch_id.clone()),
+                branch_disposition: input
+                    .map(|value| disposition_as_str(value.branch_disposition.clone()).to_string()),
+                base_outcome: decision
+                    .as_ref()
+                    .map(|decision| decision.outcome)
+                    .unwrap_or(SuccessorOutcome::Stop),
+                outcome_points: breakdown
+                    .as_ref()
+                    .map(|breakdown| breakdown.outcome_points)
+                    .unwrap_or_default(),
+                operational_points: breakdown
+                    .as_ref()
+                    .map(|breakdown| breakdown.operational_points)
+                    .unwrap_or_default(),
+                protocol_points: breakdown
+                    .as_ref()
+                    .map(|breakdown| breakdown.protocol_points)
+                    .unwrap_or_default(),
+                imp_at_k_delta: breakdown
+                    .as_ref()
+                    .and_then(|breakdown| breakdown.imp_at_k_delta),
+                imp_at_k_score_excluded: breakdown
+                    .as_ref()
+                    .is_some_and(|breakdown| breakdown.imp_at_k_score_excluded),
+                performance: performance.map(|score| score.0),
+                oracle_resolved: calculation
+                    .resolutions
+                    .get(&index)
+                    .map(|score| score.resolved),
+                oracle_configured: calculation
+                    .resolutions
+                    .get(&index)
+                    .map(|score| score.configured),
+                oracle_rate: calculation
+                    .resolutions
+                    .get(&index)
+                    .map(|score| score.rate()),
+                oracle_used_for_alpha: calculation.oracle_used_for_alpha,
+                child_count: weight.map(|weight| weight.child_count),
+                alpha: weight.map(|weight| weight.alpha),
+                alpha_mid: weight.map(|_| calculation.alpha_mid),
+                exploitation: weight.map(|weight| weight.exploitation),
+                exploration: weight.map(|weight| weight.exploration),
+                weight: weight.map(|weight| weight.weight),
+                cumulative_lower: range.map(|range| range.lower),
+                cumulative_upper: range.map(|range| range.upper),
+                sample_hit: range.is_some_and(|range| range.sample_hit),
+                selectable: weight.is_some(),
+                exclusion_reason: exclusion_reason(
+                    input.is_some(),
+                    decision.is_some(),
+                    &breakdown,
+                    calculation.exclusions.get(&index).map(String::as_str),
+                ),
+                performance_present: performance.is_some(),
+                selection_input_present: input.is_some(),
+                decision_present: decision.is_some(),
+                selected: selected_index == Some(index),
+            }
+        })
+        .collect();
+    Ok(Some(SelectionFormula {
+        metric_set_id: entry.metrics.id.clone(),
+        formula: Formula::ScoreChildProp(ScoreChildPropFormula {
+            schema_version: 1,
+            seed: traversal.seed,
+            top_m,
+            lambda_millis,
+            lambda: lambda_millis as f64 / 1_000.0,
+            metric_inputs: metric_inputs_name(metrics).to_string(),
+            oracle_mode: oracle_mode_name(oracle).to_string(),
+            oracle_require_evidence: require_evidence,
+            oracle_gate: gate,
+            patch_gate,
+            oracle_targets: traversal.oracle_targets.clone(),
+            total_weight,
+            sample,
+            sample_threshold,
+            uniform_fallback_slot,
+            selected_index,
+            selected_candidate,
+            alpha_mid: calculation.alpha_mid,
+            oracle_used_for_alpha: calculation.oracle_used_for_alpha,
+            rows,
+        }),
+    }))
+}
+
+impl<S> Traversal<S> for Candidates
+where
+    S: Strategy<Item = Item>,
+{
+    type Candidate = Candidate;
+    type Item = Item;
+    type Selection = Selection;
+
+    fn traverse(self, seed: u64, strategy: S) -> Result<Option<Selection>, HistoryError> {
+        self.traverse_with_policy(seed, strategy, selection_metrics::Policy::default())
+    }
+}
+
+impl Candidates {
+    fn traverse_with_policy<S>(
+        self,
+        seed: u64,
+        strategy: S,
+        metrics_policy: selection_metrics::Policy,
+    ) -> Result<Option<Selection>, HistoryError>
+    where
+        S: Strategy<Item = Item>,
+    {
+        self.traverse_attempt_with_policy(seed, strategy, metrics_policy)
+            .map(SelectionAttempt::into_selection)
+    }
+
+    fn traverse_attempt_with_policy<S>(
+        self,
+        seed: u64,
+        strategy: S,
+        metrics_policy: selection_metrics::Policy,
+    ) -> Result<SelectionAttempt, HistoryError>
+    where
+        S: Strategy<Item = Item>,
+    {
+        let mut items = Vec::new();
+        let mut failures = Vec::new();
+
+        for candidate in self.candidates {
+            match decision_grade(candidate)? {
+                CandidateGrade::Eligible(item) => {
+                    items.push(item);
+                }
+                CandidateGrade::Excluded(failure) => failures.push(failure),
+            }
+        }
+
+        let all_decision_payloads = items
+            .iter()
+            .map(|item| item.payload.clone())
+            .collect::<Vec<_>>();
+        let child_counts = successful_child_counts(&all_decision_payloads);
+        let items = items
+            .into_iter()
+            .filter(|item| !candidate_has_successful_children(item, &child_counts))
+            .collect::<Vec<_>>();
+        select_frontier(
+            items,
+            failures,
+            child_counts,
+            seed,
+            strategy,
+            metrics_policy,
+        )
+    }
+}
+
+fn select_frontier<S>(
+    items: Vec<Item>,
+    failures: Vec<SelectionProjectionFailure>,
+    child_counts: BTreeMap<String, usize>,
+    seed: u64,
+    strategy: S,
+    metrics_policy: selection_metrics::Policy,
+) -> Result<SelectionAttempt, HistoryError>
+where
+    S: Strategy<Item = Item>,
+{
+    let considered = items
+        .iter()
+        .map(|item| item.payload.clone())
+        .collect::<Vec<_>>();
+    let considered_sources = items
+        .iter()
+        .map(|item| item.source.traversal_candidate_source())
+        .collect::<Vec<_>>();
+    let evidence_summary = CandidateCaseEvidenceSummary::from_considered(&considered);
+    let metric_set =
+        selection_metrics::Set::from_considered(metrics_policy, &considered, &considered_sources)?;
+    let Some(selection) = strategy.select(&items, &child_counts, &metric_set, seed)? else {
+        return Ok(SelectionAttempt::NoSelection(NoSelection {
+            considered,
+            considered_sources,
+            projection_failures: failures,
+            child_counts,
+            metrics: metric_set,
+        }));
+    };
+    let decision_membership =
+        decision_membership_for_chosen(&considered, &considered_sources, &selection.chosen)?;
+
+    let mut decision = selection.chosen.decision;
+    decision.procedure_id = HISTORY_TRAVERSAL_PROCEDURE_ID.to_string();
+    decision.rationale.push(format!(
+        "history traversal selected from {} decision-grade candidates with seed={}",
+        considered.len(),
+        seed
+    ));
+    decision.rationale.push(evidence_summary.rationale());
+    decision.rationale.extend(selection.rationale);
+
+    Ok(SelectionAttempt::Selected(Selection {
+        decision,
+        selected_payload: selection.chosen.payload,
+        selected_decision_membership: decision_membership,
+        considered,
+        considered_sources,
+        projection_failures: failures,
+        child_counts,
+        metrics: metric_set,
+        selected_from_current_generation: selection.chosen.source.is_current_generation(),
+    }))
+}
+
+fn decision_membership_for_chosen(
+    considered: &[EvaluationPayload],
+    considered_sources: &[TraversalCandidateSource],
+    chosen: &ChosenPayload,
+) -> Result<Option<DecisionMembership>, HistoryError> {
+    let candidate_set =
+        CandidateSetCommitment::from_payloads_with_sources(considered, considered_sources)?;
+    candidate_set
+        .membership_for_payload(
+            &chosen.payload,
+            chosen
+                .source
+                .traversal_candidate_source()
+                .candidate_source_class(),
+        )
+        .map(|membership| membership.cloned().map(DecisionMembership::new))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Candidates {
+    pub(crate) scope: SelectionScope,
+    pub(crate) candidates: Vec<Candidate>,
+}
+
+impl Candidates {
+    pub(crate) fn from_history(history: HistoryCandidates) -> Self {
+        Self {
+            scope: history.scope,
+            candidates: history
+                .candidates
+                .into_iter()
+                .map(Candidate::from)
+                .collect(),
+        }
+    }
+
+    pub(crate) fn with_current_generation(
+        mut self,
+        scope: SelectionScope,
+        payloads: Vec<EvaluationPayload>,
+    ) -> Result<Self, HistoryError> {
+        let sources = vec![TraversalCandidateSource::CurrentGeneration; payloads.len()];
+        let candidate_set =
+            CandidateSetCommitment::from_payloads_with_sources(&payloads, &sources)?;
+        let root = candidate_set.root.clone();
+        let mut current_candidates = Vec::with_capacity(payloads.len());
+        for payload in payloads {
+            let payload_hash = payload.payload_hash()?;
+            let membership = candidate_set
+                .membership_for_payload(
+                    &payload,
+                    TraversalCandidateSource::CurrentGeneration.candidate_source_class(),
+                )?
+                .cloned();
+            current_candidates.push(Candidate {
+                source: Source::CurrentGeneration {
+                    scope: scope.clone(),
+                },
+                decision_scope: scope.clone(),
+                selected_by_decision: false,
+                payload,
+                payload_hash,
+                candidate_set_root: Some(root.clone()),
+                candidate_set_membership: membership.map(SourceMembership::new),
+            });
+        }
+
+        let current_coordinates = current_candidates
+            .iter()
+            .map(decision_grade_candidate_coordinate)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect::<BTreeSet<_>>();
+        if !current_coordinates.is_empty() {
+            self.candidates.retain(|candidate| {
+                candidate_coordinate(&candidate.payload)
+                    .is_none_or(|coordinate| !current_coordinates.contains(&coordinate))
+            });
+        }
+        self.candidates.extend(current_candidates);
+        Ok(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Candidate {
+    pub(crate) source: Source,
+    pub(crate) decision_scope: SelectionScope,
+    pub(crate) selected_by_decision: bool,
+    pub(crate) payload: EvaluationPayload,
+    pub(crate) payload_hash: crate::cli::prototype1_state::history::HistoryHash,
+    pub(crate) candidate_set_root: Option<CandidateSetRoot>,
+    pub(crate) candidate_set_membership: Option<SourceMembership>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Item {
+    pub(crate) payload: EvaluationPayload,
+    pub(crate) source: Source,
+    pub(crate) candidate_set_root: Option<CandidateSetRoot>,
+    pub(crate) candidate_set_membership: Option<SourceMembership>,
+}
+
+impl From<HistoryCandidate> for Candidate {
+    fn from(candidate: HistoryCandidate) -> Self {
+        Self {
+            source: Source::History {
+                source: candidate.source,
+            },
+            decision_scope: candidate.decision_scope,
+            selected_by_decision: candidate.selected_by_decision,
+            payload: candidate.payload,
+            payload_hash: candidate.payload_hash,
+            candidate_set_root: candidate.candidate_set_root,
+            candidate_set_membership: candidate
+                .candidate_set_membership
+                .map(SourceMembership::new),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Source {
+    History { source: HistoryCandidateSource },
+    CurrentGeneration { scope: SelectionScope },
+    SealedDecisionReplay,
+}
+
+impl Source {
+    fn is_current_generation(&self) -> bool {
+        matches!(self, Self::CurrentGeneration { .. })
+    }
+
+    fn traversal_candidate_source(&self) -> TraversalCandidateSource {
+        match self {
+            Self::CurrentGeneration { .. } => TraversalCandidateSource::CurrentGeneration,
+            Self::History { .. } | Self::SealedDecisionReplay => TraversalCandidateSource::History,
+        }
+    }
+}
+
+/// Borrowed selection-time view over a sealed candidate payload.
+///
+/// This keeps the candidate universe richer than the current scorer. Policies
+/// can opt into optional sections by reading them from the case, while the
+/// sealed History payload remains the replayable source of facts.
+///
+/// Scoring inventory, grouped by signal:
+///
+/// Identity and lineage:
+/// `candidate`
+/// `selection_input.candidate.node_id`
+/// `selection_input.candidate.branch_id`
+/// `selection_input.candidate.generation`
+/// `sealed_evidence.coordinate.node_id`
+/// `sealed_evidence.coordinate.parent_node_id`
+/// `sealed_evidence.coordinate.branch_id`
+/// `sealed_evidence.coordinate.generation`
+/// `sealed_evidence.coordinate.plan_index`
+/// `sealed_evidence.coordinate.primary_runtime_id`
+/// `sealed_evidence.evaluations[*].branch_id`
+/// `sealed_evidence.runtimes[*].runtime_id`
+/// `sealed_evidence.branches[*].branch_id`
+/// `sealed_evidence.branches[*].candidate_id`
+/// `sealed_evidence.branches[*].source_state_id`
+///
+/// Policy, lifecycle, and evaluation outcome:
+/// `selection_input.branch_disposition`
+/// `selection_input.evaluation_artifact_path`
+/// `selection_input.comparisons[*].instance_id`
+/// `selection_input.comparisons[*].status`
+/// `sealed_evidence.lifecycle.planner_outcome`
+/// `sealed_evidence.lifecycle.node_status`
+/// `sealed_evidence.evaluations[*].evaluation_procedure_id`
+/// `sealed_evidence.evaluations[*].evaluator_identity`
+/// `sealed_evidence.evaluations[*].eval_set_identity`
+/// `sealed_evidence.evaluations[*].overall_disposition`
+/// `sealed_evidence.evaluations[*].compared_runs[*].instance_id`
+/// `sealed_evidence.evaluations[*].compared_runs[*].status`
+///
+/// Metric-bearing procedure states:
+/// `selection_input.comparisons[*].parent_metrics`
+/// `selection_input.comparisons[*].child_metrics`
+/// `sealed_evidence.evaluations[*].compared_runs[*].baseline_metrics`
+/// `sealed_evidence.evaluations[*].compared_runs[*].treatment_metrics`
+/// `metric::Operational.tool_calls_total`
+/// `metric::Operational.tool_calls_failed`
+/// `metric::Operational.patch_attempted`
+/// `metric::Operational.patch_apply_state`
+/// `metric::Operational.submission_artifact_state`
+/// `metric::Operational.partial_patch_failures`
+/// `metric::Operational.same_file_patch_retry_count`
+/// `metric::Operational.same_file_patch_max_streak`
+/// `metric::Operational.aborted`
+/// `metric::Operational.aborted_repair_loop`
+/// `metric::Operational.nonempty_valid_patch`
+/// `metric::Operational.convergence`
+/// `metric::Operational.oracle_eligible`
+/// `sealed_evidence.evaluations[*].compared_runs[*].baseline_protocol`
+/// `sealed_evidence.evaluations[*].compared_runs[*].treatment_protocol`
+/// `metric::Protocol.reviewed_call_count`
+/// `metric::Protocol.reviewed_segment_count`
+/// `metric::Protocol.missing_call_count`
+/// `metric::Protocol.missing_segment_count`
+/// `metric::Protocol.skipped_segment_review_count`
+/// `metric::Protocol.segment_anchor_mismatch_count`
+/// `metric::Protocol.calls_with_segment_crosswalk`
+/// `metric::Protocol.calls_without_segment_crosswalk`
+/// `metric::Protocol.call_review_overall_counts`
+/// `metric::Protocol.segment_review_overall_counts`
+/// `metric::Protocol.review_signal_totals`
+///
+/// Rich run snapshots:
+/// `sealed_evidence.evaluations[*].compared_runs[*].baseline_run`
+/// `sealed_evidence.evaluations[*].compared_runs[*].treatment_run`
+///
+/// Citations, diagnostics, and provenance:
+/// `sealed_evidence.evaluations[*].evaluation_artifact_citation`
+/// `sealed_evidence.evaluations[*].primary_report_citation`
+/// `sealed_evidence.evaluations[*].compared_runs[*].baseline_citation`
+/// `sealed_evidence.evaluations[*].compared_runs[*].treatment_citation`
+/// `sealed_evidence.evaluations[*].compared_runs[*].diagnostics`
+/// `sealed_evidence.runtimes[*].document_citations`
+/// `sealed_evidence.runtimes[*].journal_citations`
+/// `sealed_evidence.branches[*].branch_evidence_citations`
+/// `sealed_evidence.extra_document_citations`
+/// `sealed_evidence.extra_journal_citations`
+/// `sealed_evidence.child_diagnostics`
+/// `payload.source_refs`
+/// `payload.source_hashes`
+/// `payload.projection_failures`
+///
+/// Artifact handoff:
+/// `artifact.node`
+/// `artifact.resolved`
+///
+/// Traversal provenance:
+/// `Item::source`
+///
+/// Candidate-set root and membership proofs are validated before a payload
+/// becomes an `Item`; those proof objects are not currently exposed to strategy
+/// code.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CandidateCase<'a> {
+    candidate: &'a SubjectRef,
+    selection_input: Option<&'a SelectionInput>,
+    sealed_evidence: Option<&'a SealedCandidateEvidence>,
+    artifact: Option<&'a CandidateArtifact>,
+}
+
+impl<'a> CandidateCase<'a> {
+    pub(crate) fn builder(payload: &'a EvaluationPayload) -> CandidateCaseBuilder<'a> {
+        CandidateCaseBuilder {
+            payload,
+            selection_input: None,
+            sealed_evidence: None,
+            artifact: None,
+        }
+    }
+
+    pub(crate) fn from_payload(payload: &'a EvaluationPayload) -> Self {
+        Self::builder(payload)
+            .selection_input(payload.selection_input.as_ref())
+            .sealed_evidence(payload.sealed_evidence.as_ref())
+            .artifact(payload.artifact.as_ref())
+            .build()
+    }
+
+    pub(crate) fn candidate(&self) -> &'a SubjectRef {
+        self.candidate
+    }
+
+    pub(crate) fn selection_input(&self) -> Option<&'a SelectionInput> {
+        self.selection_input
+    }
+
+    pub(crate) fn sealed_evidence(&self) -> Option<&'a SealedCandidateEvidence> {
+        self.sealed_evidence
+    }
+
+    pub(crate) fn artifact(&self) -> Option<&'a CandidateArtifact> {
+        self.artifact
+    }
+
+    fn parent_node_id(&self) -> Option<&'a str> {
+        self.sealed_evidence
+            .and_then(|sealed| sealed.coordinate.parent_node_id.as_deref())
+    }
+
+    pub(crate) fn compared_runs(&self) -> impl Iterator<Item = &'a SealedComparedRunEvidence> + 'a {
+        self.sealed_evidence
+            .into_iter()
+            .flat_map(|sealed| sealed.evaluations.iter())
+            .flat_map(|evaluation| evaluation.compared_runs.iter())
+    }
+
+    pub(crate) fn protocol_run_snapshot_count(&self) -> usize {
+        self.compared_runs()
+            .flat_map(|run| [run.baseline_run.as_ref(), run.treatment_run.as_ref()])
+            .flatten()
+            .filter(|snapshot| run_snapshot_has_protocol(snapshot))
+            .count()
+    }
+}
+
+pub(crate) struct CandidateCaseBuilder<'a> {
+    payload: &'a EvaluationPayload,
+    selection_input: Option<&'a SelectionInput>,
+    sealed_evidence: Option<&'a SealedCandidateEvidence>,
+    artifact: Option<&'a CandidateArtifact>,
+}
+
+impl<'a> CandidateCaseBuilder<'a> {
+    pub(crate) fn selection_input(mut self, value: Option<&'a SelectionInput>) -> Self {
+        self.selection_input = value;
+        self
+    }
+
+    pub(crate) fn sealed_evidence(mut self, value: Option<&'a SealedCandidateEvidence>) -> Self {
+        self.sealed_evidence = value;
+        self
+    }
+
+    pub(crate) fn artifact(mut self, value: Option<&'a CandidateArtifact>) -> Self {
+        self.artifact = value;
+        self
+    }
+
+    pub(crate) fn build(self) -> CandidateCase<'a> {
+        CandidateCase {
+            candidate: &self.payload.candidate,
+            selection_input: self.selection_input,
+            sealed_evidence: self.sealed_evidence,
+            artifact: self.artifact,
+        }
+    }
+}
+
+enum CandidateGrade {
+    Eligible(Item),
+    Excluded(SelectionProjectionFailure),
+}
+
+fn decision_grade(candidate: Candidate) -> Result<CandidateGrade, HistoryError> {
+    let subject = candidate.payload.candidate.clone();
+    let exclude = |kind, detail: String| {
+        SelectionProjectionFailure::committed(kind, Some(subject.clone()), Some(detail))
+            .map(CandidateGrade::Excluded)
+    };
+
+    if candidate.payload.procedure.as_str() != PROCEDURE_ID {
+        return exclude(
+            SelectionProjectionFailureKind::SelectionProcedureMismatch,
+            format!(
+                "selection_procedure_mismatch:want={PROCEDURE_ID},got={}",
+                candidate.payload.procedure.as_str()
+            ),
+        );
+    }
+
+    if candidate.payload.selection_input.is_none() {
+        return exclude(
+            SelectionProjectionFailureKind::MissingSelectionInput,
+            "traversal: missing SelectionInput".to_string(),
+        );
+    }
+    if !candidate.payload.verify_selection_input_binding()? {
+        return exclude(
+            SelectionProjectionFailureKind::SelectionInputBindingInvalid,
+            "traversal: SelectionInput hash binding invalid".to_string(),
+        );
+    }
+
+    let Some(root) = candidate.candidate_set_root.as_ref() else {
+        return exclude(
+            SelectionProjectionFailureKind::CandidateSetMembershipMissing,
+            "traversal: missing candidate-set root".to_string(),
+        );
+    };
+    let Some(membership) = candidate.candidate_set_membership.as_ref() else {
+        return exclude(
+            SelectionProjectionFailureKind::CandidateSetMembershipMissing,
+            "traversal: missing candidate-set membership proof".to_string(),
+        );
+    };
+    let membership = membership.as_inner();
+    if membership.candidate != candidate.payload.candidate
+        || membership.payload_hash != candidate.payload_hash
+    {
+        return exclude(
+            SelectionProjectionFailureKind::CandidateSetPayloadHashMismatch,
+            "traversal: candidate-set membership does not bind this payload hash".to_string(),
+        );
+    }
+    if !membership.proof.verify(root)? {
+        return exclude(
+            SelectionProjectionFailureKind::CandidateSetProofInvalid,
+            "traversal: candidate-set proof verification failed".to_string(),
+        );
+    }
+
+    let grade = candidate.payload.decision_grade_eligibility();
+    if !grade.eligible {
+        return exclude(
+            SelectionProjectionFailureKind::DecisionGradeIneligible,
+            format!("traversal: {}", grade.identity_gaps.join(",")),
+        );
+    }
+
+    Ok(CandidateGrade::Eligible(Item {
+        payload: candidate.payload,
+        source: candidate.source,
+        candidate_set_root: candidate.candidate_set_root,
+        candidate_set_membership: candidate.candidate_set_membership,
+    }))
+}
+
+fn traversal_decision(case: &CandidateCase<'_>) -> Option<SuccessorDecision> {
+    let input = case.selection_input()?;
+    let mut decision = decide_candidate(input.clone());
+    // History traversal is the parent-selection layer, not just a replay of the
+    // branch-evaluation keep/reject gate. `decide_candidate` preserves the
+    // candidate-local outcome/disposition; if that outcome did not itself select
+    // a branch, the traversal-selected candidate still becomes the successor
+    // coordinate under policies such as `explore_from_rejected`.
+    //
+    // Evalnomicon refs:
+    // - docs/workflow/evalnomicon/src/prototype1/selection-and-evaluation.md
+    // - docs/workflow/evalnomicon/drafts/runtime/child.md
+    // - docs/workflow/evalnomicon/chat-history/on-hyper-agents.md
+    if decision.selected_branch_id.is_none() {
+        decision.selected_branch_id = Some(input.candidate.branch_id.clone());
+        decision.rationale.push(format!(
+            "history traversal selected candidate as successor coordinate from generation {} with base_outcome={:?}",
+            input.candidate.generation,
+            decision.outcome
+        ));
+    }
+    Some(decision)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct PerformanceScore(i64);
+
+#[derive(Debug, Clone, Copy)]
+struct PerformanceBreakdown {
+    outcome_points: i64,
+    operational_points: i64,
+    protocol_points: i64,
+    imp_at_k_delta: Option<i64>,
+    imp_at_k_score_excluded: bool,
+}
+
+impl PerformanceBreakdown {
+    fn total(self) -> Option<PerformanceScore> {
+        let mut score = self
+            .outcome_points
+            .saturating_add(self.operational_points)
+            .saturating_add(self.protocol_points);
+        let Some(delta) = self.imp_at_k_delta else {
+            return if self.imp_at_k_score_excluded {
+                None
+            } else {
+                Some(PerformanceScore(score))
+            };
+        };
+        score = score.saturating_add(delta);
+        Some(PerformanceScore(score))
+    }
+}
+
+fn performance_score(case: CandidateCase<'_>, metrics: metric::Inputs) -> Option<PerformanceScore> {
+    performance_breakdown(case, metrics)?.total()
+}
+
+fn performance_score_with_set(
+    index: usize,
+    case: CandidateCase<'_>,
+    metrics: metric::Inputs,
+    metric_set: &selection_metrics::Set,
+) -> Option<PerformanceScore> {
+    let mut score = performance_score(case, metrics)?;
+    match metric_set.score_delta(index) {
+        Ok(delta) => {
+            score.0 = score.0.saturating_add(delta);
+            Some(score)
+        }
+        Err(_) => None,
+    }
+}
+
+fn performance_breakdown(
+    case: CandidateCase<'_>,
+    metrics: metric::Inputs,
+) -> Option<PerformanceBreakdown> {
+    let input = case.selection_input()?;
+    let decision = decide_candidate(input.clone());
+    let outcome_points = match decision.outcome {
+        SuccessorOutcome::Accepted => 10_000,
+        SuccessorOutcome::ExploreFrom => 5_000,
+        SuccessorOutcome::Stop if input.branch_disposition == BranchDisposition::Reject => 2_500,
+        SuccessorOutcome::Stop => 0,
+    };
+
+    let operational_points = input
+        .comparisons
+        .iter()
+        .filter_map(|comparison| comparison.child_metrics.as_ref())
+        .map(Summary::selection_points)
+        .sum();
+    let protocol_points = if metrics.includes_protocol() {
+        case.compared_runs()
+            .filter_map(|run| {
+                run.treatment_protocol.as_ref().map(|treatment| {
+                    treatment.selection_delta_points(run.baseline_protocol.as_ref())
+                })
+            })
+            .sum()
+    } else {
+        0
+    };
+
+    Some(PerformanceBreakdown {
+        outcome_points,
+        operational_points,
+        protocol_points,
+        imp_at_k_delta: Some(0),
+        imp_at_k_score_excluded: false,
+    })
+}
+
+fn performance_breakdown_with_set(
+    index: usize,
+    case: CandidateCase<'_>,
+    metrics: metric::Inputs,
+    metric_set: &selection_metrics::Set,
+) -> Option<PerformanceBreakdown> {
+    let mut breakdown = performance_breakdown(case, metrics)?;
+    match metric_set.score_delta(index) {
+        Ok(delta) => {
+            breakdown.imp_at_k_delta = Some(delta);
+            Some(breakdown)
+        }
+        Err(_) => {
+            breakdown.imp_at_k_delta = None;
+            breakdown.imp_at_k_score_excluded = true;
+            Some(breakdown)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OracleScore {
+    resolved: usize,
+    configured: usize,
+}
+
+impl OracleScore {
+    fn new(resolved: usize, configured: usize) -> Result<Self, HistoryError> {
+        if configured == 0 {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: "relative oracle scoring requires configured target instances".to_string(),
+            });
+        }
+        Ok(Self {
+            resolved,
+            configured,
+        })
+    }
+
+    fn rate(self) -> f64 {
+        self.resolved as f64 / self.configured as f64
+    }
+
+    fn summary(self) -> String {
+        format!("{}/{}", self.resolved, self.configured)
+    }
+
+    fn all_resolved(self) -> bool {
+        self.resolved == self.configured
+    }
+}
+
+impl PartialOrd for OracleScore {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for OracleScore {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let left = self.resolved as u128 * other.configured as u128;
+        let right = other.resolved as u128 * self.configured as u128;
+        left.cmp(&right)
+            .then_with(|| self.resolved.cmp(&other.resolved))
+            .then_with(|| other.configured.cmp(&self.configured))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OracleAssessment {
+    resolution: Option<OracleScore>,
+    score: Option<OracleScore>,
+    admitted: bool,
+}
+
+fn oracle_instance_set<'a>(
+    label: &str,
+    instances: impl IntoIterator<Item = &'a str>,
+) -> Result<BTreeSet<String>, HistoryError> {
+    let mut set = BTreeSet::new();
+    for instance in instances {
+        if instance.trim().is_empty() {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!("{label} instance id must not be empty"),
+            });
+        }
+        if !set.insert(instance.to_string()) {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!("duplicate {label} instance '{instance}'"),
+            });
+        }
+    }
+    Ok(set)
+}
+
+fn oracle_diagnostic_matches(
+    verdict: crate::mbe::Verdict,
+    diagnostic: crate::mbe::OracleDiagnostic,
+) -> bool {
+    use crate::mbe::{OracleDiagnostic, Verdict};
+
+    match verdict {
+        Verdict::Resolved => diagnostic == OracleDiagnostic::Resolved,
+        Verdict::Unresolved => matches!(
+            diagnostic,
+            OracleDiagnostic::UnresolvedTestsRan
+                | OracleDiagnostic::FixCompileFailed
+                | OracleDiagnostic::MissingFixResults
+                | OracleDiagnostic::InvalidInstanceReport
+                | OracleDiagnostic::MissingInstanceReport
+        ),
+        Verdict::EmptyPatch => diagnostic == OracleDiagnostic::EmptyPatch,
+        Verdict::Incomplete => diagnostic == OracleDiagnostic::Incomplete,
+        Verdict::Error => diagnostic == OracleDiagnostic::Error,
+        Verdict::NotSubmitted => diagnostic == OracleDiagnostic::NotSubmitted,
+    }
+}
+
+fn oracle_resolution(
+    case: &CandidateCase<'_>,
+    require_evidence: bool,
+    gate: OracleGate,
+    oracle_targets: &[String],
+) -> Result<Option<OracleScore>, HistoryError> {
+    let input = case
+        .selection_input()
+        .ok_or_else(|| HistoryError::InvalidSelectionDecision {
+            detail: "oracle policy requires selection input".to_string(),
+        })?;
+    let strict = gate == OracleGate::AllResolved;
+    let expected = if strict {
+        oracle_instance_set(
+            "committed oracle target",
+            oracle_targets.iter().map(String::as_str),
+        )?
+    } else {
+        BTreeSet::new()
+    };
+    let identities = case
+        .sealed_evidence()
+        .into_iter()
+        .flat_map(|sealed| sealed.evaluations.iter())
+        .filter_map(|evaluation| evaluation.eval_set_identity.as_ref())
+        .collect::<Vec<_>>();
+    let configured = if expected.is_empty() {
+        let mut configured = identities
+            .iter()
+            .flat_map(|identity| identity.instance_ids.iter().cloned())
+            .collect::<BTreeSet<_>>();
+        if configured.is_empty() {
+            configured.extend(
+                input
+                    .comparisons
+                    .iter()
+                    .map(|comparison| comparison.instance_id.clone()),
+            );
+        }
+        configured
+    } else {
+        if identities.is_empty() {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail:
+                    "oracle gate requires a sealed eval-set identity matching the admitted profile"
+                        .to_string(),
+            });
+        }
+        for identity in identities {
+            let declared = oracle_instance_set(
+                "sealed oracle target",
+                identity.instance_ids.iter().map(String::as_str),
+            )?;
+            if declared != expected {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "sealed oracle target set {declared:?} does not match admitted profile targets {expected:?}"
+                    ),
+                });
+            }
+        }
+        let compared = oracle_instance_set(
+            "selection-input oracle target",
+            input
+                .comparisons
+                .iter()
+                .map(|comparison| comparison.instance_id.as_str()),
+        )?;
+        if compared != expected {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "selection-input oracle target set {compared:?} does not match admitted profile targets {expected:?}"
+                ),
+            });
+        }
+        expected.clone()
+    };
+    if configured.is_empty() {
+        if require_evidence {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: "oracle policy requires configured target instances".to_string(),
+            });
+        }
+        return Ok(None);
+    }
+
+    let mut sealed_evaluations = BTreeMap::new();
+    for run in case.compared_runs() {
+        let Some(evaluation) = run.oracle_evaluation.as_ref() else {
+            continue;
+        };
+        let instance_id = run
+            .instance_id
+            .as_deref()
+            .unwrap_or(evaluation.evidence.instance_id.as_str());
+        if instance_id != evaluation.evidence.instance_id {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "oracle evaluation instance mismatch: compared run '{instance_id}' carried oracle instance '{}'",
+                    evaluation.evidence.instance_id
+                ),
+            });
+        }
+        if !configured.contains(instance_id) {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!("oracle evaluation for unknown target instance '{instance_id}'"),
+            });
+        }
+        if sealed_evaluations
+            .insert(instance_id.to_string(), evaluation)
+            .is_some()
+        {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!("duplicate oracle evaluation for instance '{instance_id}'"),
+            });
+        }
+    }
+
+    let mut input_evaluations = BTreeMap::new();
+    if strict || sealed_evaluations.is_empty() {
+        for comparison in &input.comparisons {
+            let Some(evaluation) = comparison.oracle_evaluation.as_ref() else {
+                continue;
+            };
+            if comparison.instance_id != evaluation.evidence.instance_id {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "oracle evaluation instance mismatch: comparison '{}' carried oracle instance '{}'",
+                        comparison.instance_id, evaluation.evidence.instance_id
+                    ),
+                });
+            }
+            if !configured.contains(&comparison.instance_id) {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "oracle evaluation for unknown target instance '{}'",
+                        comparison.instance_id
+                    ),
+                });
+            }
+            if input_evaluations
+                .insert(comparison.instance_id.clone(), evaluation)
+                .is_some()
+            {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "duplicate oracle evaluation for instance '{}'",
+                        comparison.instance_id
+                    ),
+                });
+            }
+        }
+    }
+
+    if strict && (sealed_evaluations.is_empty() || input_evaluations.is_empty()) {
+        return Err(HistoryError::InvalidSelectionDecision {
+            detail: "missing oracle evaluation from sealed evidence or selection input".to_string(),
+        });
+    }
+    if strict
+        && !sealed_evaluations.is_empty()
+        && !input_evaluations.is_empty()
+        && sealed_evaluations != input_evaluations
+    {
+        return Err(HistoryError::InvalidSelectionDecision {
+            detail: "sealed and selection-input oracle evaluations do not match".to_string(),
+        });
+    }
+    let evaluations = if sealed_evaluations.is_empty() {
+        input_evaluations
+    } else {
+        sealed_evaluations
+    };
+
+    if let Some(missing) = configured
+        .iter()
+        .find(|instance_id| !evaluations.contains_key(*instance_id))
+    {
+        if require_evidence {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!("missing oracle evaluation for configured instance '{missing}'"),
+            });
+        }
+    }
+
+    let mut resolved = 0;
+    for evaluation in evaluations.values() {
+        if strict && !oracle_diagnostic_matches(evaluation.evidence.verdict, evaluation.diagnostic)
+        {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "oracle verdict '{}' carried inconsistent diagnostic '{}' for instance '{}'",
+                    evaluation.evidence.verdict,
+                    evaluation.diagnostic,
+                    evaluation.evidence.instance_id
+                ),
+            });
+        }
+        if strict && evaluation.usable_for_selection != evaluation.diagnostic.usable_for_selection()
+        {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "oracle selection usability does not match diagnostic '{}' for instance '{}'",
+                    evaluation.diagnostic, evaluation.evidence.instance_id
+                ),
+            });
+        }
+        if evaluation.evidence.verdict == crate::mbe::Verdict::Resolved {
+            resolved += 1;
+        }
+    }
+    OracleScore::new(resolved, configured.len()).map(Some)
+}
+
+fn oracle_assessment(
+    case: &CandidateCase<'_>,
+    mode: OracleMode,
+    require_evidence: bool,
+    gate: OracleGate,
+    oracle_targets: &[String],
+) -> Result<OracleAssessment, HistoryError> {
+    if mode == OracleMode::RecordOnly && gate == OracleGate::Disabled {
+        return Ok(OracleAssessment {
+            resolution: None,
+            score: None,
+            admitted: true,
+        });
+    }
+
+    if gate == OracleGate::AllResolved && oracle_targets.is_empty() {
+        return Err(HistoryError::InvalidSelectionDecision {
+            detail: "all-resolved oracle gate requires committed profile targets".to_string(),
+        });
+    }
+    let resolution = oracle_resolution(
+        case,
+        require_evidence || gate == OracleGate::AllResolved,
+        gate,
+        oracle_targets,
+    )?;
+    let admitted = match gate {
+        OracleGate::Disabled => true,
+        OracleGate::AllResolved => resolution.is_some_and(OracleScore::all_resolved),
+    };
+    Ok(OracleAssessment {
+        resolution,
+        score: (mode == OracleMode::RelativeScore)
+            .then_some(resolution)
+            .flatten(),
+        admitted,
+    })
+}
+
+fn successful_child_counts(considered: &[EvaluationPayload]) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::<String, usize>::new();
+    for payload in considered {
+        let case = CandidateCase::from_payload(payload);
+        if traversal_decision(&case).is_none() {
+            continue;
+        }
+        let Some(parent_node_id) = case.parent_node_id() else {
+            continue;
+        };
+        *counts.entry(parent_node_id.to_string()).or_default() += 1;
+    }
+    counts
+}
+
+fn traversal_child_counts(
+    traversal: &TraversalEvidence,
+    considered: &[EvaluationPayload],
+) -> BTreeMap<String, usize> {
+    if traversal.child_counts.is_empty() {
+        successful_child_counts(considered)
+    } else {
+        traversal.child_counts.clone()
+    }
+}
+
+fn candidate_coordinate(payload: &EvaluationPayload) -> Option<(String, String)> {
+    let input = payload.selection_input.as_ref()?;
+    Some((
+        input.candidate.node_id.clone(),
+        input.candidate.branch_id.clone(),
+    ))
+}
+
+fn decision_grade_candidate_coordinate(
+    candidate: &Candidate,
+) -> Result<Option<(String, String)>, HistoryError> {
+    match decision_grade(candidate.clone())? {
+        CandidateGrade::Eligible(item) => Ok(candidate_coordinate(&item.payload)),
+        CandidateGrade::Excluded(_) => Ok(None),
+    }
+}
+
+fn candidate_has_successful_children(item: &Item, child_counts: &BTreeMap<String, usize>) -> bool {
+    let case = CandidateCase::from_payload(&item.payload);
+    let Some(input) = case.selection_input() else {
+        return false;
+    };
+    child_counts
+        .get(&input.candidate.node_id)
+        .copied()
+        .unwrap_or_default()
+        > 0
+}
+
+fn selection_child_count(case: CandidateCase<'_>, child_counts: &BTreeMap<String, usize>) -> usize {
+    let own_child_count = case
+        .selection_input()
+        .and_then(|input| child_counts.get(&input.candidate.node_id).copied())
+        .unwrap_or_default();
+    let parent_child_count = case
+        .parent_node_id()
+        .and_then(|parent_node_id| child_counts.get(parent_node_id).copied())
+        .unwrap_or_default();
+    own_child_count.saturating_add(parent_child_count)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct TraversalScore {
+    oracle: Option<OracleScore>,
+    performance: PerformanceScore,
+    frontier_delta: i64,
+    exploration_pressure: usize,
+    generation: u32,
+}
+
+impl TraversalScore {
+    fn for_case(
+        case: &CandidateCase<'_>,
+        index: usize,
+        child_counts: &BTreeMap<String, usize>,
+        max_performance: Option<PerformanceScore>,
+        metrics: metric::Inputs,
+        metric_set: &selection_metrics::Set,
+        oracle: OracleMode,
+        require_evidence: bool,
+        gate: OracleGate,
+        oracle_targets: &[String],
+    ) -> Result<Option<Self>, HistoryError> {
+        let Some(input) = case.selection_input() else {
+            return Ok(None);
+        };
+        let Some(performance) = performance_score_with_set(index, *case, metrics, metric_set)
+        else {
+            return Ok(None);
+        };
+        let frontier_delta = max_performance
+            .map(|max| performance.0 - max.0)
+            .unwrap_or_default();
+        let child_count = selection_child_count(*case, child_counts);
+        let assessment = oracle_assessment(case, oracle, require_evidence, gate, oracle_targets)?;
+        if !assessment.admitted {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            oracle: assessment.score,
+            performance,
+            frontier_delta,
+            exploration_pressure: usize::MAX.saturating_sub(child_count),
+            generation: input.candidate.generation,
+        }))
+    }
+}
+
+pub(crate) struct StrategySelection {
+    chosen: ChosenPayload,
+    rationale: Vec<String>,
+}
+
+struct ChosenPayload {
+    payload: EvaluationPayload,
+    decision: SuccessorDecision,
+    source: Source,
+}
+
+#[derive(Debug, Default)]
+struct PatchEligibility {
+    excluded: BTreeSet<usize>,
+}
+
+impl PatchEligibility {
+    fn admits(&self, index: usize) -> bool {
+        !self.excluded.contains(&index)
+    }
+}
+
+fn patch_eligibility(items: &[Item], gate: PatchGate) -> Result<PatchEligibility, HistoryError> {
+    if gate == PatchGate::Disabled {
+        return Ok(PatchEligibility::default());
+    }
+
+    let mut eligibility = PatchEligibility::default();
+    let mut config_hash = None;
+    for (index, item) in items.iter().enumerate() {
+        let case = CandidateCase::from_payload(&item.payload);
+        let review = item.payload.patch_review.as_ref().ok_or_else(|| {
+            HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "reviewed-admissible patch gate requires candidate review for '{}'",
+                    item.payload.candidate.as_str()
+                ),
+            }
+        })?;
+        validate_patch_review(&case, review)?;
+        if config_hash
+            .as_ref()
+            .is_some_and(|expected| expected != &review.config_hash)
+        {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: "strict patch reviews do not share one reviewer configuration".to_string(),
+            });
+        }
+        config_hash.get_or_insert_with(|| review.config_hash.clone());
+        if review.verdict != PatchVerdict::Admissible {
+            eligibility.excluded.insert(index);
+        }
+    }
+    Ok(eligibility)
+}
+
+fn validate_patch_review(
+    case: &CandidateCase<'_>,
+    review: &PatchReview,
+) -> Result<(), HistoryError> {
+    let invalid = |detail: String| HistoryError::InvalidSelectionDecision { detail };
+    if review.schema_version != 2 || review.procedure_id != PATCH_REVIEW_PROCEDURE_ID {
+        return Err(invalid(format!(
+            "candidate patch review procedure mismatch for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+    if review.citation.ref_id != candidate_review_ref(&review.candidate.branch_id)
+        || review.citation.content_hash.is_none()
+        || review.citation.record_name.as_deref() != Some(PATCH_REVIEW_RECORD_NAME)
+    {
+        return Err(invalid(format!(
+            "candidate patch review citation is incomplete for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+    let input = case
+        .selection_input()
+        .ok_or_else(|| invalid("candidate patch review requires selection input".to_string()))?;
+    let artifact = case
+        .artifact()
+        .ok_or_else(|| invalid("candidate patch review requires candidate artifact".to_string()))?;
+    if review.candidate != input.candidate
+        || review.candidate.node_id != artifact.node.node_id
+        || review.candidate.branch_id != artifact.node.branch_id
+        || review.candidate.generation != artifact.node.generation
+    {
+        return Err(invalid(format!(
+            "candidate patch review coordinate mismatch for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+    let derived_id = artifact
+        .resolved
+        .branch
+        .derived_artifact_id
+        .as_ref()
+        .ok_or_else(|| {
+            invalid("candidate patch review requires derived artifact id".to_string())
+        })?;
+    let node_id =
+        artifact.node.derived_artifact_id.as_ref().ok_or_else(|| {
+            invalid("candidate patch review requires node artifact id".to_string())
+        })?;
+    if &review.artifact_id != derived_id || &review.artifact_id != node_id || derived_id != node_id
+    {
+        return Err(invalid(format!(
+            "candidate patch review artifact binding mismatch for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+    let surface = artifact
+        .artifact_surface
+        .as_ref()
+        .ok_or_else(|| invalid("candidate patch review requires artifact surface".to_string()))?;
+    let surface_hash =
+        HistoryHash::of_domain_json("prototype1.history.artifact_surface.v1", surface)?;
+    if review.artifact_surface_hash != surface_hash {
+        return Err(invalid(format!(
+            "candidate patch review surface hash mismatch for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+    if review.changes.is_empty() {
+        return Err(invalid(format!(
+            "candidate patch review change set is empty for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+    let mut relpaths = review
+        .changes
+        .iter()
+        .map(|change| change.relpath.clone())
+        .collect::<Vec<_>>();
+    let recorded_paths = relpaths.clone();
+    relpaths.sort();
+    relpaths.dedup();
+    if relpaths != recorded_paths {
+        return Err(invalid(format!(
+            "candidate patch review change paths are not canonical for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+    let change_set_hash = HistoryHash::of_domain_json(
+        "prototype1.history.candidate_patch_change_set.v1",
+        &review.changes,
+    )?;
+    if review.change_set_hash != change_set_hash {
+        return Err(invalid(format!(
+            "candidate patch review change-set hash mismatch for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+    if let Some(harness) = artifact.harness.as_ref() {
+        if harness.changed_paths() != relpaths
+            || harness.artifact_surface() != surface
+            || harness.artifact().is_none_or(|evidence| {
+                &evidence.derived_artifact_id != derived_id
+                    || artifact.node.base_artifact_id.as_ref() != Some(&evidence.base_artifact_id)
+            })
+        {
+            return Err(invalid(format!(
+                "candidate patch review harness change-set binding mismatch for '{}'",
+                case.candidate().as_str()
+            )));
+        }
+    } else {
+        let evidence = artifact.surface.as_ref().ok_or_else(|| {
+            invalid(format!(
+                "candidate patch review requires typed single-file surface evidence for '{}'",
+                case.candidate().as_str()
+            ))
+        })?;
+        evidence.verify_integrity()?;
+        if relpaths.as_slice() != [artifact.resolved.target_relpath.clone()]
+            || evidence.target_relpath != artifact.resolved.target_relpath
+            || evidence.source_content_hash != artifact.resolved.source_content_hash
+            || evidence.proposed_content_hash != artifact.resolved.branch.proposed_content_hash
+        {
+            return Err(invalid(format!(
+                "candidate patch review single-file change-set mismatch for '{}'",
+                case.candidate().as_str()
+            )));
+        }
+    }
+    let primary = review
+        .changes
+        .iter()
+        .find(|change| change.relpath == artifact.resolved.target_relpath)
+        .ok_or_else(|| {
+            invalid(format!(
+                "candidate patch review omits legacy anchor for '{}'",
+                case.candidate().as_str()
+            ))
+        })?;
+    let source_hash = content_sha256(&artifact.resolved.source_content);
+    let proposed_hash = content_sha256(&artifact.resolved.branch.proposed_content);
+    if primary.source_content_hash.as_deref() != Some(source_hash.as_str())
+        || primary.source_content_hash.as_deref()
+            != Some(artifact.resolved.source_content_hash.as_str())
+        || primary.proposed_content_hash.as_deref() != Some(proposed_hash.as_str())
+        || primary.proposed_content_hash.as_deref()
+            != Some(artifact.resolved.branch.proposed_content_hash.as_str())
+    {
+        return Err(invalid(format!(
+            "candidate patch review primary content hash mismatch for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+
+    let sealed = case.sealed_evidence().ok_or_else(|| {
+        invalid("candidate patch review requires sealed evaluation evidence".to_string())
+    })?;
+    let evaluations = sealed
+        .evaluations
+        .iter()
+        .filter(|evaluation| evaluation.branch_id == review.candidate.branch_id)
+        .collect::<Vec<_>>();
+    let [evaluation] = evaluations.as_slice() else {
+        return Err(invalid(format!(
+            "candidate patch review requires exactly one matching evaluation for branch '{}'",
+            review.candidate.branch_id
+        )));
+    };
+    let artifact_hash = evaluation
+        .evaluation_artifact_citation
+        .as_ref()
+        .and_then(|citation| citation.content_hash.as_ref());
+    let report_hash = evaluation.primary_report_citation.content_hash.as_ref();
+    if artifact_hash != Some(&review.evaluation_hash)
+        || report_hash != Some(&review.evaluation_hash)
+    {
+        return Err(invalid(format!(
+            "candidate patch review evaluation hash mismatch for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+
+    let has_empty = review.rationale.is_empty()
+        || review
+            .rationale
+            .iter()
+            .chain(review.blocking_findings.iter())
+            .chain(review.missing_evidence.iter())
+            .any(|value| value.trim().is_empty());
+    let shape_ok = match review.verdict {
+        PatchVerdict::Admissible => {
+            review.confidence != Confidence::Low
+                && review.blocking_findings.is_empty()
+                && review.missing_evidence.is_empty()
+        }
+        PatchVerdict::Rejected => !review.blocking_findings.is_empty(),
+        PatchVerdict::Inconclusive => !review.missing_evidence.is_empty(),
+    };
+    if has_empty || !shape_ok {
+        return Err(invalid(format!(
+            "candidate patch review verdict is contradictory for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+    Ok(())
+}
+
+fn content_sha256(content: &str) -> String {
+    format!("{:x}", Sha256::digest(content.as_bytes()))
+}
+
+fn select_frontier_max(
+    items: &[Item],
+    child_counts: &BTreeMap<String, usize>,
+    metric_set: &selection_metrics::Set,
+    seed: u64,
+    normalize_frontier: bool,
+    metrics: metric::Inputs,
+    oracle: OracleMode,
+    require_evidence: bool,
+    gate: OracleGate,
+    patch_gate: PatchGate,
+    oracle_targets: &[String],
+) -> Result<Option<StrategySelection>, HistoryError> {
+    let patch = patch_eligibility(items, patch_gate)?;
+    let max_performance = if normalize_frontier {
+        items
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| patch.admits(*index))
+            .map(|(index, item)| (index, CandidateCase::from_payload(&item.payload)))
+            .filter_map(|(index, case)| {
+                performance_score_with_set(index, case, metrics, metric_set)
+            })
+            .max()
+    } else {
+        None
+    };
+
+    let mut best = None::<ScoredPayload>;
+    for (index, item) in items.iter().enumerate() {
+        if !patch.admits(index) {
+            continue;
+        }
+        let payload = item.payload.clone();
+        let case = CandidateCase::from_payload(&payload);
+        let Some(selected) = traversal_decision(&case) else {
+            continue;
+        };
+        let Some(score) = TraversalScore::for_case(
+            &case,
+            index,
+            child_counts,
+            max_performance,
+            metrics,
+            metric_set,
+            oracle,
+            require_evidence,
+            gate,
+            oracle_targets,
+        )?
+        else {
+            continue;
+        };
+        let tie = tie_break_key(seed, index, &payload)?;
+        let scored = ScoredPayload {
+            payload,
+            score,
+            tie,
+            decision: selected,
+            source: item.source.clone(),
+        };
+        if best
+            .as_ref()
+            .is_none_or(|current| scored.orders_after(current))
+        {
+            best = Some(scored);
+        }
+    }
+
+    Ok(best.map(|best| {
+        let mut rationale = vec![
+            "traversal_strategy=frontier_max".to_string(),
+            format!("frontier_max_normalize_frontier={normalize_frontier}"),
+            format!("metric_inputs={}", metric_inputs_name(metrics)),
+            format!("oracle_mode={}", oracle_mode_name(oracle)),
+            format!("oracle_require_evidence={require_evidence}"),
+            format!("oracle_gate={}", oracle_gate_name(gate)),
+        ];
+        if patch_gate != PatchGate::Disabled {
+            rationale.push(format!("patch_gate={}", patch_gate_name(patch_gate)));
+        }
+        if let Some(max_performance) = max_performance {
+            rationale.push(format!(
+                "frontier_normalization=max_performance_score={}",
+                max_performance.0
+            ));
+        }
+        if let Some(oracle_score) = best.score.oracle {
+            rationale.push(format!("oracle_resolved_rate={}", oracle_score.summary()));
+        }
+        StrategySelection {
+            chosen: ChosenPayload {
+                payload: best.payload,
+                decision: best.decision,
+                source: best.source,
+            },
+            rationale,
+        }
+    }))
+}
+
+#[derive(Debug, Clone)]
+struct ScoreChildPropWeight {
+    index: usize,
+    performance: PerformanceScore,
+    child_count: usize,
+    alpha: f64,
+    exploitation: f64,
+    exploration: f64,
+    weight: f64,
+    decision: SuccessorDecision,
+}
+
+struct ScoreChildPropCalculation {
+    weights: Vec<ScoreChildPropWeight>,
+    alpha_mid: f64,
+    oracle_used_for_alpha: bool,
+    resolutions: BTreeMap<usize, OracleScore>,
+    exclusions: BTreeMap<usize, String>,
+}
+
+struct CumulativeRange {
+    index: usize,
+    lower: f64,
+    upper: f64,
+    sample_hit: bool,
+}
+
+fn select_score_child_prop(
+    items: &[Item],
+    child_counts: &BTreeMap<String, usize>,
+    metric_set: &selection_metrics::Set,
+    seed: u64,
+    top_m: usize,
+    lambda_millis: u32,
+    metrics: metric::Inputs,
+    oracle: OracleMode,
+    require_evidence: bool,
+    gate: OracleGate,
+    patch_gate: PatchGate,
+    oracle_targets: &[String],
+) -> Result<Option<StrategySelection>, HistoryError> {
+    let calculation = score_child_prop_calculation_with_set(
+        items,
+        child_counts,
+        metric_set,
+        top_m,
+        lambda_millis,
+        metrics,
+        oracle,
+        require_evidence,
+        gate,
+        patch_gate,
+        oracle_targets,
+    )?;
+    let weights = &calculation.weights;
+    if weights.is_empty() {
+        return Ok(None);
+    }
+
+    let total_weight: f64 = weights.iter().map(|weight| weight.weight).sum();
+    let sample = sample_unit(seed, items)?;
+    let selected = sample_weighted_index(weights, total_weight, sample)
+        .unwrap_or_else(|| weights.last().expect("nonempty weights").index);
+    let weight = weights
+        .iter()
+        .find(|weight| weight.index == selected)
+        .expect("sampled weight");
+    let payload = items[selected].payload.clone();
+    let chosen = ChosenPayload {
+        payload,
+        decision: weight.decision.clone(),
+        source: items[selected].source.clone(),
+    };
+    let lambda = lambda_millis as f64 / 1_000.0;
+    let mut rationale = vec![
+        "traversal_strategy=score_child_prop".to_string(),
+        format!("score_child_prop_top_m={top_m}"),
+        format!("score_child_prop_lambda={lambda:.3}"),
+        format!("metric_inputs={}", metric_inputs_name(metrics)),
+        format!("oracle_mode={}", oracle_mode_name(oracle)),
+        format!("oracle_require_evidence={require_evidence}"),
+        format!("oracle_gate={}", oracle_gate_name(gate)),
+    ];
+    if patch_gate != PatchGate::Disabled {
+        rationale.push(format!("patch_gate={}", patch_gate_name(patch_gate)));
+    }
+    rationale.extend([
+        format!("score_child_prop_total_weight={total_weight:.9}"),
+        format!("score_child_prop_sample={sample:.9}"),
+        format!("score_child_prop_selected_weight={:.9}", weight.weight),
+        format!(
+            "score_child_prop_selected_components=performance={},child_count={},alpha={:.9},exploitation={:.9},exploration={:.9}",
+            weight.performance.0,
+            weight.child_count,
+            weight.alpha,
+            weight.exploitation,
+            weight.exploration
+        ),
+    ]);
+    if let Some(oracle_score) = calculation.resolutions.get(&selected) {
+        rationale.push(format!("oracle_resolved_rate={}", oracle_score.summary()));
+    }
+
+    Ok(Some(StrategySelection { chosen, rationale }))
+}
+
+#[cfg(test)]
+fn score_child_prop_weights(
+    items: &[Item],
+    child_counts: &BTreeMap<String, usize>,
+    top_m: usize,
+    lambda_millis: u32,
+    metrics: metric::Inputs,
+    oracle: OracleMode,
+    require_evidence: bool,
+) -> Result<Vec<ScoreChildPropWeight>, HistoryError> {
+    let metric_set = metric_set_for_items(selection_metrics::Policy::default(), items)?;
+    score_child_prop_weights_with_set(
+        items,
+        child_counts,
+        &metric_set,
+        top_m,
+        lambda_millis,
+        metrics,
+        oracle,
+        require_evidence,
+        OracleGate::Disabled,
+        PatchGate::Disabled,
+        &[],
+    )
+}
+
+fn score_child_prop_weights_with_set(
+    items: &[Item],
+    child_counts: &BTreeMap<String, usize>,
+    metric_set: &selection_metrics::Set,
+    top_m: usize,
+    lambda_millis: u32,
+    metrics: metric::Inputs,
+    oracle: OracleMode,
+    require_evidence: bool,
+    gate: OracleGate,
+    patch_gate: PatchGate,
+    oracle_targets: &[String],
+) -> Result<Vec<ScoreChildPropWeight>, HistoryError> {
+    score_child_prop_calculation_with_set(
+        items,
+        child_counts,
+        metric_set,
+        top_m,
+        lambda_millis,
+        metrics,
+        oracle,
+        require_evidence,
+        gate,
+        patch_gate,
+        oracle_targets,
+    )
+    .map(|calculation| calculation.weights)
+}
+
+fn score_child_prop_calculation_with_set(
+    items: &[Item],
+    child_counts: &BTreeMap<String, usize>,
+    metric_set: &selection_metrics::Set,
+    top_m: usize,
+    lambda_millis: u32,
+    metrics: metric::Inputs,
+    oracle: OracleMode,
+    require_evidence: bool,
+    gate: OracleGate,
+    patch_gate: PatchGate,
+    oracle_targets: &[String],
+) -> Result<ScoreChildPropCalculation, HistoryError> {
+    let patch = patch_eligibility(items, patch_gate)?;
+    let mut selectable = Vec::new();
+    let mut resolutions = BTreeMap::new();
+    let mut exclusions = BTreeMap::new();
+    for (index, item) in items.iter().enumerate() {
+        let case = CandidateCase::from_payload(&item.payload);
+        if !patch.admits(index) {
+            exclusions.insert(index, "patch_gate_not_satisfied".to_string());
+            continue;
+        }
+        let Some(decision) = traversal_decision(&case) else {
+            continue;
+        };
+        let Some(performance) = performance_score_with_set(index, case, metrics, metric_set) else {
+            continue;
+        };
+        if case.selection_input().is_none() {
+            continue;
+        }
+        let child_count = selection_child_count(case, child_counts);
+        let assessment = oracle_assessment(&case, oracle, require_evidence, gate, oracle_targets)?;
+        if let Some(resolution) = assessment.resolution {
+            resolutions.insert(index, resolution);
+        }
+        if !assessment.admitted {
+            exclusions.insert(index, "oracle_gate_not_satisfied".to_string());
+            continue;
+        }
+        selectable.push((index, performance, assessment.score, child_count, decision));
+    }
+
+    if selectable.is_empty() {
+        return Ok(ScoreChildPropCalculation {
+            weights: Vec::new(),
+            alpha_mid: 0.0,
+            oracle_used_for_alpha: false,
+            resolutions,
+            exclusions,
+        });
+    }
+
+    let min_performance = selectable
+        .iter()
+        .map(|(_, performance, _, _, _)| performance.0)
+        .min()
+        .expect("nonempty selectable");
+    let max_performance = selectable
+        .iter()
+        .map(|(_, performance, _, _, _)| performance.0)
+        .max()
+        .expect("nonempty selectable");
+    let performance_span = max_performance.saturating_sub(min_performance);
+    let performance_alpha = |performance: PerformanceScore| {
+        if performance_span == 0 {
+            0.5
+        } else {
+            (performance.0 - min_performance) as f64 / performance_span as f64
+        }
+    };
+    let oracle_min_max = selectable
+        .iter()
+        .filter_map(|(_, _, oracle_score, _, _)| *oracle_score)
+        .fold(None, |acc, score| match acc {
+            None => Some((score, score)),
+            Some((min, max)) => Some((min.min(score), max.max(score))),
+        });
+    let oracle_scores_differ = oracle_min_max.is_some_and(|(min, max)| min != max);
+    let oracle_alpha = |score: OracleScore| {
+        let Some((min, max)) = oracle_min_max else {
+            return 0.5;
+        };
+        let span = max.rate() - min.rate();
+        if span == 0.0 {
+            0.5
+        } else {
+            (score.rate() - min.rate()) / span
+        }
+    };
+    let alpha = |performance: PerformanceScore, oracle_score: Option<OracleScore>| {
+        if oracle_scores_differ {
+            oracle_score.map(oracle_alpha).unwrap_or(0.5)
+        } else {
+            performance_alpha(performance)
+        }
+    };
+
+    let mut ranked_alpha: Vec<f64> = selectable
+        .iter()
+        .map(|(_, performance, oracle_score, _, _)| alpha(*performance, *oracle_score))
+        .collect();
+    ranked_alpha.sort_by(|a, b| b.total_cmp(a));
+    let frontier_count = top_m.max(1).min(ranked_alpha.len());
+    let alpha_mid = ranked_alpha
+        .iter()
+        .take(frontier_count)
+        .copied()
+        .sum::<f64>()
+        / frontier_count as f64;
+    let lambda = lambda_millis as f64 / 1_000.0;
+
+    let weights = selectable
+        .into_iter()
+        .map(
+            |(index, performance, oracle_score, child_count, decision)| {
+                let alpha = alpha(performance, oracle_score);
+                let exploitation = sigmoid(lambda * (alpha - alpha_mid));
+                let exploration = 1.0 / (1.0 + child_count as f64);
+                let weight = exploitation * exploration;
+                ScoreChildPropWeight {
+                    index,
+                    performance,
+                    child_count,
+                    alpha,
+                    exploitation,
+                    exploration,
+                    weight,
+                    decision,
+                }
+            },
+        )
+        .collect::<Vec<_>>();
+    Ok(ScoreChildPropCalculation {
+        weights,
+        alpha_mid,
+        oracle_used_for_alpha: oracle_scores_differ,
+        resolutions,
+        exclusions,
+    })
+}
+
+fn cumulative_ranges(
+    weights: &[ScoreChildPropWeight],
+    total_weight: f64,
+    sample: Option<f64>,
+) -> Vec<CumulativeRange> {
+    let threshold = sample
+        .filter(|_| total_weight > 0.0 && total_weight.is_finite())
+        .map(|sample| sample * total_weight);
+    let mut cumulative = 0.0;
+    weights
+        .iter()
+        .map(|weight| {
+            let lower = cumulative;
+            cumulative += weight.weight;
+            CumulativeRange {
+                index: weight.index,
+                lower,
+                upper: cumulative,
+                sample_hit: threshold
+                    .is_some_and(|threshold| threshold >= lower && threshold <= cumulative),
+            }
+        })
+        .collect()
+}
+
+fn exclusion_reason(
+    has_selection_input: bool,
+    has_decision: bool,
+    breakdown: &Option<PerformanceBreakdown>,
+    oracle_gate: Option<&str>,
+) -> Option<String> {
+    if !has_selection_input {
+        return Some("selection_input_missing".to_string());
+    }
+    if !has_decision {
+        return Some("decision_not_recorded".to_string());
+    }
+    if let Some(reason) = oracle_gate {
+        return Some(reason.to_string());
+    }
+    if breakdown
+        .as_ref()
+        .is_some_and(|breakdown| breakdown.imp_at_k_score_excluded)
+    {
+        return Some("imp_at_k_score_excluded".to_string());
+    }
+    if breakdown.is_none() {
+        return Some("performance_not_recorded".to_string());
+    }
+    None
+}
+
+#[cfg(test)]
+fn metric_set_for_items(
+    policy: selection_metrics::Policy,
+    items: &[Item],
+) -> Result<selection_metrics::Set, HistoryError> {
+    let considered = items
+        .iter()
+        .map(|item| item.payload.clone())
+        .collect::<Vec<_>>();
+    let considered_sources = items
+        .iter()
+        .map(|item| item.source.traversal_candidate_source())
+        .collect::<Vec<_>>();
+    selection_metrics::Set::from_considered(policy, &considered, &considered_sources)
+}
+
+fn metric_inputs_name(inputs: metric::Inputs) -> &'static str {
+    match inputs {
+        metric::Inputs::Operational => "operational",
+        metric::Inputs::OperationalAndProtocol => "operational_and_protocol",
+    }
+}
+
+fn oracle_mode_name(mode: OracleMode) -> &'static str {
+    match mode {
+        OracleMode::RecordOnly => "record_only",
+        OracleMode::RelativeScore => "relative_score",
+    }
+}
+
+fn oracle_gate_name(gate: OracleGate) -> &'static str {
+    match gate {
+        OracleGate::Disabled => "disabled",
+        OracleGate::AllResolved => "all-resolved",
+    }
+}
+
+fn patch_gate_name(gate: PatchGate) -> &'static str {
+    match gate {
+        PatchGate::Disabled => "disabled",
+        PatchGate::ReviewedAdmissible => "reviewed-admissible",
+    }
+}
+
+fn sigmoid(x: f64) -> f64 {
+    1.0 / (1.0 + (-x).exp())
+}
+
+fn sample_unit(seed: u64, items: &[Item]) -> Result<f64, HistoryError> {
+    let mut hasher = Sha256::new();
+    hasher.update(seed.to_le_bytes());
+    hasher.update(b"successor-selection:history-traversal:score-child-prop:v1");
+    for item in items {
+        let payload = &item.payload;
+        hasher.update(payload.payload_hash()?.as_str().as_bytes());
+        hasher.update(payload.candidate.as_str().as_bytes());
+    }
+    let digest: [u8; 32] = hasher.finalize().into();
+    let mut bytes = [0_u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    let value = u64::from_le_bytes(bytes);
+    Ok(value as f64 / (u64::MAX as f64 + 1.0))
+}
+
+fn sample_weighted_index(
+    weights: &[ScoreChildPropWeight],
+    total_weight: f64,
+    sample: f64,
+) -> Option<usize> {
+    if total_weight <= 0.0 || !total_weight.is_finite() {
+        let slot = (sample * weights.len() as f64).floor() as usize;
+        return weights
+            .get(slot.min(weights.len().saturating_sub(1)))
+            .map(|weight| weight.index);
+    }
+
+    let threshold = sample * total_weight;
+    let mut cumulative = 0.0;
+    for weight in weights {
+        cumulative += weight.weight;
+        if threshold <= cumulative {
+            return Some(weight.index);
+        }
+    }
+    weights.last().map(|weight| weight.index)
+}
+
+fn run_snapshot_has_protocol(snapshot: &SealedRunEvidence) -> bool {
+    snapshot.protocol.anchor_path.is_some() || !snapshot.protocol.artifacts.is_empty()
+}
+
+#[derive(Debug, Default)]
+struct CandidateCaseEvidenceSummary {
+    candidates: usize,
+    sealed_candidates: usize,
+    artifacts: usize,
+    compared_runs: usize,
+    protocol_run_snapshots: usize,
+}
+
+impl CandidateCaseEvidenceSummary {
+    fn from_considered(considered: &[EvaluationPayload]) -> Self {
+        let mut summary = Self::default();
+        for payload in considered {
+            let case = CandidateCase::from_payload(payload);
+            if !case.candidate().as_str().is_empty() {
+                summary.candidates += 1;
+            }
+            if case.sealed_evidence().is_some() {
+                summary.sealed_candidates += 1;
+            }
+            if case.artifact().is_some() {
+                summary.artifacts += 1;
+            }
+            summary.compared_runs += case.compared_runs().count();
+            summary.protocol_run_snapshots += case.protocol_run_snapshot_count();
+        }
+        summary
+    }
+
+    fn rationale(&self) -> String {
+        format!(
+            "candidate_case_evidence=candidates={},sealed_candidates={},artifacts={},compared_runs={},protocol_run_snapshots={}",
+            self.candidates,
+            self.sealed_candidates,
+            self.artifacts,
+            self.compared_runs,
+            self.protocol_run_snapshots
+        )
+    }
+}
+
+struct ScoredPayload {
+    payload: EvaluationPayload,
+    score: TraversalScore,
+    tie: [u8; 32],
+    decision: SuccessorDecision,
+    source: Source,
+}
+
+impl ScoredPayload {
+    fn orders_after(&self, other: &Self) -> bool {
+        self.score > other.score || (self.score == other.score && self.tie > other.tie)
+    }
+}
+
+fn tie_break_key(
+    seed: u64,
+    index: usize,
+    payload: &EvaluationPayload,
+) -> Result<[u8; 32], HistoryError> {
+    let mut hasher = Sha256::new();
+    hasher.update(seed.to_le_bytes());
+    hasher.update(index.to_le_bytes());
+    hasher.update(payload.payload_hash()?.as_str().as_bytes());
+    hasher.update(payload.candidate.as_str().as_bytes());
+    Ok(hasher.finalize().into())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use crate::record::SubmissionArtifactState;
+    use crate::{
+        OperationalRunMetrics, PatchApplyState,
+        cli::prototype1_state::{
+            edit_surface::harness_request::child::ArtifactEvidence,
+            evidence::PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID,
+            history::{
+                ArtifactSurface, CHILD_CHANNEL_TERMINAL_RESULT_RECORD, CandidateArtifact,
+                CandidateCoordinate, CandidateLifecycle, HistoryCandidate, HistoryCandidateSource,
+                HistoryCandidates, HistoryHash, LineageId, ProcedureRef, SealedCandidateEvidence,
+                SealedComparedRunEvidence, SealedEvaluationEvidence, SealedEvidenceCitation,
+                SealedRuntimeEvidence, SelectionDecisionEntry, SelectionScope, SubjectRef,
+                TraversalEvidence,
+            },
+            parent::ChildPlanFiles,
+        },
+        intervention::{
+            Prototype1NodeRecord, Prototype1NodeStatus, ResolvedTreatmentBranch,
+            TreatmentBranchNode, TreatmentBranchStatus,
+        },
+        successor_selection::{CandidateRef, RunComparison},
+    };
+
+    use super::*;
+
+    #[test]
+    fn oracle_gate_preserves_legacy_missing_performance_reason() {
+        assert_eq!(
+            exclusion_reason(true, true, &None, None).as_deref(),
+            Some("performance_not_recorded")
+        );
+        assert_eq!(
+            exclusion_reason(true, true, &None, Some("oracle_gate_not_satisfied"),).as_deref(),
+            Some("oracle_gate_not_satisfied")
+        );
+    }
+
+    #[test]
+    fn traversal_excludes_missing_selection_input() {
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![candidate_from_payload(payload_without_selection_input(
+                "missing-input",
+                "branch-missing",
+                0,
+            ))],
+        };
+
+        let selection =
+            select_from_history(candidates, 0, StrategyKind::default()).expect("traversal");
+
+        assert!(selection.is_none());
+    }
+
+    #[test]
+    fn projection_only_failure_constructs_no_selection_receipt() {
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![candidate_from_payload(payload_without_selection_input(
+                "missing-input",
+                "branch-missing",
+                0,
+            ))],
+        };
+        let strategy = StrategyKind::score_child_prop();
+
+        let attempt = select_attempt_with_policy(
+            Candidates::from_history(candidates),
+            0,
+            strategy,
+            selection_metrics::Policy::default(),
+            &[],
+        )
+        .expect("projection-only failure completes selection");
+        let SelectionAttempt::NoSelection(receipt) = attempt else {
+            panic!("missing selection input must not select a successor")
+        };
+        assert!(receipt.considered.is_empty());
+        assert_eq!(receipt.projection_failures.len(), 1);
+
+        let entry = SelectionDecisionEntry::new_no_selection_with_traversal_metrics(
+            ProcedureRef::new(HISTORY_TRAVERSAL_PROCEDURE_ID),
+            SelectionScope::all_admitted_candidates(),
+            receipt.considered,
+            receipt.considered_sources,
+            receipt.projection_failures,
+            Some(TraversalEvidence {
+                seed: 0,
+                strategy,
+                oracle_targets: Vec::new(),
+                selected_source: None,
+                child_counts: receipt.child_counts,
+            }),
+            receipt.metrics,
+        )
+        .expect("projection-only no-selection receipt");
+
+        assert!(entry.candidate_set.is_none());
+        assert_eq!(entry.projection_failures.len(), 1);
+        entry.validate_shape().expect("passive receipt validates");
+    }
+
+    #[test]
+    fn traversal_excludes_invalid_candidate_set_membership() {
+        let mut candidate = candidate_from_payload(decision_grade_payload(
+            "node-a",
+            "branch-a",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        ));
+        candidate.candidate_set_membership = None;
+
+        let selection = select_from_history(
+            HistoryCandidates {
+                scope: SelectionScope::all_admitted_candidates(),
+                candidates: vec![candidate],
+            },
+            0,
+            StrategyKind::default(),
+        )
+        .expect("traversal");
+
+        assert!(selection.is_none());
+    }
+
+    #[test]
+    fn traversal_excludes_missing_candidate_artifact_before_selection() {
+        let mut payload = decision_grade_payload(
+            "node-a",
+            "branch-a",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+        payload.artifact = None;
+        let candidate = Candidate::from(candidate_from_payload(payload));
+
+        let grade = decision_grade(candidate).expect("candidate grade");
+
+        match grade {
+            CandidateGrade::Excluded(failure) => {
+                assert_eq!(
+                    failure.kind,
+                    SelectionProjectionFailureKind::DecisionGradeIneligible
+                );
+                assert!(
+                    failure
+                        .committed_message
+                        .as_deref()
+                        .is_some_and(|message| message.contains("missing_candidate_artifact")),
+                    "unexpected failure message: {:?}",
+                    failure.committed_message
+                );
+            }
+            CandidateGrade::Eligible(_) => {
+                panic!("candidate without Artifact payload must not be decision-grade")
+            }
+        }
+    }
+
+    #[test]
+    fn traversal_excludes_non_decision_grade_evidence() {
+        let candidate = candidate_from_payload(payload_without_sealed_evaluation(
+            "node-a",
+            "branch-a",
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        ));
+
+        let selection = select_from_history(
+            HistoryCandidates {
+                scope: SelectionScope::all_admitted_candidates(),
+                candidates: vec![candidate],
+            },
+            0,
+            StrategyKind::default(),
+        )
+        .expect("traversal");
+
+        assert!(selection.is_none());
+    }
+
+    #[test]
+    fn traversal_scores_high_performing_candidates_above_weak_candidates() {
+        let weak = candidate_from_payload(decision_grade_payload(
+            "node-weak",
+            "branch-weak",
+            None,
+            0,
+            BranchDisposition::Reject,
+            metrics(false, false, 5),
+        ));
+        let strong = candidate_from_payload(decision_grade_payload(
+            "node-strong",
+            "branch-strong",
+            None,
+            1,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        ));
+
+        let selection = select_from_history(
+            HistoryCandidates {
+                scope: SelectionScope::all_admitted_candidates(),
+                candidates: vec![weak, strong],
+            },
+            0,
+            StrategyKind::default(),
+        )
+        .expect("traversal")
+        .expect("selection");
+
+        assert_eq!(selection.decision.candidate_node_id, "node-strong");
+        assert_eq!(
+            selection.decision.procedure_id,
+            HISTORY_TRAVERSAL_PROCEDURE_ID
+        );
+    }
+
+    #[test]
+    fn traversal_scores_current_generation_candidates_with_history_candidates() {
+        let history = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![candidate_from_payload(decision_grade_payload(
+                "history-weak",
+                "branch-history-weak",
+                None,
+                0,
+                BranchDisposition::Reject,
+                metrics(false, false, 5),
+            ))],
+        };
+        let current = decision_grade_payload(
+            "current-strong",
+            "branch-current-strong",
+            None,
+            1,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+
+        let candidates = Candidates::from_history(history)
+            .with_current_generation(
+                SelectionScope::new("generation_local:current"),
+                vec![current],
+            )
+            .expect("current generation candidates");
+        let selection = select(candidates, 0, StrategyKind::default())
+            .expect("traversal")
+            .expect("selection");
+
+        assert_eq!(selection.decision.candidate_node_id, "current-strong");
+        assert!(selection.selected_from_current_generation);
+    }
+
+    #[test]
+    fn traversal_replaces_matching_history_candidate_with_current_generation_payload() {
+        let history = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![candidate_from_payload(decision_grade_payload(
+                "duplicate",
+                "branch-duplicate",
+                None,
+                0,
+                BranchDisposition::Reject,
+                metrics(false, false, 5),
+            ))],
+        };
+        let current = decision_grade_payload(
+            "duplicate",
+            "branch-duplicate",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+
+        let candidates = Candidates::from_history(history)
+            .with_current_generation(
+                SelectionScope::new("generation_local:current"),
+                vec![current],
+            )
+            .expect("current generation candidates");
+
+        assert_eq!(candidates.candidates.len(), 1);
+        assert!(matches!(
+            candidates.candidates[0].source,
+            Source::CurrentGeneration { .. }
+        ));
+        let selection = select(candidates, 0, StrategyKind::score_child_prop())
+            .expect("traversal")
+            .expect("selection");
+
+        assert_eq!(selection.considered.len(), 1);
+        assert_eq!(selection.considered_sources.len(), 1);
+        assert_eq!(
+            selection.considered_sources[0],
+            TraversalCandidateSource::CurrentGeneration
+        );
+        assert_eq!(selection.decision.candidate_node_id, "duplicate");
+        assert_eq!(selection.decision.branch_disposition, "keep");
+        assert!(selection.selected_from_current_generation);
+    }
+
+    #[test]
+    fn traversal_does_not_replace_history_with_ineligible_current_duplicate() {
+        let history = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![candidate_from_payload(decision_grade_payload(
+                "duplicate",
+                "branch-duplicate",
+                None,
+                0,
+                BranchDisposition::Reject,
+                metrics(false, false, 5),
+            ))],
+        };
+        let current = payload_without_sealed_evaluation(
+            "duplicate",
+            "branch-duplicate",
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+
+        let candidates = Candidates::from_history(history)
+            .with_current_generation(
+                SelectionScope::new("generation_local:current"),
+                vec![current],
+            )
+            .expect("current generation candidates");
+
+        assert_eq!(candidates.candidates.len(), 2);
+        let selection = select(candidates, 0, StrategyKind::score_child_prop())
+            .expect("traversal")
+            .expect("selection");
+
+        assert_eq!(selection.considered.len(), 1);
+        assert_eq!(
+            selection.considered_sources[0],
+            TraversalCandidateSource::History
+        );
+        assert_eq!(selection.decision.candidate_node_id, "duplicate");
+        assert_eq!(selection.decision.branch_disposition, "reject");
+        assert!(!selection.selected_from_current_generation);
+        assert!(
+            selection
+                .projection_failures
+                .iter()
+                .any(|failure| failure.kind
+                    == SelectionProjectionFailureKind::DecisionGradeIneligible),
+            "ineligible current duplicate should be reported as a projection failure"
+        );
+    }
+
+    #[test]
+    fn traversal_seals_membership_from_final_decision_set() {
+        let historical = candidate_from_payload(decision_grade_payload(
+            "history-strong",
+            "branch-history-strong",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        ));
+        let source_membership_id = historical
+            .candidate_set_membership
+            .as_ref()
+            .and_then(|membership| membership.membership_id.clone())
+            .expect("source membership id");
+        let history = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![historical],
+        };
+        let current = decision_grade_payload(
+            "current-weak",
+            "branch-current-weak",
+            None,
+            1,
+            BranchDisposition::Reject,
+            metrics(false, false, 5),
+        );
+
+        let candidates = Candidates::from_history(history)
+            .with_current_generation(
+                SelectionScope::new("generation_local:current"),
+                vec![current],
+            )
+            .expect("current generation candidates");
+        let selection = select(candidates, 0, StrategyKind::default())
+            .expect("traversal")
+            .expect("selection");
+        let decision_set = CandidateSetCommitment::from_payloads_with_sources(
+            &selection.considered,
+            &selection.considered_sources,
+        )
+        .expect("final decision candidate set");
+        let selected_membership_id = selection
+            .selected_membership_id()
+            .expect("selected decision-set membership id");
+
+        assert_eq!(selection.decision.candidate_node_id, "history-strong");
+        assert_ne!(
+            &selected_membership_id, &source_membership_id,
+            "source-set membership must not be reused as final decision-set membership"
+        );
+        assert!(
+            decision_set
+                .membership_by_membership_id(&selected_membership_id)
+                .is_some(),
+            "selected membership must resolve in the final decision set"
+        );
+
+        let entry = SelectionDecisionEntry::new_with_traversal_identity(
+            crate::cli::prototype1_state::history::ProcedureRef::new(
+                HISTORY_TRAVERSAL_PROCEDURE_ID,
+            ),
+            SelectionScope::all_admitted_candidates(),
+            Some(selection.selected_payload.candidate.clone()),
+            selection.selected_occurrence_id(),
+            selection.selected_membership_id(),
+            selection.considered,
+            selection.considered_sources,
+            Vec::new(),
+            None,
+            selection.decision,
+        )
+        .expect("mixed traversal output must be sealable");
+        assert_eq!(
+            entry
+                .verify_candidate_set_commitment()
+                .expect("candidate set commitment verifies"),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn candidate_case_exposes_optional_non_mechanized_sections() {
+        let mut payload = decision_grade_payload(
+            "node-rich",
+            "branch-rich",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+        payload
+            .sealed_evidence
+            .as_mut()
+            .expect("sealed evidence")
+            .evaluations
+            .first_mut()
+            .expect("evaluation")
+            .compared_runs
+            .push(SealedComparedRunEvidence {
+                instance_id: Some("instance-a".to_string()),
+                status: Some("compared".to_string()),
+                baseline_citation: None,
+                treatment_citation: None,
+                baseline_metrics: None,
+                treatment_metrics: None,
+                baseline_protocol: None,
+                treatment_protocol: None,
+                oracle_evaluation: None,
+                diagnostics: Vec::new(),
+                baseline_run: Some(SealedRunEvidence {
+                    run_id: "baseline".to_string(),
+                    task_id: None,
+                    run_role: None,
+                    spec_fingerprint: None,
+                    model_id: None,
+                    provider_slug: None,
+                    protocol: SealedRunProtocolEvidence::default(),
+                }),
+                treatment_run: Some(SealedRunEvidence {
+                    run_id: "treatment".to_string(),
+                    task_id: None,
+                    run_role: None,
+                    spec_fingerprint: None,
+                    model_id: None,
+                    provider_slug: None,
+                    protocol: SealedRunProtocolEvidence {
+                        anchor_path: Some("/tmp/protocol-anchor.json".into()),
+                        artifacts: vec![SealedProtocolArtifactEvidence {
+                            procedure_name: "tool-call-review".to_string(),
+                            path: None,
+                            schema_version: None,
+                            subject_id: None,
+                        }],
+                        diagnostics: Vec::new(),
+                    },
+                }),
+            });
+
+        let case = CandidateCase::from_payload(&payload);
+
+        assert_eq!(payload.candidate, *case.candidate());
+        assert!(case.selection_input().is_some());
+        assert!(case.sealed_evidence().is_some());
+        assert!(case.artifact().is_some());
+        assert_eq!(case.compared_runs().count(), 1);
+        assert_eq!(case.protocol_run_snapshot_count(), 1);
+    }
+
+    #[test]
+    fn traversal_metric_inputs_gate_protocol_scoring() {
+        let low = traversal_item(with_protocol(
+            decision_grade_payload(
+                "low-protocol",
+                "branch-low-protocol",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            protocol(1, 1, 2, 2, 0),
+        ));
+        let high = traversal_item(with_protocol(
+            decision_grade_payload(
+                "high-protocol",
+                "branch-high-protocol",
+                None,
+                1,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            protocol(3, 3, 0, 0, 2),
+        ));
+        let items = vec![low, high];
+        let child_counts = BTreeMap::new();
+
+        let operational = score_child_prop_weights(
+            &items,
+            &child_counts,
+            3,
+            10_000,
+            metric::Inputs::Operational,
+            OracleMode::RecordOnly,
+            true,
+        )
+        .expect("operational weights");
+        let with_protocol = score_child_prop_weights(
+            &items,
+            &child_counts,
+            3,
+            10_000,
+            metric::Inputs::OperationalAndProtocol,
+            OracleMode::RecordOnly,
+            true,
+        )
+        .expect("protocol weights");
+
+        assert_eq!(operational[0].performance, operational[1].performance);
+        assert!(with_protocol[1].performance > with_protocol[0].performance);
+    }
+
+    #[test]
+    fn relative_oracle_score_orders_historical_frontier_before_operational_score() {
+        let unresolved_high_perf = candidate_from_payload(with_oracle(
+            decision_grade_payload(
+                "oracle-low",
+                "branch-oracle-low",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            crate::mbe::Verdict::Unresolved,
+        ));
+        let resolved_lower_perf = candidate_from_payload(with_oracle(
+            decision_grade_payload(
+                "oracle-high",
+                "branch-oracle-high",
+                None,
+                1,
+                BranchDisposition::Keep,
+                metrics(true, true, 5),
+            ),
+            crate::mbe::Verdict::Resolved,
+        ));
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![unresolved_high_perf, resolved_lower_perf],
+        };
+
+        let selection = select_from_history(
+            candidates,
+            0,
+            StrategyKind::default().with_oracle_policy(OracleMode::RelativeScore, true),
+        )
+        .expect("relative oracle traversal")
+        .expect("selection");
+
+        assert_eq!(selection.decision.candidate_node_id, "oracle-high");
+    }
+
+    #[test]
+    fn relative_oracle_score_requires_configured_evidence() {
+        let missing = candidate_from_payload(decision_grade_payload(
+            "oracle-missing",
+            "branch-oracle-missing",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        ));
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![missing],
+        };
+
+        let err = select_from_history(
+            candidates,
+            0,
+            StrategyKind::default().with_oracle_policy(OracleMode::RelativeScore, true),
+        )
+        .expect_err("missing oracle evidence is rejected");
+
+        assert!(err.to_string().contains("missing oracle evaluation"));
+    }
+
+    #[test]
+    fn relative_oracle_score_can_proceed_without_required_evidence() {
+        let missing = candidate_from_payload(decision_grade_payload(
+            "oracle-missing",
+            "branch-oracle-missing",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        ));
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![missing],
+        };
+
+        let selection = select_from_history(
+            candidates,
+            0,
+            StrategyKind::default().with_oracle_policy(OracleMode::RelativeScore, false),
+        )
+        .expect("missing oracle evidence is allowed")
+        .expect("selection");
+
+        assert_eq!(selection.decision.candidate_node_id, "oracle-missing");
+    }
+
+    #[test]
+    fn disabled_gate_preserves_sealed_oracle_fallback() {
+        let mut payload = with_oracle(
+            decision_grade_payload(
+                "oracle-sealed",
+                "branch-oracle-sealed",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            crate::mbe::Verdict::Resolved,
+        );
+        payload
+            .selection_input
+            .as_mut()
+            .expect("selection input")
+            .comparisons
+            .first_mut()
+            .expect("comparison")
+            .oracle_evaluation = None;
+        let input = payload
+            .selection_input
+            .as_ref()
+            .expect("selection input")
+            .clone();
+        payload.selection_input_hash = Some(
+            HistoryHash::of_domain_json("prototype1.history.selection_input.v1", &input)
+                .expect("hash selection input"),
+        );
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![candidate_from_payload(payload)],
+        };
+        let oracle_targets = vec!["instance-a".to_string()];
+
+        let selection = select_from_history_with_targets(
+            candidates.clone(),
+            0,
+            StrategyKind::default()
+                .with_oracle_policy(OracleMode::RelativeScore, true)
+                .with_oracle_gate(OracleGate::Disabled),
+            &oracle_targets,
+        )
+        .expect("disabled gate preserves sealed-evidence scoring")
+        .expect("selection");
+
+        assert_eq!(selection.decision.candidate_node_id, "oracle-sealed");
+
+        let err = select_from_history_with_targets(
+            candidates,
+            0,
+            StrategyKind::default()
+                .with_oracle_policy(OracleMode::RelativeScore, true)
+                .with_oracle_gate(OracleGate::AllResolved),
+            &oracle_targets,
+        )
+        .expect_err("strict gate requires matching selection-input evidence");
+
+        assert!(err.to_string().contains("missing oracle evaluation"));
+    }
+
+    #[test]
+    fn all_resolved_gate_excludes_unresolved_candidate_before_ranking() {
+        let unresolved_high_perf = candidate_from_payload(with_oracle(
+            decision_grade_payload(
+                "gate-unresolved",
+                "branch-gate-unresolved",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            crate::mbe::Verdict::Unresolved,
+        ));
+        let resolved_lower_perf = candidate_from_payload(with_oracle(
+            decision_grade_payload(
+                "gate-resolved",
+                "branch-gate-resolved",
+                None,
+                1,
+                BranchDisposition::Keep,
+                metrics(true, true, 5),
+            ),
+            crate::mbe::Verdict::Resolved,
+        ));
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![unresolved_high_perf, resolved_lower_perf],
+        };
+        let oracle_targets = vec!["instance-a".to_string()];
+
+        for strategy in [StrategyKind::default(), StrategyKind::score_child_prop()] {
+            let selection = select_from_history_with_targets(
+                candidates.clone(),
+                0,
+                strategy.with_oracle_gate(OracleGate::AllResolved),
+                &oracle_targets,
+            )
+            .expect("strict oracle traversal")
+            .expect("resolved candidate remains selectable");
+
+            assert_eq!(selection.decision.candidate_node_id, "gate-resolved");
+        }
+
+        let strategy = StrategyKind::score_child_prop().with_oracle_gate(OracleGate::AllResolved);
+        let selection = select_from_history_with_targets(candidates, 0, strategy, &oracle_targets)
+            .expect("strict score-child-prop traversal")
+            .expect("resolved candidate remains selectable");
+        let entry = SelectionDecisionEntry::new_with_traversal_identity_metrics(
+            ProcedureRef::new(HISTORY_TRAVERSAL_PROCEDURE_ID),
+            SelectionScope::all_admitted_candidates(),
+            Some(selection.selected_payload.candidate.clone()),
+            selection.selected_occurrence_id(),
+            selection.selected_membership_id(),
+            selection.considered,
+            selection.considered_sources,
+            selection.projection_failures,
+            Some(TraversalEvidence {
+                seed: 0,
+                strategy,
+                oracle_targets,
+                selected_source: None,
+                child_counts: selection.child_counts,
+            }),
+            selection.metrics,
+            selection.decision,
+        )
+        .expect("strict selection entry");
+        let Formula::ScoreChildProp(formula) = &entry
+            .formula
+            .as_ref()
+            .expect("strict formula persisted")
+            .formula;
+        let excluded = formula
+            .rows
+            .iter()
+            .find(|row| row.node_id.as_deref() == Some("gate-unresolved"))
+            .expect("unresolved formula row");
+        assert!(!excluded.selectable);
+        assert!(excluded.performance_present);
+        assert!(excluded.performance.is_some());
+        assert_eq!(
+            excluded.exclusion_reason.as_deref(),
+            Some("oracle_gate_not_satisfied")
+        );
+
+        let replay = replay_score_child_prop(&entry)
+            .expect("strict replay")
+            .expect("score-child-prop replay");
+        let excluded = replay
+            .rows
+            .iter()
+            .find(|row| row.node_id.as_deref() == Some("gate-unresolved"))
+            .expect("unresolved replay row");
+        assert!(!excluded.selectable);
+        assert_ne!(excluded.performance, 0);
+        assert_eq!(
+            excluded.exclusion_reason.as_deref(),
+            Some("oracle_gate_not_satisfied")
+        );
+    }
+
+    #[test]
+    fn all_resolved_gate_returns_no_selection_for_valid_unresolved_evidence() {
+        let unresolved = candidate_from_payload(with_oracle(
+            decision_grade_payload(
+                "gate-unresolved",
+                "branch-gate-unresolved",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            crate::mbe::Verdict::Unresolved,
+        ));
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![unresolved],
+        };
+        let oracle_targets = vec!["instance-a".to_string()];
+
+        let selection = select_from_history_with_targets(
+            candidates,
+            0,
+            StrategyKind::default().with_oracle_gate(OracleGate::AllResolved),
+            &oracle_targets,
+        )
+        .expect("unresolved evidence is valid negative evidence");
+
+        assert!(selection.is_none());
+    }
+
+    #[test]
+    fn all_resolved_gate_preserves_completed_no_selection_receipt() {
+        let unresolved = candidate_from_payload(with_oracle(
+            decision_grade_payload(
+                "gate-unresolved",
+                "branch-gate-unresolved",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            crate::mbe::Verdict::Unresolved,
+        ));
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![unresolved],
+        };
+        let oracle_targets = vec!["instance-a".to_string()];
+        let strategy = StrategyKind::score_child_prop().with_oracle_gate(OracleGate::AllResolved);
+
+        let attempt = select_attempt_with_policy(
+            Candidates::from_history(candidates),
+            0,
+            strategy,
+            selection_metrics::Policy::default(),
+            &oracle_targets,
+        )
+        .expect("unresolved evidence completes selection without a successor");
+        let SelectionAttempt::NoSelection(receipt) = attempt else {
+            panic!("strict unresolved evidence must not select a successor")
+        };
+        assert_eq!(receipt.considered.len(), 1);
+        assert_eq!(receipt.considered_sources.len(), 1);
+
+        let entry = SelectionDecisionEntry::new_no_selection_with_traversal_metrics(
+            ProcedureRef::new(HISTORY_TRAVERSAL_PROCEDURE_ID),
+            SelectionScope::all_admitted_candidates(),
+            receipt.considered,
+            receipt.considered_sources,
+            receipt.projection_failures,
+            Some(TraversalEvidence {
+                seed: 0,
+                strategy,
+                oracle_targets,
+                selected_source: None,
+                child_counts: receipt.child_counts,
+            }),
+            receipt.metrics,
+        )
+        .expect("construct completed no-selection receipt");
+        assert!(entry.decision.is_none());
+        entry.validate_shape().expect("passive receipt validates");
+        assert!(entry.validate_sealed_shape().is_err());
+
+        let Formula::ScoreChildProp(formula) = &entry
+            .formula
+            .as_ref()
+            .expect("score-child-prop receipt retains formula")
+            .formula;
+        assert!(formula.selected_index.is_none());
+        assert!(formula.selected_candidate.is_none());
+        assert_eq!(formula.rows.len(), 1);
+        assert!(!formula.rows[0].selectable);
+        assert!(!formula.rows[0].selected);
+        assert_eq!(
+            formula.rows[0].exclusion_reason.as_deref(),
+            Some("oracle_gate_not_satisfied")
+        );
+
+        let mut tampered = entry.clone();
+        tampered.considered_order_hash = HistoryHash::of_bytes(b"tampered-order");
+        assert!(tampered.validate_shape().is_err());
+
+        let mut tampered = entry.clone();
+        tampered.candidate_set = None;
+        assert!(tampered.validate_shape().is_err());
+
+        let mut tampered = entry.clone();
+        tampered.metrics.id = HistoryHash::of_bytes(b"tampered-metrics");
+        assert!(tampered.validate_shape().is_err());
+
+        let mut tampered = entry.clone();
+        tampered.procedure_or_policy = ProcedureRef::new("other-procedure");
+        assert!(tampered.validate_shape().is_err());
+
+        let mut tampered = entry;
+        tampered
+            .traversal
+            .as_mut()
+            .expect("v5 traversal evidence")
+            .selected_source = Some(TraversalCandidateSource::CurrentGeneration);
+        assert!(tampered.validate_shape().is_err());
+    }
+
+    #[test]
+    fn patch_gate_excludes_rejected_candidate_before_either_ranking_strategy() {
+        let rejected = candidate_from_payload(with_patch_review(
+            decision_grade_payload(
+                "patch-rejected",
+                "branch-patch-rejected",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            PatchVerdict::Rejected,
+        ));
+        let admissible = candidate_from_payload(with_patch_review(
+            decision_grade_payload(
+                "patch-admissible",
+                "branch-patch-admissible",
+                None,
+                1,
+                BranchDisposition::Keep,
+                metrics(true, true, 5),
+            ),
+            PatchVerdict::Admissible,
+        ));
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![rejected, admissible],
+        };
+
+        for strategy in [StrategyKind::default(), StrategyKind::score_child_prop()] {
+            let selection = select_from_history(
+                candidates.clone(),
+                0,
+                strategy.with_patch_gate(PatchGate::ReviewedAdmissible),
+            )
+            .expect("strict patch review traversal")
+            .expect("admissible candidate remains selectable");
+
+            assert_eq!(selection.decision.candidate_node_id, "patch-admissible");
+            assert_eq!(selection.considered.len(), 2);
+        }
+    }
+
+    #[test]
+    fn patch_gate_preserves_completed_no_selection_and_formula_rows() {
+        let rejected = candidate_from_payload(with_patch_review(
+            decision_grade_payload(
+                "patch-rejected",
+                "branch-patch-rejected",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            PatchVerdict::Rejected,
+        ));
+        let inconclusive = candidate_from_payload(with_patch_review(
+            decision_grade_payload(
+                "patch-inconclusive",
+                "branch-patch-inconclusive",
+                None,
+                1,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            PatchVerdict::Inconclusive,
+        ));
+        let strategy =
+            StrategyKind::score_child_prop().with_patch_gate(PatchGate::ReviewedAdmissible);
+
+        let attempt = select_attempt_with_policy(
+            Candidates::from_history(HistoryCandidates {
+                scope: SelectionScope::all_admitted_candidates(),
+                candidates: vec![rejected, inconclusive],
+            }),
+            0,
+            strategy,
+            selection_metrics::Policy::default(),
+            &[],
+        )
+        .expect("valid negative patch reviews complete selection");
+        let SelectionAttempt::NoSelection(receipt) = attempt else {
+            panic!("rejected and inconclusive reviews must not select a successor")
+        };
+        assert_eq!(receipt.considered.len(), 2);
+
+        let entry = SelectionDecisionEntry::new_no_selection_with_traversal_metrics(
+            ProcedureRef::new(HISTORY_TRAVERSAL_PROCEDURE_ID),
+            SelectionScope::all_admitted_candidates(),
+            receipt.considered,
+            receipt.considered_sources,
+            receipt.projection_failures,
+            Some(TraversalEvidence {
+                seed: 0,
+                strategy,
+                oracle_targets: Vec::new(),
+                selected_source: None,
+                child_counts: receipt.child_counts,
+            }),
+            receipt.metrics,
+        )
+        .expect("construct strict patch no-selection receipt");
+        let Formula::ScoreChildProp(formula) = &entry
+            .formula
+            .as_ref()
+            .expect("score-child-prop formula")
+            .formula;
+        assert_eq!(formula.patch_gate, PatchGate::ReviewedAdmissible);
+        assert_eq!(formula.rows.len(), 2);
+        assert!(formula.rows.iter().all(|row| !row.selectable));
+        assert!(
+            formula
+                .rows
+                .iter()
+                .all(|row| { row.exclusion_reason.as_deref() == Some("patch_gate_not_satisfied") })
+        );
+
+        let replay = replay_score_child_prop(&entry)
+            .expect("strict patch replay")
+            .expect("score-child-prop replay");
+        assert_eq!(replay.patch_gate, "reviewed-admissible");
+        assert!(replay.rows.iter().all(|row| !row.selectable));
+        assert!(
+            replay
+                .rows
+                .iter()
+                .all(|row| { row.exclusion_reason.as_deref() == Some("patch_gate_not_satisfied") })
+        );
+    }
+
+    #[test]
+    fn patch_gate_fails_closed_for_missing_or_mismatched_review() {
+        let missing = candidate_from_payload(decision_grade_payload(
+            "patch-missing",
+            "branch-patch-missing",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        ));
+        let strict = StrategyKind::default().with_patch_gate(PatchGate::ReviewedAdmissible);
+
+        let error = select_from_history(
+            HistoryCandidates {
+                scope: SelectionScope::all_admitted_candidates(),
+                candidates: vec![missing],
+            },
+            0,
+            strict,
+        )
+        .expect_err("strict patch gate requires review evidence");
+        assert!(error.to_string().contains("requires candidate review"));
+
+        let mut mismatched = with_patch_review(
+            decision_grade_payload(
+                "patch-mismatch",
+                "branch-patch-mismatch",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            PatchVerdict::Admissible,
+        );
+        mismatched
+            .patch_review
+            .as_mut()
+            .expect("patch review")
+            .artifact_surface_hash = HistoryHash::of_bytes(b"other-surface");
+        let error = select_from_history(
+            HistoryCandidates {
+                scope: SelectionScope::all_admitted_candidates(),
+                candidates: vec![candidate_from_payload(mismatched)],
+            },
+            0,
+            strict,
+        )
+        .expect_err("strict patch gate validates artifact binding");
+        assert!(error.to_string().contains("surface hash mismatch"));
+    }
+
+    #[test]
+    fn patch_gate_requires_one_reviewer_config() {
+        let first = with_patch_review(
+            decision_grade_payload(
+                "patch-config-a",
+                "branch-patch-config-a",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            PatchVerdict::Admissible,
+        );
+        let mut second = with_patch_review(
+            decision_grade_payload(
+                "patch-config-b",
+                "branch-patch-config-b",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            PatchVerdict::Admissible,
+        );
+        second
+            .patch_review
+            .as_mut()
+            .expect("second patch review")
+            .config_hash = HistoryHash::of_bytes(b"different-review-config");
+
+        let error = select_from_history(
+            HistoryCandidates {
+                scope: SelectionScope::all_admitted_candidates(),
+                candidates: vec![
+                    candidate_from_payload(first),
+                    candidate_from_payload(second),
+                ],
+            },
+            0,
+            StrategyKind::default().with_patch_gate(PatchGate::ReviewedAdmissible),
+        )
+        .expect_err("strict patch gate binds one reviewer config");
+        assert!(
+            error
+                .to_string()
+                .contains("do not share one reviewer configuration")
+        );
+    }
+
+    #[test]
+    fn strict_patch_receipt_replay_rejects_hash_consistent_forced_selection() {
+        for strategy in [StrategyKind::default(), StrategyKind::score_child_prop()] {
+            let payload = with_patch_review(
+                decision_grade_payload(
+                    "patch-forced",
+                    "branch-patch-forced",
+                    None,
+                    0,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                ),
+                PatchVerdict::Rejected,
+            );
+            let considered = vec![payload.clone()];
+            let sources = vec![TraversalCandidateSource::History];
+            let metrics = selection_metrics::Set::from_considered(
+                selection_metrics::Policy::default(),
+                &considered,
+                &sources,
+            )
+            .expect("selection metrics");
+            let strategy = strategy.with_patch_gate(PatchGate::ReviewedAdmissible);
+            let entry = SelectionDecisionEntry::new_with_traversal_identity_metrics(
+                ProcedureRef::new(HISTORY_TRAVERSAL_PROCEDURE_ID),
+                SelectionScope::all_admitted_candidates(),
+                Some(payload.candidate.clone()),
+                None,
+                None,
+                considered,
+                sources,
+                Vec::new(),
+                Some(TraversalEvidence {
+                    seed: 0,
+                    strategy,
+                    oracle_targets: Vec::new(),
+                    selected_source: Some(TraversalCandidateSource::History),
+                    child_counts: BTreeMap::new(),
+                }),
+                metrics,
+                SuccessorDecision {
+                    procedure_id: HISTORY_TRAVERSAL_PROCEDURE_ID.to_string(),
+                    candidate_node_id: "patch-forced".to_string(),
+                    selected_branch_id: Some("branch-patch-forced".to_string()),
+                    branch_disposition: "keep".to_string(),
+                    outcome: SuccessorOutcome::Accepted,
+                    findings: Vec::new(),
+                    rationale: Vec::new(),
+                },
+            )
+            .expect("hash-consistent forced receipt can be represented");
+
+            let error = validate_patch_replay(&entry)
+                .expect_err("strict receipt must reauthorize recorded selection");
+            assert!(error.to_string().contains("replays to no selection"));
+        }
+    }
+
+    #[test]
+    fn strict_patch_replay_uses_committed_counts_after_frontier_pruning() {
+        for strategy in [StrategyKind::default(), StrategyKind::score_child_prop()] {
+            let parent = candidate_from_payload(with_patch_review(
+                decision_grade_payload(
+                    "patch-parent",
+                    "branch-patch-parent",
+                    None,
+                    0,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                ),
+                PatchVerdict::Admissible,
+            ));
+            let middle = candidate_from_payload(with_patch_review(
+                decision_grade_payload(
+                    "patch-middle",
+                    "branch-patch-middle",
+                    Some("patch-parent"),
+                    1,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                ),
+                PatchVerdict::Admissible,
+            ));
+            let leaf = candidate_from_payload(with_patch_review(
+                decision_grade_payload(
+                    "patch-leaf",
+                    "branch-patch-leaf",
+                    Some("patch-middle"),
+                    2,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                ),
+                PatchVerdict::Admissible,
+            ));
+            let strategy = strategy.with_patch_gate(PatchGate::ReviewedAdmissible);
+            let attempt = select_attempt_with_policy(
+                Candidates::from_history(HistoryCandidates {
+                    scope: SelectionScope::all_admitted_candidates(),
+                    candidates: vec![parent, middle, leaf],
+                }),
+                0,
+                strategy,
+                selection_metrics::Policy::default(),
+                &[],
+            )
+            .expect("strict traversal over a three-level candidate chain");
+            let SelectionAttempt::Selected(selection) = attempt else {
+                panic!("admissible frontier leaf must be selected")
+            };
+            assert_eq!(selection.considered.len(), 1);
+            assert_eq!(
+                selection
+                    .selected_payload
+                    .selection_input
+                    .as_ref()
+                    .expect("selected input")
+                    .candidate
+                    .node_id,
+                "patch-leaf"
+            );
+            assert_eq!(
+                selection.child_counts,
+                BTreeMap::from([
+                    ("patch-middle".to_string(), 1),
+                    ("patch-parent".to_string(), 1),
+                ])
+            );
+
+            let entry = SelectionDecisionEntry::new_with_traversal_identity_metrics(
+                ProcedureRef::new(HISTORY_TRAVERSAL_PROCEDURE_ID),
+                SelectionScope::all_admitted_candidates(),
+                Some(selection.selected_payload.candidate.clone()),
+                selection.selected_occurrence_id(),
+                selection.selected_membership_id(),
+                selection.considered,
+                selection.considered_sources,
+                selection.projection_failures,
+                Some(TraversalEvidence {
+                    seed: 0,
+                    strategy,
+                    oracle_targets: Vec::new(),
+                    selected_source: Some(TraversalCandidateSource::History),
+                    child_counts: selection.child_counts,
+                }),
+                selection.metrics,
+                selection.decision,
+            )
+            .expect("strict pruned-frontier receipt");
+
+            validate_patch_replay(&entry)
+                .expect("strict replay reuses the committed pre-pruning child counts");
+            let config_hash = entry.considered[0]
+                .patch_review
+                .as_ref()
+                .expect("strict review")
+                .config_hash
+                .clone();
+            validate_patch_config(&entry, &config_hash)
+                .expect("strict replay accepts the admitted reviewer config");
+            let error = validate_patch_config(&entry, &HistoryHash::of_bytes(b"other-config"))
+                .expect_err("strict replay rejects a different admitted reviewer config");
+            assert!(error.to_string().contains("does not match admitted policy"));
+
+            let mut wrong_source = entry.clone();
+            wrong_source
+                .traversal
+                .as_mut()
+                .expect("strict traversal")
+                .selected_source = Some(TraversalCandidateSource::CurrentGeneration);
+            let error = validate_patch_replay(&wrong_source)
+                .expect_err("strict replay binds the selected candidate source");
+            assert!(
+                error
+                    .to_string()
+                    .contains("does not match deterministic replay")
+            );
+        }
+    }
+
+    #[test]
+    fn patch_gate_rejects_node_and_resolved_artifact_id_mismatch() {
+        let mut payload = with_patch_review(
+            decision_grade_payload(
+                "patch-artifact-mismatch",
+                "branch-patch-artifact-mismatch",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            PatchVerdict::Admissible,
+        );
+        payload
+            .artifact
+            .as_mut()
+            .expect("candidate artifact")
+            .node
+            .derived_artifact_id = Some(crate::loop_graph::ArtifactId::new("artifact:other"));
+
+        let error = select_from_history(
+            HistoryCandidates {
+                scope: SelectionScope::all_admitted_candidates(),
+                candidates: vec![candidate_from_payload(payload)],
+            },
+            0,
+            StrategyKind::default().with_patch_gate(PatchGate::ReviewedAdmissible),
+        )
+        .expect_err("strict review binds both artifact identity copies");
+        assert!(error.to_string().contains("artifact binding mismatch"));
+    }
+
+    #[test]
+    fn patch_gate_rejects_review_that_omits_admitted_second_file() {
+        let mut payload = with_patch_review(
+            decision_grade_payload(
+                "patch-two-file",
+                "branch-patch-two-file",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            PatchVerdict::Admissible,
+        );
+        let plan: ChildPlanFiles = serde_json::from_str(include_str!(
+            "../tests/fixtures/prototype1-v15-missing-oracle-20260717/child-plan-node-9c9dcbeeb3a4d400.json"
+        ))
+        .expect("historical broad child plan");
+        let mut harness = plan.children()[0]
+            .harness_evidence()
+            .expect("historical broad harness evidence")
+            .clone();
+        let primary = payload
+            .artifact
+            .as_ref()
+            .expect("candidate artifact")
+            .resolved
+            .target_relpath
+            .clone();
+        harness.changed_paths = vec![
+            primary,
+            PathBuf::from("crates/ploke-core/tool_text/write_file.md"),
+        ];
+        payload
+            .artifact
+            .as_mut()
+            .expect("candidate artifact")
+            .harness = Some(harness);
+
+        let error = select_from_history(
+            HistoryCandidates {
+                scope: SelectionScope::all_admitted_candidates(),
+                candidates: vec![candidate_from_payload(payload)],
+            },
+            0,
+            StrategyKind::default().with_patch_gate(PatchGate::ReviewedAdmissible),
+        )
+        .expect_err("strict review must cover every admitted changed path");
+        assert!(
+            error
+                .to_string()
+                .contains("harness change-set binding mismatch")
+        );
+    }
+
+    #[test]
+    fn disabled_patch_gate_preserves_legacy_strategy_serialization() {
+        let json = serde_json::to_value(StrategyKind::default()).expect("serialize strategy");
+        assert!(json.get("patch_gate").is_none());
+
+        let selection = select_from_history(
+            HistoryCandidates {
+                scope: SelectionScope::all_admitted_candidates(),
+                candidates: vec![candidate_from_payload(decision_grade_payload(
+                    "patch-legacy",
+                    "branch-patch-legacy",
+                    None,
+                    0,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                ))],
+            },
+            0,
+            StrategyKind::default(),
+        )
+        .expect("disabled patch gate preserves traversal")
+        .expect("legacy candidate remains selectable");
+        assert_eq!(selection.decision.candidate_node_id, "patch-legacy");
+    }
+
+    #[test]
+    fn all_resolved_gate_fails_closed_when_oracle_evidence_is_missing() {
+        let missing = candidate_from_payload(decision_grade_payload(
+            "gate-missing",
+            "branch-gate-missing",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        ));
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![missing],
+        };
+        let oracle_targets = vec!["instance-a".to_string()];
+
+        let err = select_from_history_with_targets(
+            candidates,
+            0,
+            StrategyKind::default().with_oracle_gate(OracleGate::AllResolved),
+            &oracle_targets,
+        )
+        .expect_err("missing strict oracle evidence is rejected");
+
+        assert!(err.to_string().contains("missing oracle evaluation"));
+    }
+
+    #[test]
+    fn all_resolved_gate_rejects_evidence_for_a_different_target_set() {
+        let resolved = candidate_from_payload(with_oracle(
+            decision_grade_payload(
+                "gate-wrong-target",
+                "branch-gate-wrong-target",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            crate::mbe::Verdict::Resolved,
+        ));
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![resolved],
+        };
+        let oracle_targets = vec!["instance-b".to_string()];
+
+        let err = select_from_history_with_targets(
+            candidates,
+            0,
+            StrategyKind::default().with_oracle_gate(OracleGate::AllResolved),
+            &oracle_targets,
+        )
+        .expect_err("profile and evidence target sets must match");
+
+        assert!(
+            err.to_string()
+                .contains("does not match admitted profile targets")
+        );
+    }
+
+    #[test]
+    fn relative_oracle_score_drives_score_child_prop_alpha_when_rates_differ() {
+        let resolved_lower_perf = traversal_item(with_oracle(
+            decision_grade_payload(
+                "oracle-alpha-high",
+                "branch-oracle-alpha-high",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 5),
+            ),
+            crate::mbe::Verdict::Resolved,
+        ));
+        let unresolved_higher_perf = traversal_item(with_oracle(
+            decision_grade_payload(
+                "oracle-alpha-low",
+                "branch-oracle-alpha-low",
+                None,
+                1,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            crate::mbe::Verdict::Unresolved,
+        ));
+        let weights = score_child_prop_weights(
+            &[resolved_lower_perf, unresolved_higher_perf],
+            &BTreeMap::new(),
+            3,
+            10_000,
+            metric::Inputs::default(),
+            OracleMode::RelativeScore,
+            true,
+        )
+        .expect("oracle weights");
+
+        assert!(weights[0].alpha > weights[1].alpha);
+    }
+
+    #[test]
+    fn traversal_excludes_already_expanded_candidates() {
+        let expanded = candidate_from_payload(decision_grade_payload(
+            "expanded",
+            "branch-expanded",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        ));
+        let child_of_expanded = candidate_from_payload(decision_grade_payload(
+            "expanded-child",
+            "branch-expanded-child",
+            Some("expanded"),
+            1,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        ));
+        let frontier = candidate_from_payload(decision_grade_payload(
+            "frontier",
+            "branch-frontier",
+            None,
+            2,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        ));
+
+        let selection = select_from_history(
+            HistoryCandidates {
+                scope: SelectionScope::all_admitted_candidates(),
+                candidates: vec![expanded, child_of_expanded, frontier],
+            },
+            0,
+            StrategyKind::default(),
+        )
+        .expect("traversal")
+        .expect("selection");
+
+        assert_eq!(selection.decision.candidate_node_id, "frontier");
+        assert!(
+            selection.considered.iter().all(|payload| {
+                payload
+                    .selection_input
+                    .as_ref()
+                    .is_some_and(|input| input.candidate.node_id != "expanded")
+            }),
+            "expanded parent must not remain in the decision set"
+        );
+    }
+
+    #[test]
+    fn traversal_seed_is_replayable_for_same_candidate_set() {
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![
+                candidate_from_payload(decision_grade_payload(
+                    "node-a",
+                    "branch-a",
+                    None,
+                    0,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                )),
+                candidate_from_payload(decision_grade_payload(
+                    "node-b",
+                    "branch-b",
+                    None,
+                    1,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                )),
+            ],
+        };
+
+        let first = select_from_history(candidates.clone(), 42, StrategyKind::default())
+            .expect("first")
+            .expect("first selection");
+        let second = select_from_history(candidates, 42, StrategyKind::default())
+            .expect("second")
+            .expect("second selection");
+
+        assert_eq!(
+            first.decision.candidate_node_id,
+            second.decision.candidate_node_id
+        );
+    }
+
+    #[test]
+    fn score_child_prop_weights_follow_sigmoid_and_child_penalty() {
+        let expanded = decision_grade_payload(
+            "expanded",
+            "branch-expanded",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+        let frontier = decision_grade_payload(
+            "frontier",
+            "branch-frontier",
+            None,
+            1,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+        let items = vec![traversal_item(expanded), traversal_item(frontier)];
+        let mut child_counts = BTreeMap::new();
+        child_counts.insert("expanded".to_string(), 1);
+
+        let weights = score_child_prop_weights(
+            &items,
+            &child_counts,
+            3,
+            10_000,
+            metric::Inputs::default(),
+            OracleMode::RecordOnly,
+            true,
+        )
+        .expect("weights");
+
+        assert_eq!(weights.len(), 2);
+        let expanded = weights.iter().find(|weight| weight.index == 0).unwrap();
+        let frontier = weights.iter().find(|weight| weight.index == 1).unwrap();
+        assert!((expanded.exploitation - frontier.exploitation).abs() < f64::EPSILON);
+        assert_eq!(expanded.exploration, 0.5);
+        assert_eq!(frontier.exploration, 1.0);
+        assert!(frontier.weight > expanded.weight);
+    }
+
+    #[test]
+    fn score_child_prop_weights_include_parent_expansion_penalty() {
+        let child_of_expanded = decision_grade_payload(
+            "expanded-child",
+            "branch-expanded-child",
+            Some("expanded"),
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+        let frontier = decision_grade_payload(
+            "frontier",
+            "branch-frontier",
+            None,
+            1,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+        let items = vec![traversal_item(child_of_expanded), traversal_item(frontier)];
+        let mut child_counts = BTreeMap::new();
+        child_counts.insert("expanded".to_string(), 2);
+
+        let weights = score_child_prop_weights(
+            &items,
+            &child_counts,
+            3,
+            10_000,
+            metric::Inputs::default(),
+            OracleMode::RecordOnly,
+            true,
+        )
+        .expect("weights");
+
+        let expanded_child = weights.iter().find(|weight| weight.index == 0).unwrap();
+        let frontier = weights.iter().find(|weight| weight.index == 1).unwrap();
+        assert_eq!(expanded_child.child_count, 2);
+        assert_eq!(expanded_child.exploration, 1.0 / 3.0);
+        assert_eq!(frontier.child_count, 0);
+        assert_eq!(frontier.exploration, 1.0);
+        assert!(frontier.weight > expanded_child.weight);
+    }
+
+    #[test]
+    fn score_child_prop_sampling_is_replayable_for_same_candidate_set() {
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![
+                candidate_from_payload(decision_grade_payload(
+                    "node-a",
+                    "branch-a",
+                    None,
+                    0,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                )),
+                candidate_from_payload(decision_grade_payload(
+                    "node-b",
+                    "branch-b",
+                    None,
+                    1,
+                    BranchDisposition::Keep,
+                    metrics(false, true, 0),
+                )),
+            ],
+        };
+        let first = select_from_history(candidates.clone(), 99, StrategyKind::score_child_prop())
+            .expect("first")
+            .expect("first selection");
+        let second = select_from_history(candidates, 99, StrategyKind::score_child_prop())
+            .expect("second")
+            .expect("second selection");
+
+        assert_eq!(
+            first.decision.candidate_node_id,
+            second.decision.candidate_node_id
+        );
+        assert!(
+            first
+                .decision
+                .rationale
+                .iter()
+                .any(|line| line == "traversal_strategy=score_child_prop")
+        );
+    }
+
+    #[test]
+    fn score_child_prop_selection_entry_persists_formula_rows() {
+        let strategy = StrategyKind::score_child_prop();
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![
+                candidate_from_payload(decision_grade_payload(
+                    "node-a",
+                    "branch-a",
+                    None,
+                    0,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                )),
+                candidate_from_payload(decision_grade_payload(
+                    "node-b",
+                    "branch-b",
+                    None,
+                    1,
+                    BranchDisposition::Keep,
+                    metrics(false, true, 0),
+                )),
+            ],
+        };
+        let selection = select_from_history(candidates, 99, strategy.clone())
+            .expect("selection")
+            .expect("selected");
+        let entry = SelectionDecisionEntry::new_with_traversal_identity_metrics(
+            ProcedureRef::new(HISTORY_TRAVERSAL_PROCEDURE_ID),
+            SelectionScope::all_admitted_candidates(),
+            Some(selection.selected_payload.candidate.clone()),
+            selection.selected_occurrence_id(),
+            selection.selected_membership_id(),
+            selection.considered,
+            selection.considered_sources,
+            selection.projection_failures,
+            Some(TraversalEvidence {
+                seed: 99,
+                strategy,
+                oracle_targets: Vec::new(),
+                selected_source: None,
+                child_counts: selection.child_counts,
+            }),
+            selection.metrics,
+            selection.decision,
+        )
+        .expect("selection entry with formula");
+
+        let formula = entry.formula.as_ref().expect("formula persisted");
+        assert_eq!(formula.metric_set_id, entry.metrics.id);
+        let Formula::ScoreChildProp(score) = &formula.formula;
+        assert_eq!(score.seed, 99);
+        assert_eq!(score.rows.len(), 2);
+        assert!(score.sample.is_some());
+        assert!(score.rows.iter().all(|row| row.performance_present));
+        assert!(score.rows.iter().any(|row| row.selected));
+        let selected = score
+            .rows
+            .iter()
+            .find(|row| row.selected)
+            .expect("selected row");
+        assert!(selected.weight.is_some());
+        assert!(selected.cumulative_lower.is_some());
+        assert!(selected.cumulative_upper.is_some());
+    }
+
+    #[test]
+    fn score_child_prop_formula_uses_persisted_expansion_counts_after_pruning() {
+        let strategy = StrategyKind::score_child_prop();
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![
+                candidate_from_payload(decision_grade_payload(
+                    "expanded",
+                    "branch-expanded",
+                    None,
+                    0,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                )),
+                candidate_from_payload(decision_grade_payload(
+                    "expanded-child",
+                    "branch-expanded-child",
+                    Some("expanded"),
+                    1,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                )),
+                candidate_from_payload(decision_grade_payload(
+                    "frontier",
+                    "branch-frontier",
+                    None,
+                    2,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                )),
+            ],
+        };
+        let selection = select_from_history(candidates, 99, strategy.clone())
+            .expect("selection")
+            .expect("selected");
+
+        assert_eq!(selection.considered.len(), 2);
+        assert!(
+            selection.considered.iter().all(|payload| {
+                payload
+                    .selection_input
+                    .as_ref()
+                    .is_some_and(|input| input.candidate.node_id != "expanded")
+            }),
+            "expanded parent should be pruned before sealing considered"
+        );
+        assert_eq!(selection.child_counts.get("expanded"), Some(&1));
+
+        let entry = SelectionDecisionEntry::new_with_traversal_identity_metrics(
+            ProcedureRef::new(HISTORY_TRAVERSAL_PROCEDURE_ID),
+            SelectionScope::all_admitted_candidates(),
+            Some(selection.selected_payload.candidate.clone()),
+            selection.selected_occurrence_id(),
+            selection.selected_membership_id(),
+            selection.considered,
+            selection.considered_sources,
+            selection.projection_failures,
+            Some(TraversalEvidence {
+                seed: 99,
+                strategy,
+                oracle_targets: Vec::new(),
+                selected_source: None,
+                child_counts: selection.child_counts,
+            }),
+            selection.metrics,
+            selection.decision,
+        )
+        .expect("selection entry with formula");
+
+        let formula = entry.formula.as_ref().expect("formula persisted");
+        let Formula::ScoreChildProp(score) = &formula.formula;
+        let formula_child = score
+            .rows
+            .iter()
+            .find(|row| row.node_id.as_deref() == Some("expanded-child"))
+            .expect("expanded child formula row");
+        assert_eq!(formula_child.child_count, Some(1));
+
+        let replay = replay_score_child_prop(&entry)
+            .expect("replay")
+            .expect("score-child-prop replay");
+        let replay_child = replay
+            .rows
+            .iter()
+            .find(|row| row.node_id.as_deref() == Some("expanded-child"))
+            .expect("expanded child replay row");
+        assert_eq!(replay_child.child_count, 1);
+    }
+
+    #[test]
+    fn imp_at_k_persist_only_keeps_base_selection() {
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![
+                candidate_from_payload(decision_grade_payload(
+                    "imp-parent",
+                    "branch-imp-parent",
+                    None,
+                    0,
+                    BranchDisposition::Keep,
+                    metrics(false, true, 0),
+                )),
+                candidate_from_payload(decision_grade_payload(
+                    "imp-child",
+                    "branch-imp-child",
+                    Some("imp-parent"),
+                    1,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                )),
+            ],
+        };
+
+        let selection = select_from_history(candidates, 0, StrategyKind::default())
+            .expect("traversal")
+            .expect("selection");
+
+        assert_eq!(selection.decision.candidate_node_id, "imp-child");
+        assert_eq!(
+            selection.metrics.policy.imp_at_k.score_points_per_imp_point,
+            0
+        );
+        assert_eq!(selection.metrics.candidates.len(), 1);
+        assert!(
+            selection
+                .metrics
+                .candidates
+                .iter()
+                .all(|candidate| !candidate.candidate.contains("imp-parent")),
+            "expanded parent must not remain in persisted metric rows"
+        );
+    }
+
+    #[test]
+    fn imp_at_k_score_does_not_resurrect_expanded_parent() {
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![
+                candidate_from_payload(decision_grade_payload(
+                    "imp-score-parent",
+                    "branch-imp-score-parent",
+                    None,
+                    0,
+                    BranchDisposition::Keep,
+                    metrics(false, true, 0),
+                )),
+                candidate_from_payload(decision_grade_payload(
+                    "imp-score-child",
+                    "branch-imp-score-child",
+                    Some("imp-score-parent"),
+                    1,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                )),
+            ],
+        };
+        let policy = selection_metrics::Policy {
+            imp_at_k: selection_metrics::ImpAtKPolicy {
+                score_points_per_imp_point: 10,
+                ..selection_metrics::ImpAtKPolicy::default()
+            },
+            ..selection_metrics::Policy::default()
+        };
+
+        let base = select_from_history(candidates.clone(), 0, StrategyKind::default())
+            .expect("base traversal")
+            .expect("base selection");
+        let scored = select_with_policy(
+            Candidates::from_history(candidates),
+            0,
+            StrategyKind::default(),
+            policy,
+            &[],
+        )
+        .expect("scored traversal")
+        .expect("scored selection");
+
+        assert_eq!(base.decision.candidate_node_id, "imp-score-child");
+        assert_eq!(scored.decision.candidate_node_id, "imp-score-child");
+        assert!(
+            scored
+                .metrics
+                .candidates
+                .iter()
+                .all(|candidate| !candidate.candidate.contains("imp-score-parent")),
+            "imp@k scoring must not make an expanded parent selectable again"
+        );
+    }
+
+    #[test]
+    fn imp_at_k_incomplete_contributes_zero_when_not_required() {
+        let payload = decision_grade_payload(
+            "imp-incomplete",
+            "branch-imp-incomplete",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+        let policy = selection_metrics::Policy {
+            imp_at_k: selection_metrics::ImpAtKPolicy {
+                score_points_per_imp_point: 10,
+                require_for_score: false,
+                ..selection_metrics::ImpAtKPolicy::default()
+            },
+            ..selection_metrics::Policy::default()
+        };
+        let set = selection_metrics::Set::from_considered(
+            policy,
+            &[payload],
+            &[TraversalCandidateSource::History],
+        )
+        .expect("metric set");
+
+        assert_eq!(set.score_delta(0).expect("score delta"), 0);
+        assert!(
+            set.candidates[0]
+                .imp_at_k
+                .as_ref()
+                .expect("imp@k")
+                .incomplete_reasons
+                .contains(&selection_metrics::ImpAtKReason::NoDescendantsWithinBudget)
+        );
+    }
+
+    #[test]
+    fn imp_at_k_required_score_excludes_incomplete_candidate() {
+        let payload = decision_grade_payload(
+            "imp-required",
+            "branch-imp-required",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+        let policy = selection_metrics::Policy {
+            imp_at_k: selection_metrics::ImpAtKPolicy {
+                score_points_per_imp_point: 10,
+                require_for_score: true,
+                ..selection_metrics::ImpAtKPolicy::default()
+            },
+            ..selection_metrics::Policy::default()
+        };
+        let set = selection_metrics::Set::from_considered(
+            policy,
+            &[payload],
+            &[TraversalCandidateSource::History],
+        )
+        .expect("metric set");
+
+        assert!(set.score_delta(0).is_err());
+    }
+
+    #[test]
+    fn traversal_trait_accepts_concrete_strategy_carrier() {
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![candidate_from_payload(decision_grade_payload(
+                "node-a",
+                "branch-a",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ))],
+        };
+
+        let selection = Candidates::from_history(candidates)
+            .traverse(7, ScoreChildProp::default())
+            .expect("traversal")
+            .expect("selection");
+
+        assert_eq!(selection.decision.candidate_node_id, "node-a");
+    }
+
+    fn candidate_from_payload(payload: EvaluationPayload) -> HistoryCandidate {
+        let selected_candidate = payload
+            .selection_input
+            .as_ref()
+            .map(|_| payload.candidate.clone());
+        let entry = SelectionDecisionEntry::new(
+            ProcedureRef::new(PROCEDURE_ID),
+            SelectionScope::new("generation_local:test"),
+            selected_candidate,
+            vec![payload.clone()],
+            Vec::new(),
+            SuccessorDecision {
+                procedure_id: PROCEDURE_ID.to_string(),
+                candidate_node_id: payload
+                    .selection_input
+                    .as_ref()
+                    .map(|input| input.candidate.node_id.clone())
+                    .unwrap_or_else(|| "missing-input".to_string()),
+                selected_branch_id: payload
+                    .selection_input
+                    .as_ref()
+                    .map(|input| input.candidate.branch_id.clone()),
+                branch_disposition: "keep".to_string(),
+                outcome: if payload.selection_input.is_some() {
+                    SuccessorOutcome::Accepted
+                } else {
+                    SuccessorOutcome::Stop
+                },
+                findings: Vec::new(),
+                rationale: Vec::new(),
+            },
+        )
+        .expect("selection entry");
+        let payload_hash = payload.payload_hash().expect("payload hash");
+        HistoryCandidate {
+            source: HistoryCandidateSource {
+                block_hash: HistoryHash::of_bytes(b"block").into(),
+                block_height: 0,
+                lineage_id: LineageId::new("lineage:test"),
+                entry_id: crate::cli::prototype1_state::history::EntryId::new(),
+            },
+            decision_scope: SelectionScope::new("generation_local:test"),
+            selected_by_decision: true,
+            payload,
+            payload_hash,
+            candidate_set_root: entry
+                .candidate_set
+                .as_ref()
+                .map(|commitment| commitment.root.clone()),
+            candidate_set_membership: entry
+                .candidate_set_membership_for_payload(0, &entry.considered[0])
+                .expect("candidate set membership lookup")
+                .cloned(),
+        }
+    }
+
+    fn traversal_item(payload: EvaluationPayload) -> Item {
+        Item {
+            payload,
+            source: Source::CurrentGeneration {
+                scope: SelectionScope::new("generation_local:test"),
+            },
+            candidate_set_root: None,
+            candidate_set_membership: None,
+        }
+    }
+
+    fn with_protocol(
+        mut payload: EvaluationPayload,
+        treatment: metric::Protocol,
+    ) -> EvaluationPayload {
+        payload
+            .sealed_evidence
+            .as_mut()
+            .expect("sealed evidence")
+            .evaluations
+            .first_mut()
+            .expect("evaluation")
+            .compared_runs
+            .push(SealedComparedRunEvidence {
+                instance_id: Some("instance-a".to_string()),
+                status: Some("compared".to_string()),
+                baseline_citation: None,
+                treatment_citation: None,
+                baseline_metrics: None,
+                treatment_metrics: None,
+                baseline_protocol: None,
+                treatment_protocol: Some(treatment),
+                oracle_evaluation: None,
+                diagnostics: Vec::new(),
+                baseline_run: None,
+                treatment_run: None,
+            });
+        payload
+    }
+
+    fn with_oracle(
+        mut payload: EvaluationPayload,
+        verdict: crate::mbe::Verdict,
+    ) -> EvaluationPayload {
+        let evaluation = oracle_evaluation("instance-a", verdict);
+        payload
+            .selection_input
+            .as_mut()
+            .expect("selection input")
+            .comparisons
+            .first_mut()
+            .expect("comparison")
+            .oracle_evaluation = Some(evaluation.clone());
+        payload
+            .sealed_evidence
+            .as_mut()
+            .expect("sealed evidence")
+            .evaluations
+            .first_mut()
+            .expect("evaluation")
+            .compared_runs
+            .push(SealedComparedRunEvidence {
+                instance_id: Some("instance-a".to_string()),
+                status: Some("compared".to_string()),
+                baseline_citation: None,
+                treatment_citation: None,
+                baseline_metrics: None,
+                treatment_metrics: None,
+                baseline_protocol: None,
+                treatment_protocol: None,
+                oracle_evaluation: Some(evaluation),
+                diagnostics: Vec::new(),
+                baseline_run: None,
+                treatment_run: None,
+            });
+
+        let input = payload
+            .selection_input
+            .as_ref()
+            .expect("selection input")
+            .clone();
+        payload.selection_input_hash = Some(
+            HistoryHash::of_domain_json("prototype1.history.selection_input.v1", &input)
+                .expect("hash selection input"),
+        );
+        payload
+    }
+
+    fn with_patch_review(
+        mut payload: EvaluationPayload,
+        verdict: PatchVerdict,
+    ) -> EvaluationPayload {
+        let candidate = payload
+            .selection_input
+            .as_ref()
+            .expect("selection input")
+            .candidate
+            .clone();
+        let artifact_id =
+            crate::loop_graph::ArtifactId::new(format!("artifact:{}", candidate.branch_id));
+        let surface = ArtifactSurface::test(&candidate.branch_id);
+        let surface_hash =
+            HistoryHash::of_domain_json("prototype1.history.artifact_surface.v1", &surface)
+                .expect("artifact surface hash");
+        let (target_relpath, source_hash, proposed_hash) = {
+            let artifact = payload.artifact.as_mut().expect("candidate artifact");
+            let plan: ChildPlanFiles = serde_json::from_str(include_str!(
+                "../tests/fixtures/prototype1-v15-missing-oracle-20260717/child-plan-node-9c9dcbeeb3a4d400.json"
+            ))
+            .expect("historical harness carrier");
+            let mut harness = plan.children()[0]
+                .harness_evidence()
+                .expect("historical harness evidence")
+                .clone();
+            let base_id = harness
+                .artifact()
+                .expect("historical harness artifact")
+                .base_artifact_id
+                .clone();
+            artifact.node.derived_artifact_id = Some(artifact_id.clone());
+            artifact.node.base_artifact_id = Some(base_id.clone());
+            artifact.resolved.branch.derived_artifact_id = Some(artifact_id.clone());
+            artifact.resolved.source_content_hash =
+                content_sha256(&artifact.resolved.source_content);
+            artifact.resolved.branch.proposed_content_hash =
+                content_sha256(&artifact.resolved.branch.proposed_content);
+            harness.changed_paths = vec![artifact.resolved.target_relpath.clone()];
+            harness.artifact = Some(ArtifactEvidence::new(base_id, artifact_id.clone()));
+            harness.artifact_surface = surface.clone();
+            artifact.artifact_surface = Some(surface);
+            artifact.harness = Some(harness);
+            artifact.schema_version = artifact.schema_version.max(4);
+            (
+                artifact.resolved.target_relpath.clone(),
+                artifact.resolved.source_content_hash.clone(),
+                artifact.resolved.branch.proposed_content_hash.clone(),
+            )
+        };
+        let evaluation_hash = HistoryHash::of_domain_json(
+            "prototype1.test.patch_review.evaluation",
+            &candidate.branch_id,
+        )
+        .expect("evaluation hash");
+        let evaluation = payload
+            .sealed_evidence
+            .as_mut()
+            .expect("sealed evidence")
+            .evaluations
+            .first_mut()
+            .expect("sealed evaluation");
+        evaluation.evaluation_artifact_citation = Some(SealedEvidenceCitation {
+            ref_id: format!("evaluation-artifact:{}", candidate.branch_id),
+            content_hash: Some(evaluation_hash.clone()),
+            record_name: Some("prototype1_branch_evaluation".to_string()),
+        });
+        evaluation.primary_report_citation.content_hash = Some(evaluation_hash.clone());
+
+        let (confidence, blocking_findings, missing_evidence) = match verdict {
+            PatchVerdict::Admissible => (Confidence::High, Vec::new(), Vec::new()),
+            PatchVerdict::Rejected => (
+                Confidence::High,
+                vec!["process-global cache is not safely invalidated".to_string()],
+                Vec::new(),
+            ),
+            PatchVerdict::Inconclusive => (
+                Confidence::Medium,
+                Vec::new(),
+                vec!["bounded concurrency evidence is missing".to_string()],
+            ),
+        };
+        let changes = vec![PatchChange {
+            relpath: target_relpath,
+            source_content_hash: Some(source_hash),
+            proposed_content_hash: Some(proposed_hash),
+        }];
+        let change_set_hash = HistoryHash::of_domain_json(
+            "prototype1.history.candidate_patch_change_set.v1",
+            &changes,
+        )
+        .expect("change-set hash");
+        payload.patch_review = Some(PatchReview {
+            schema_version: 2,
+            procedure_id: PATCH_REVIEW_PROCEDURE_ID.to_string(),
+            candidate,
+            artifact_id,
+            artifact_surface_hash: surface_hash,
+            evaluation_hash,
+            config_hash: HistoryHash::of_bytes(b"review-config"),
+            change_set_hash,
+            changes,
+            verdict,
+            confidence,
+            blocking_findings,
+            missing_evidence,
+            rationale: vec!["reviewed the exact source and proposed content".to_string()],
+            citation: SealedEvidenceCitation {
+                ref_id: candidate_review_ref(
+                    &payload
+                        .selection_input
+                        .as_ref()
+                        .expect("selection input")
+                        .candidate
+                        .branch_id,
+                ),
+                content_hash: Some(
+                    HistoryHash::of_domain_json(
+                        "prototype1.test.candidate_patch_review",
+                        &(candidate_id(&payload), verdict),
+                    )
+                    .expect("review citation hash"),
+                ),
+                record_name: Some(PATCH_REVIEW_RECORD_NAME.to_string()),
+            },
+        });
+        payload.schema_version = payload.schema_version.max(5);
+        payload
+    }
+
+    fn candidate_id(payload: &EvaluationPayload) -> &str {
+        payload
+            .selection_input
+            .as_ref()
+            .expect("selection input")
+            .candidate
+            .node_id
+            .as_str()
+    }
+
+    fn oracle_evaluation(
+        instance_id: &str,
+        verdict: crate::mbe::Verdict,
+    ) -> crate::mbe::OracleEvaluation {
+        let diagnostic = match verdict {
+            crate::mbe::Verdict::Resolved => crate::mbe::OracleDiagnostic::Resolved,
+            crate::mbe::Verdict::Unresolved => crate::mbe::OracleDiagnostic::MissingInstanceReport,
+            crate::mbe::Verdict::EmptyPatch => crate::mbe::OracleDiagnostic::EmptyPatch,
+            crate::mbe::Verdict::Incomplete => crate::mbe::OracleDiagnostic::Incomplete,
+            crate::mbe::Verdict::Error => crate::mbe::OracleDiagnostic::Error,
+            crate::mbe::Verdict::NotSubmitted => crate::mbe::OracleDiagnostic::NotSubmitted,
+        };
+        crate::mbe::OracleEvaluation {
+            evidence: crate::mbe::OracleEvidence {
+                report_path: PathBuf::from("mbe/final_report.json"),
+                instance_id: instance_id.to_string(),
+                report_id: format!("oracle:{instance_id}"),
+                verdict,
+            },
+            instance_report_path: PathBuf::from("mbe/report.json"),
+            instance_report: None,
+            diagnostic,
+            usable_for_selection: diagnostic.usable_for_selection(),
+        }
+    }
+
+    fn protocol(
+        reviewed_call_count: usize,
+        reviewed_segment_count: usize,
+        missing_call_count: usize,
+        missing_segment_count: usize,
+        focused_progress: usize,
+    ) -> metric::Protocol {
+        metric::Protocol {
+            scanned_artifact_count: 0,
+            artifact_counts: BTreeMap::new(),
+            total_calls_in_run: reviewed_call_count + missing_call_count,
+            total_segments_in_anchor: reviewed_segment_count + missing_segment_count,
+            reviewed_call_count,
+            reviewed_segment_count,
+            missing_call_count,
+            missing_segment_count,
+            skipped_segment_review_count: 0,
+            segment_anchor_mismatch_count: 0,
+            call_review_overall_counts: focused_progress_count(focused_progress),
+            segment_review_overall_counts: focused_progress_count(focused_progress),
+            call_review_confidence_counts: BTreeMap::new(),
+            segment_review_confidence_counts: BTreeMap::new(),
+            calls_with_segment_crosswalk: reviewed_call_count,
+            calls_without_segment_crosswalk: 0,
+            average_calls_per_anchor_segment_x1000: 0,
+            review_signal_totals: BTreeMap::new(),
+        }
+    }
+
+    fn focused_progress_count(value: usize) -> BTreeMap<String, usize> {
+        BTreeMap::from([("focused_progress".to_string(), value)])
+    }
+
+    fn decision_grade_payload(
+        node_id: &str,
+        branch_id: &str,
+        parent_node_id: Option<&str>,
+        plan_index: u32,
+        disposition: BranchDisposition,
+        child: OperationalRunMetrics,
+    ) -> EvaluationPayload {
+        let input = SelectionInput::new(
+            CandidateRef {
+                node_id: node_id.to_string(),
+                branch_id: branch_id.to_string(),
+                generation: 1,
+            },
+            disposition,
+            PathBuf::from(format!("evaluations/{branch_id}.json")),
+            vec![RunComparison {
+                instance_id: "instance-a".to_string(),
+                parent_metrics: Some(metrics(false, false, 0)),
+                child_metrics: Some(child),
+                oracle_evaluation: None,
+                status: "compared".to_string(),
+            }],
+        );
+        EvaluationPayload::builder(
+            SubjectRef::new(format!("candidate:{node_id}:plan_index={plan_index}")),
+            ProcedureRef::new(PROCEDURE_ID),
+        )
+        .selection_input(input)
+        .expect("selection input")
+        .sealed_candidate_evidence(sealed_evidence(
+            node_id,
+            branch_id,
+            parent_node_id,
+            plan_index,
+            true,
+        ))
+        .candidate_artifact(candidate_artifact(node_id, branch_id))
+        .build()
+    }
+
+    fn payload_without_selection_input(
+        node_id: &str,
+        branch_id: &str,
+        plan_index: u32,
+    ) -> EvaluationPayload {
+        EvaluationPayload::builder(
+            SubjectRef::new(format!("candidate:{node_id}:plan_index={plan_index}")),
+            ProcedureRef::new(PROCEDURE_ID),
+        )
+        .sealed_candidate_evidence(sealed_evidence(node_id, branch_id, None, plan_index, true))
+        .candidate_artifact(candidate_artifact(node_id, branch_id))
+        .build()
+    }
+
+    fn payload_without_sealed_evaluation(
+        node_id: &str,
+        branch_id: &str,
+        plan_index: u32,
+        disposition: BranchDisposition,
+        child: OperationalRunMetrics,
+    ) -> EvaluationPayload {
+        let input = SelectionInput::new(
+            CandidateRef {
+                node_id: node_id.to_string(),
+                branch_id: branch_id.to_string(),
+                generation: 1,
+            },
+            disposition,
+            PathBuf::from(format!("evaluations/{branch_id}.json")),
+            vec![RunComparison {
+                instance_id: "instance-a".to_string(),
+                parent_metrics: Some(metrics(false, false, 0)),
+                child_metrics: Some(child),
+                oracle_evaluation: None,
+                status: "compared".to_string(),
+            }],
+        );
+        EvaluationPayload::builder(
+            SubjectRef::new(format!("candidate:{node_id}:plan_index={plan_index}")),
+            ProcedureRef::new(PROCEDURE_ID),
+        )
+        .selection_input(input)
+        .expect("selection input")
+        .sealed_candidate_evidence(sealed_evidence(node_id, branch_id, None, plan_index, false))
+        .candidate_artifact(candidate_artifact(node_id, branch_id))
+        .build()
+    }
+
+    fn sealed_evidence(
+        node_id: &str,
+        branch_id: &str,
+        parent_node_id: Option<&str>,
+        plan_index: u32,
+        include_evaluation: bool,
+    ) -> SealedCandidateEvidence {
+        SealedCandidateEvidence {
+            schema_version: 2,
+            coordinate: CandidateCoordinate {
+                node_id: node_id.to_string(),
+                parent_node_id: parent_node_id.map(str::to_string),
+                branch_id: Some(branch_id.to_string()),
+                generation: Some(1),
+                plan_index: Some(plan_index),
+                primary_runtime_id: Some(format!("runtime:{node_id}")),
+            },
+            lifecycle: CandidateLifecycle {
+                planner_outcome: "completed".to_string(),
+                node_status: "completed".to_string(),
+            },
+            evaluations: include_evaluation
+                .then(|| SealedEvaluationEvidence {
+                    branch_id: branch_id.to_string(),
+                    evaluation_procedure_id: Some(
+                        PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID.to_string(),
+                    ),
+                    evaluator_identity: Some(SealedEvaluatorIdentity {
+                        id: "test".to_string(),
+                        version: "1".to_string(),
+                    }),
+                    eval_set_identity: Some(SealedEvalSetIdentity {
+                        id: "eval-set".to_string(),
+                        kind: "test".to_string(),
+                        authority: "test-suite".to_string(),
+                        explicit: true,
+                        benchmark_family: Some("multi_swe_bench_rust".to_string()),
+                        dataset_source_count: 1,
+                        instance_ids: vec!["instance-a".to_string()],
+                        missing_treatment_instance_ids: Vec::new(),
+                        note: None,
+                    }),
+                    evaluation_artifact_citation: None,
+                    overall_disposition: Some("keep".to_string()),
+                    primary_report_citation: SealedEvidenceCitation {
+                        ref_id: format!("report:{branch_id}"),
+                        content_hash: None,
+                        record_name: None,
+                    },
+                    compared_runs: Vec::new(),
+                })
+                .into_iter()
+                .collect(),
+            runtimes: test_runtime_evidence(node_id),
+            branches: Vec::new(),
+            extra_document_citations: Vec::new(),
+            extra_journal_citations: Vec::new(),
+            child_diagnostics: Vec::new(),
+        }
+    }
+
+    fn test_runtime_evidence(node_id: &str) -> Vec<SealedRuntimeEvidence> {
+        let runtime_id = format!("runtime:{node_id}");
+        vec![SealedRuntimeEvidence {
+            runtime_id: runtime_id.clone(),
+            document_citations: vec![SealedEvidenceCitation {
+                ref_id: format!("channel:child-to-parent:terminal-result:{node_id}:{runtime_id}"),
+                content_hash: Some(
+                    HistoryHash::of_domain_json(
+                        "prototype1.test.child_channel_terminal_result",
+                        &runtime_id,
+                    )
+                    .expect("terminal hash"),
+                ),
+                record_name: Some(CHILD_CHANNEL_TERMINAL_RESULT_RECORD.to_string()),
+            }],
+            journal_citations: Vec::new(),
+        }]
+    }
+
+    fn candidate_artifact(node_id: &str, branch_id: &str) -> CandidateArtifact {
+        let candidate_id = format!("candidate-{node_id}");
+        let target_relpath = PathBuf::from("crates/ploke-core/tool_text/read_file.md");
+        let node = Prototype1NodeRecord {
+            schema_version: "test-node.v1".to_string(),
+            node_id: node_id.to_string(),
+            parent_node_id: None,
+            generation: 1,
+            instance_id: "instance-a".to_string(),
+            source_state_id: "source-a".to_string(),
+            operation_target: None,
+            base_artifact_id: None,
+            patch_id: None,
+            derived_artifact_id: None,
+            parent_branch_id: None,
+            branch_id: branch_id.to_string(),
+            candidate_id: candidate_id.clone(),
+            target_relpath: target_relpath.clone(),
+            node_dir: PathBuf::from(format!("/tmp/{node_id}")),
+            workspace_root: PathBuf::from(format!("/tmp/{node_id}/worktree")),
+            binary_path: PathBuf::from(format!("/tmp/{node_id}/target/debug/ploke-eval")),
+            runner_request_path: PathBuf::from(format!("/tmp/{node_id}/runner-request.json")),
+            runner_result_path: PathBuf::from(format!("/tmp/{node_id}/runner-result.json")),
+            status: Prototype1NodeStatus::Succeeded,
+            created_at: "2026-05-06T00:00:00Z".to_string(),
+            updated_at: "2026-05-06T00:00:00Z".to_string(),
+        };
+        let resolved = ResolvedTreatmentBranch {
+            instance_id: node.instance_id.clone(),
+            source_state_id: node.source_state_id.clone(),
+            parent_branch_id: node.parent_branch_id.clone(),
+            target_relpath,
+            source_content: "old".to_string(),
+            source_content_hash: "old-hash".to_string(),
+            selected_branch_id: Some(branch_id.to_string()),
+            branch: TreatmentBranchNode {
+                branch_id: branch_id.to_string(),
+                candidate_id,
+                patch_id: None,
+                branch_label: "test".to_string(),
+                synthesized_spec_id: "spec".to_string(),
+                proposed_content: "new".to_string(),
+                proposed_content_hash: "new-hash".to_string(),
+                generation_target: None,
+                generation_coordinate: None,
+                status: TreatmentBranchStatus::Selected,
+                apply_id: None,
+                applied_content_hash: None,
+                derived_artifact_id: None,
+            },
+        };
+        CandidateArtifact::new(node, resolved)
+    }
+
+    fn metrics(
+        oracle_eligible: bool,
+        convergence: bool,
+        failed_tool_calls: usize,
+    ) -> OperationalRunMetrics {
+        OperationalRunMetrics {
+            tool_calls_total: 5,
+            tool_calls_failed: failed_tool_calls,
+            patch_attempted: true,
+            patch_apply_state: if convergence {
+                PatchApplyState::Applied
+            } else {
+                PatchApplyState::No
+            },
+            submission_artifact_state: if oracle_eligible {
+                SubmissionArtifactState::Nonempty
+            } else {
+                SubmissionArtifactState::Missing
+            },
+            patch_projection_check_state: if oracle_eligible {
+                ploke_records::evaluation::PatchProjectionCheckState::Passed
+            } else {
+                ploke_records::evaluation::PatchProjectionCheckState::NotApplicable
+            },
+            partial_patch_failures: 0,
+            same_file_patch_retry_count: 0,
+            same_file_patch_max_streak: 0,
+            aborted: false,
+            aborted_repair_loop: false,
+            nonempty_valid_patch: convergence,
+            convergence,
+            oracle_eligible,
+        }
+    }
+}

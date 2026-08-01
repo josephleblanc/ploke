@@ -1,0 +1,1184 @@
+{
+  "schema_version": "orchestrator-board.v1",
+  "created_at": "2026-05-12T04:26:56.058849847+00:00",
+  "updated_at": "2026-05-12T05:07:22.642499706+00:00",
+  "packet_dir": ".orchestrator/graph-ingestion-wave2-workers",
+  "lanes": {
+    "docs": {
+      "id": "docs",
+      "owned_edit": [
+        "docs/active/agents/ploke-tree-graph-ingestion",
+        "docs/active/agents/2026-05-11_ploke-tree-graph-ingestion-inventory.md"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/README.md"
+      ],
+      "notes": [
+        "Durable planning, inventory, and handoff docs only."
+      ]
+    },
+    "graph": {
+      "id": "graph",
+      "owned_edit": [
+        "crates/ploke-tree/src/graph"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md"
+      ],
+      "notes": [
+        "Graph assembly from RunRecordSet only; no filesystem discovery or deserialization."
+      ]
+    },
+    "loader": {
+      "id": "loader",
+      "owned_edit": [
+        "crates/ploke-tree/src/store",
+        "crates/ploke-tree/src/lib.rs",
+        "crates/ploke-tree/Cargo.toml"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md"
+      ],
+      "notes": [
+        "RunRecordSet loading only; may adjust ploke-tree dependency features needed by typed loaders; no graph semantics."
+      ]
+    },
+    "projection": {
+      "id": "projection",
+      "owned_edit": [
+        "crates/ploke-tree/src/playback",
+        "crates/ploke-tree/src/browser.rs"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md"
+      ],
+      "notes": [
+        "Playback/browser projections derived from Graph or RunRecordSet; no new source reading."
+      ]
+    },
+    "records": {
+      "id": "records",
+      "owned_edit": [
+        "crates/ploke-records/src"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md"
+      ],
+      "notes": [
+        "Passive record shapes and shared DTO boundaries only; no ploke-tree graph ingestion."
+      ]
+    },
+    "retainer": {
+      "id": "retainer",
+      "owned_edit": [],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/orchestration.md"
+      ],
+      "notes": [
+        "Read-only lookup and orientation lane for bounded file/type questions."
+      ]
+    },
+    "review": {
+      "id": "review",
+      "owned_edit": [],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/orchestration.md"
+      ],
+      "notes": [
+        "Read-only review lane; reviewers do not own edit surfaces."
+      ]
+    }
+  },
+  "workers": {
+    "retainer": {
+      "id": "retainer",
+      "role": "retainer",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/graph-ingestion-wave2-workers/retainer.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "reviewer": {
+      "id": "reviewer",
+      "role": "reviewer",
+      "active": "review-graph-agent-turn-weak-join-repair",
+      "queue": [],
+      "packet_path": ".orchestrator/graph-ingestion-wave2-workers/reviewer.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "reviewer-loader": {
+      "id": "reviewer-loader",
+      "role": "reviewer",
+      "active": "review-records-feature-boundary-repair",
+      "queue": [],
+      "packet_path": ".orchestrator/graph-ingestion-wave2-workers/reviewer-loader.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "worker-docs": {
+      "id": "worker-docs",
+      "role": "worker",
+      "active": "docs-update-implementation-lanes-agent-turn",
+      "queue": [
+        "docs-agent-turn-inventory"
+      ],
+      "packet_path": ".orchestrator/graph-ingestion-wave2-workers/worker-docs.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "worker-graph": {
+      "id": "worker-graph",
+      "role": "worker",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/graph-ingestion-wave2-workers/worker-graph.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "worker-loader": {
+      "id": "worker-loader",
+      "role": "worker",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/graph-ingestion-wave2-workers/worker-loader.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "worker-records": {
+      "id": "worker-records",
+      "role": "worker",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/graph-ingestion-wave2-workers/worker-records.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    }
+  },
+  "tasks": {
+    "docs-agent-turn-current-state": {
+      "id": "docs-agent-turn-current-state",
+      "lane": "docs",
+      "title": "Document agent-turn graph ingestion state",
+      "priority": 3,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-docs"
+      },
+      "allowed_edit": [
+        "docs/active/agents/ploke-tree-graph-ingestion",
+        "docs/active/agents/2026-05-11_ploke-tree-graph-ingestion-inventory.md"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-tree",
+        "crates/ploke-records",
+        "crates/ploke-egui"
+      ],
+      "docs": [
+        ".orchestrator/graph-ingestion-wave2-workers/retainer-provider-attempt-map.report.md",
+        ".orchestrator/graph-ingestion-wave2-workers/review-loader-agent-turn-runrecordset.report.md",
+        ".orchestrator/graph-ingestion-wave2-workers/review-records-agent-turn-passive-shapes.report.md"
+      ],
+      "acceptance": [
+        "Docs reflect agent-turn ingestion progress and provider/full-response gap",
+        "Do not claim reviewer findings are resolved unless repair reports/checks prove it"
+      ],
+      "reports": [
+        ".orchestrator/graph-ingestion-wave2-workers/docs-agent-turn-current-state.report.md"
+      ],
+      "blockers": []
+    },
+    "docs-agent-turn-inventory": {
+      "id": "docs-agent-turn-inventory",
+      "lane": "docs",
+      "title": "Update graph-ingestion inventory for agent-turn load and graph coverage",
+      "priority": 3,
+      "state": {
+        "state": "assigned_queued",
+        "worker": "worker-docs"
+      },
+      "allowed_edit": [
+        "docs/active/agents/ploke-tree-graph-ingestion",
+        "docs/active/agents/2026-05-11_ploke-tree-graph-ingestion-inventory.md"
+      ],
+      "forbidden_edit": [
+        "crates"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/README.md"
+      ],
+      "acceptance": [
+        "Inventory reflects agent-turn typed owner, RunRecordSet loading, and Graph ingestion status",
+        "Handoff records verification and remaining gaps",
+        "No source code edits"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "docs-update-implementation-lanes-agent-turn": {
+      "id": "docs-update-implementation-lanes-agent-turn",
+      "lane": "docs",
+      "title": "Update implementation lanes agent-turn status",
+      "priority": 3,
+      "state": {
+        "state": "assigned_active",
+        "worker": "worker-docs"
+      },
+      "allowed_edit": [
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/README.md"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-tree",
+        "crates/ploke-records",
+        "crates/ploke-egui"
+      ],
+      "docs": [
+        ".orchestrator/graph-ingestion-wave2-workers/review-implementation-lanes-drift.report.md",
+        ".orchestrator/graph-ingestion-wave2-workers/repair-graph-agent-turn-weak-join.report.md",
+        ".orchestrator/graph-ingestion-wave2-workers/review-loader-agent-turn-scope-repair.report.md",
+        ".orchestrator/graph-ingestion-wave2-workers/retainer-records-feature-boundary-map.report.md"
+      ],
+      "acceptance": [
+        "implementation-lanes.md reflects current agent-turn owner/loader/graph progress and remaining feature-boundary gap",
+        "Provider/full-response remains separate unresolved family"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "graph-agent-turn-evidence": {
+      "id": "graph-agent-turn-evidence",
+      "lane": "graph",
+      "title": "Attach loaded agent-turn evidence to Graph",
+      "priority": 3,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-graph"
+      },
+      "allowed_edit": [
+        "crates/ploke-tree/src/graph"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-records",
+        "crates/ploke-tree/src/store",
+        "crates/ploke-egui"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/orchestration.md"
+      ],
+      "acceptance": [
+        "Graph consumes agent-turn records only from RunRecordSet",
+        "Agent-turn evidence attaches to runtime/operation/tool evidence without becoming History authority",
+        "No filesystem discovery or deserialization in graph builders"
+      ],
+      "reports": [
+        ".orchestrator/graph-ingestion-wave2-workers/graph-agent-turn-evidence.report.md"
+      ],
+      "blockers": []
+    },
+    "loader-agent-turn-dependency-surface": {
+      "id": "loader-agent-turn-dependency-surface",
+      "lane": "loader",
+      "title": "Enable ploke-records tool-contracts feature for ploke-tree agent-turn loader",
+      "priority": 3,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-loader"
+      },
+      "allowed_edit": [
+        "crates/ploke-tree/Cargo.toml"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-records"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md"
+      ],
+      "acceptance": [
+        "ploke-tree can import ploke_records::agent_turn without broadening ploke-records default features",
+        "Dependency feature change is limited to Cargo.toml",
+        "No graph/store behavior changes"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "loader-agent-turn-runrecordset": {
+      "id": "loader-agent-turn-runrecordset",
+      "lane": "loader",
+      "title": "Load agent-turn trace and summary records into RunRecordSet",
+      "priority": 3,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-loader"
+      },
+      "allowed_edit": [
+        "crates/ploke-tree/src/store",
+        "crates/ploke-tree/src/lib.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-records",
+        "crates/ploke-egui"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/orchestration.md"
+      ],
+      "acceptance": [
+        "Store loader discovers current agent-turn files and deserializes only through ploke-records named types",
+        "Loaded fields land in RunRecordSet or PassiveEvidence without graph semantics",
+        "No ploke-eval edits and no graph builder filesystem discovery"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "records-agent-turn-passive-shapes": {
+      "id": "records-agent-turn-passive-shapes",
+      "lane": "records",
+      "title": "Add passive record owners for current agent-turn trace and summary files",
+      "priority": 3,
+      "state": {
+        "state": "complete_reviewed"
+      },
+      "allowed_edit": [
+        "crates/ploke-records/src"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-tree",
+        "crates/ploke-egui"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md",
+        "docs/active/agents/2026-05-11_ploke-tree-graph-ingestion-inventory.md"
+      ],
+      "acceptance": [
+        "Current agent-turn summary/trace shapes have named Serialize/Deserialize owners in ploke-records",
+        "Shared tool call/result payloads reuse ploke_records::tool_contracts where applicable",
+        "No production serde_json::Value field walking is introduced"
+      ],
+      "reports": [
+        "local review: current AgentTurnArtifact writer shape checked; ploke-records feature check and agent_turn tests pass"
+      ],
+      "blockers": []
+    },
+    "repair-agent-turn-loader-scope": {
+      "id": "repair-agent-turn-loader-scope",
+      "lane": "loader",
+      "title": "Constrain agent-turn loader discovery",
+      "priority": 3,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": null
+      },
+      "allowed_edit": [
+        "crates/ploke-tree/src/store",
+        "crates/ploke-tree/Cargo.toml"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-records",
+        "crates/ploke-tree/src/graph",
+        "crates/ploke-egui"
+      ],
+      "docs": [
+        ".orchestrator/graph-ingestion-wave2-workers/review-loader-agent-turn-runrecordset.report.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md"
+      ],
+      "acceptance": [
+        "Agent-turn loader only discovers expected run-local files, not entire run root recursion",
+        "Store loader deserializes through named ploke-records types",
+        "No ploke-eval edits"
+      ],
+      "reports": [
+        ".orchestrator/graph-ingestion-wave2-workers/retainer-agent-turn-run-path-shape.report.md",
+        ".orchestrator/graph-ingestion-wave2-workers/repair-agent-turn-loader-scope.report.md"
+      ],
+      "blockers": []
+    },
+    "repair-agent-turn-record-feature-boundary": {
+      "id": "repair-agent-turn-record-feature-boundary",
+      "lane": "records",
+      "title": "Repair agent-turn record feature boundary",
+      "priority": 3,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-records"
+      },
+      "allowed_edit": [
+        "crates/ploke-records"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-tree",
+        "crates/ploke-egui"
+      ],
+      "docs": [
+        ".orchestrator/graph-ingestion-wave2-workers/review-records-agent-turn-passive-shapes.report.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md"
+      ],
+      "acceptance": [
+        "ploke-tree can depend on passive agent-turn records without pulling ploke-tui",
+        "agent-turn record owner remains typed and does not use production serde_json::Value walking",
+        "No ploke-eval edits"
+      ],
+      "reports": [
+        ".orchestrator/graph-ingestion-wave2-workers/repair-agent-turn-record-feature-boundary.report.md"
+      ],
+      "blockers": []
+    },
+    "repair-graph-agent-turn-weak-join": {
+      "id": "repair-graph-agent-turn-weak-join",
+      "lane": "graph",
+      "title": "Repair graph agent-turn weak joins",
+      "priority": 3,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "worker-graph"
+      },
+      "allowed_edit": [
+        "crates/ploke-tree/src/graph"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval",
+        "crates/ploke-records",
+        "crates/ploke-tree/src/store",
+        "crates/ploke-egui"
+      ],
+      "docs": [
+        ".orchestrator/graph-ingestion-wave2-workers/review-graph-agent-turn-evidence.report.md",
+        ".orchestrator/graph-ingestion-wave2-workers/graph-agent-turn-evidence.report.md"
+      ],
+      "acceptance": [
+        "Ambiguous node-scoped agent-turn evidence is not attached as runtime/operation-specific evidence",
+        "History authority remains unchanged",
+        "Avoid cloning full runtime/operation coordinate vectors per artifact where practical"
+      ],
+      "reports": [
+        ".orchestrator/graph-ingestion-wave2-workers/repair-graph-agent-turn-weak-join.report.md"
+      ],
+      "blockers": []
+    },
+    "retainer-agent-turn-extension-points": {
+      "id": "retainer-agent-turn-extension-points",
+      "lane": "retainer",
+      "title": "Map RunRecordSet and Graph extension points for agent-turn evidence",
+      "priority": 3,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "retainer"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/orchestration.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md"
+      ],
+      "acceptance": [
+        "Read-only: identify exact files/ranges in ploke-tree store and graph build where a new loaded family should attach",
+        "Report minimal loader, record-set, and graph write surfaces",
+        "Do not edit files"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "retainer-agent-turn-run-path-shape": {
+      "id": "retainer-agent-turn-run-path-shape",
+      "lane": "retainer",
+      "title": "Map current agent-turn run-local path shape",
+      "priority": 3,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "retainer"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        ".orchestrator/graph-ingestion-wave2-workers/review-loader-agent-turn-runrecordset.report.md"
+      ],
+      "acceptance": [
+        "Read-only: identify exact current directories where agent-turn-trace.json and agent-turn-summary.json are expected",
+        "Use metadata/source reads only; do not read generated JSON payloads wholesale",
+        "Return path patterns and line ranges only"
+      ],
+      "reports": [
+        ".orchestrator/graph-ingestion-wave2-workers/retainer-agent-turn-run-path-shape.report.md"
+      ],
+      "blockers": []
+    },
+    "retainer-agent-turn-source-map": {
+      "id": "retainer-agent-turn-source-map",
+      "lane": "retainer",
+      "title": "Map current agent-turn persisted files and existing related type boundaries",
+      "priority": 3,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "retainer"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md",
+        "docs/active/agents/2026-05-11_ploke-tree-graph-ingestion-inventory.md"
+      ],
+      "acceptance": [
+        "Read-only: report exact current file paths and source ranges for agent-turn trace/summary writers or readers",
+        "Report whether ploke-records already owns any related passive shape",
+        "Avoid broad log/run artifact reads and do not edit files"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "retainer-provider-attempt-map": {
+      "id": "retainer-provider-attempt-map",
+      "lane": "retainer",
+      "title": "Map provider attempts retry timeout persisted source family",
+      "priority": 3,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "retainer"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [],
+      "docs": [
+        "docs/active/agents/2026-05-11_ploke-tree-graph-ingestion-inventory.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md"
+      ],
+      "acceptance": [
+        "Read-only: locate current persisted files and type owners for provider attempts, retries, timeouts, and full-response sidecars",
+        "Report exact current files/ranges and recommended records/loader/graph write surfaces",
+        "Do not edit files or read generated logs wholesale"
+      ],
+      "reports": [
+        ".orchestrator/graph-ingestion-wave2-workers/retainer-provider-attempt-map.report.md"
+      ],
+      "blockers": []
+    },
+    "retainer-records-feature-boundary-map": {
+      "id": "retainer-records-feature-boundary-map",
+      "lane": "retainer",
+      "title": "Map records feature boundary repair",
+      "priority": 3,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "retainer"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        ".orchestrator/graph-ingestion-wave2-workers/review-records-agent-turn-passive-shapes.report.md"
+      ],
+      "acceptance": [
+        "Read-only: map current ploke-records feature dependency graph and smallest feature split for passive agent-turn records",
+        "Report exact Cargo/module changes to inspect; do not edit files"
+      ],
+      "reports": [
+        ".orchestrator/graph-ingestion-wave2-workers/retainer-records-feature-boundary-map.report.md"
+      ],
+      "blockers": []
+    },
+    "review-graph-agent-turn-evidence": {
+      "id": "review-graph-agent-turn-evidence",
+      "lane": "review",
+      "title": "Review graph agent-turn evidence joins",
+      "priority": 3,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "reviewer"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        ".orchestrator/graph-ingestion-wave2-workers/graph-agent-turn-evidence.report.md",
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md"
+      ],
+      "acceptance": [
+        "Read-only review of graph evidence semantics, clone/allocation risk, and History authority boundary",
+        "Report exact files/lines and do not edit files"
+      ],
+      "reports": [
+        ".orchestrator/graph-ingestion-wave2-workers/review-graph-agent-turn-evidence.report.md"
+      ],
+      "blockers": []
+    },
+    "review-graph-agent-turn-weak-join-repair": {
+      "id": "review-graph-agent-turn-weak-join-repair",
+      "lane": "review",
+      "title": "Review graph agent-turn weak join repair",
+      "priority": 3,
+      "state": {
+        "state": "assigned_active",
+        "worker": "reviewer"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        ".orchestrator/graph-ingestion-wave2-workers/repair-graph-agent-turn-weak-join.report.md",
+        ".orchestrator/graph-ingestion-wave2-workers/review-graph-agent-turn-evidence.report.md"
+      ],
+      "acceptance": [
+        "Read-only: verify ambiguous agent-turn evidence is no longer attached to runtime/operation nodes",
+        "Check History authority boundary and report exact lines"
+      ],
+      "reports": [],
+      "blockers": []
+    },
+    "review-implementation-lanes-drift": {
+      "id": "review-implementation-lanes-drift",
+      "lane": "review",
+      "title": "Review implementation lanes drift",
+      "priority": 3,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "reviewer"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md",
+        ".orchestrator/graph-ingestion-wave2-workers/repair-agent-turn-loader-scope.report.md",
+        ".orchestrator/graph-ingestion-wave2-workers/graph-agent-turn-evidence.report.md",
+        ".orchestrator/graph-ingestion-wave2-workers/review-records-agent-turn-passive-shapes.report.md"
+      ],
+      "acceptance": [
+        "Read-only: compare live agent-turn wave against implementation-lanes.md and report stale/missing lane status",
+        "Do not edit files"
+      ],
+      "reports": [
+        ".orchestrator/graph-ingestion-wave2-workers/review-implementation-lanes-drift.report.md"
+      ],
+      "blockers": []
+    },
+    "review-loader-agent-turn-runrecordset": {
+      "id": "review-loader-agent-turn-runrecordset",
+      "lane": "review",
+      "title": "Review agent-turn RunRecordSet loader",
+      "priority": 3,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "reviewer-loader"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/orchestration.md"
+      ],
+      "acceptance": [
+        "Read-only: check dependency feature, filesystem discovery scope, typed deserialization, and no graph semantics in store loader",
+        "Report exact findings and tests; do not edit files"
+      ],
+      "reports": [
+        ".orchestrator/graph-ingestion-wave2-workers/review-loader-agent-turn-runrecordset.report.md"
+      ],
+      "blockers": []
+    },
+    "review-loader-agent-turn-scope-repair": {
+      "id": "review-loader-agent-turn-scope-repair",
+      "lane": "review",
+      "title": "Review loader agent-turn scope repair",
+      "priority": 3,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "reviewer-loader"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        ".orchestrator/graph-ingestion-wave2-workers/repair-agent-turn-loader-scope.report.md",
+        ".orchestrator/graph-ingestion-wave2-workers/retainer-agent-turn-run-path-shape.report.md"
+      ],
+      "acceptance": [
+        "Read-only: verify discovery scope is not recursive and does not miss the current direct run-dir files",
+        "Report exact lines and do not edit files"
+      ],
+      "reports": [
+        ".orchestrator/graph-ingestion-wave2-workers/review-loader-agent-turn-scope-repair.report.md"
+      ],
+      "blockers": []
+    },
+    "review-records-agent-turn-passive-shapes": {
+      "id": "review-records-agent-turn-passive-shapes",
+      "lane": "review",
+      "title": "Review agent-turn passive record owners",
+      "priority": 3,
+      "state": {
+        "state": "complete_unreviewed",
+        "worker": "reviewer"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [],
+      "docs": [
+        "docs/active/agents/ploke-tree-graph-ingestion/implementation-lanes.md"
+      ],
+      "acceptance": [
+        "Read-only: check records slice for schema drift, dependency bloat, serde_json::Value walking, and over-broad DTO shape",
+        "Report findings with exact file paths/lines; do not edit files",
+        "Confirm whether loader can safely consume ploke_records::agent_turn"
+      ],
+      "reports": [
+        ".orchestrator/graph-ingestion-wave2-workers/review-records-agent-turn-passive-shapes.report.md"
+      ],
+      "blockers": []
+    },
+    "review-records-feature-boundary-repair": {
+      "id": "review-records-feature-boundary-repair",
+      "lane": "review",
+      "title": "Review records feature boundary repair",
+      "priority": 3,
+      "state": {
+        "state": "assigned_active",
+        "worker": "reviewer-loader"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [
+        "crates/ploke-eval"
+      ],
+      "docs": [
+        ".orchestrator/graph-ingestion-wave2-workers/repair-agent-turn-record-feature-boundary.report.md",
+        ".orchestrator/graph-ingestion-wave2-workers/retainer-records-feature-boundary-map.report.md"
+      ],
+      "acceptance": [
+        "Read-only: verify passive agent-turn records no longer require tool-contracts and ploke-tree does not pull ploke-tui",
+        "Check RawValue use does not reintroduce production Value walking",
+        "Report exact findings and do not edit files"
+      ],
+      "reports": [],
+      "blockers": []
+    }
+  },
+  "blockers": {},
+  "events": [
+    {
+      "at": "2026-05-12T04:26:56.058864534+00:00",
+      "summary": "initialized board"
+    },
+    {
+      "at": "2026-05-12T04:27:01.282487692+00:00",
+      "summary": "lane records set"
+    },
+    {
+      "at": "2026-05-12T04:27:05.041237622+00:00",
+      "summary": "lane loader set"
+    },
+    {
+      "at": "2026-05-12T04:27:09.417325357+00:00",
+      "summary": "lane graph set"
+    },
+    {
+      "at": "2026-05-12T04:27:13.590309994+00:00",
+      "summary": "lane projection set"
+    },
+    {
+      "at": "2026-05-12T04:27:18.360023706+00:00",
+      "summary": "lane docs set"
+    },
+    {
+      "at": "2026-05-12T04:27:21.508234690+00:00",
+      "summary": "lane review set"
+    },
+    {
+      "at": "2026-05-12T04:27:26.348994577+00:00",
+      "summary": "lane retainer set"
+    },
+    {
+      "at": "2026-05-12T04:27:30.552728356+00:00",
+      "summary": "worker reviewer set to Reviewer"
+    },
+    {
+      "at": "2026-05-12T04:27:30.602812314+00:00",
+      "summary": "worker retainer set to Retainer"
+    },
+    {
+      "at": "2026-05-12T04:27:37.405940443+00:00",
+      "summary": "worker worker-records set to Worker"
+    },
+    {
+      "at": "2026-05-12T04:27:37.411687378+00:00",
+      "summary": "worker worker-graph set to Worker"
+    },
+    {
+      "at": "2026-05-12T04:27:37.412640788+00:00",
+      "summary": "worker worker-docs set to Worker"
+    },
+    {
+      "at": "2026-05-12T04:27:37.456023747+00:00",
+      "summary": "worker worker-loader set to Worker"
+    },
+    {
+      "at": "2026-05-12T04:27:54.226318133+00:00",
+      "summary": "task retainer-agent-turn-source-map added to lane retainer"
+    },
+    {
+      "at": "2026-05-12T04:28:00.029994095+00:00",
+      "summary": "task retainer-agent-turn-extension-points added to lane retainer"
+    },
+    {
+      "at": "2026-05-12T04:28:05.316018454+00:00",
+      "summary": "task records-agent-turn-passive-shapes added to lane records"
+    },
+    {
+      "at": "2026-05-12T04:28:11.975516766+00:00",
+      "summary": "task loader-agent-turn-runrecordset added to lane loader"
+    },
+    {
+      "at": "2026-05-12T04:28:16.988903274+00:00",
+      "summary": "task graph-agent-turn-evidence added to lane graph"
+    },
+    {
+      "at": "2026-05-12T04:28:22.252973960+00:00",
+      "summary": "task docs-agent-turn-inventory added to lane docs"
+    },
+    {
+      "at": "2026-05-12T04:28:26.601413785+00:00",
+      "summary": "task retainer-agent-turn-source-map assigned to retainer active"
+    },
+    {
+      "at": "2026-05-12T04:28:26.604055738+00:00",
+      "summary": "task retainer-agent-turn-extension-points assigned to retainer queue"
+    },
+    {
+      "at": "2026-05-12T04:28:33.827528456+00:00",
+      "summary": "task records-agent-turn-passive-shapes assigned to worker-records active"
+    },
+    {
+      "at": "2026-05-12T04:28:33.829865753+00:00",
+      "summary": "task loader-agent-turn-runrecordset assigned to worker-loader queue"
+    },
+    {
+      "at": "2026-05-12T04:28:33.831765396+00:00",
+      "summary": "task docs-agent-turn-inventory assigned to worker-docs queue"
+    },
+    {
+      "at": "2026-05-12T04:28:33.832328123+00:00",
+      "summary": "task graph-agent-turn-evidence assigned to worker-graph queue"
+    },
+    {
+      "at": "2026-05-12T04:28:41.414747799+00:00",
+      "summary": "packet generated for worker-records"
+    },
+    {
+      "at": "2026-05-12T04:28:41.448879323+00:00",
+      "summary": "packet generated for worker-loader"
+    },
+    {
+      "at": "2026-05-12T04:28:41.451405823+00:00",
+      "summary": "packet generated for worker-graph"
+    },
+    {
+      "at": "2026-05-12T04:28:41.464792465+00:00",
+      "summary": "packet generated for retainer"
+    },
+    {
+      "at": "2026-05-12T04:28:41.501456710+00:00",
+      "summary": "packet generated for worker-docs"
+    },
+    {
+      "at": "2026-05-12T04:32:38.774565546+00:00",
+      "summary": "task retainer-agent-turn-source-map completed"
+    },
+    {
+      "at": "2026-05-12T04:32:38.809214570+00:00",
+      "summary": "task retainer-agent-turn-extension-points completed"
+    },
+    {
+      "at": "2026-05-12T04:36:35.924612386+00:00",
+      "summary": "task records-agent-turn-passive-shapes completed"
+    },
+    {
+      "at": "2026-05-12T04:36:55.086850025+00:00",
+      "summary": "task records-agent-turn-passive-shapes reviewed"
+    },
+    {
+      "at": "2026-05-12T04:37:12.522350866+00:00",
+      "summary": "lane loader set"
+    },
+    {
+      "at": "2026-05-12T04:37:19.644857501+00:00",
+      "summary": "task loader-agent-turn-dependency-surface added to lane loader"
+    },
+    {
+      "at": "2026-05-12T04:37:24.257266295+00:00",
+      "summary": "task loader-agent-turn-dependency-surface assigned to worker-loader active"
+    },
+    {
+      "at": "2026-05-12T04:37:24.307618670+00:00",
+      "summary": "task loader-agent-turn-runrecordset assigned to worker-loader queue"
+    },
+    {
+      "at": "2026-05-12T04:37:29.071117318+00:00",
+      "summary": "packet generated for worker-loader"
+    },
+    {
+      "at": "2026-05-12T04:43:02.393928301+00:00",
+      "summary": "task retainer-provider-attempt-map added to lane retainer"
+    },
+    {
+      "at": "2026-05-12T04:43:02.444040806+00:00",
+      "summary": "task review-records-agent-turn-passive-shapes added to lane review"
+    },
+    {
+      "at": "2026-05-12T04:43:20.192857292+00:00",
+      "summary": "task loader-agent-turn-dependency-surface completed"
+    },
+    {
+      "at": "2026-05-12T04:43:20.200390279+00:00",
+      "summary": "task loader-agent-turn-runrecordset completed"
+    },
+    {
+      "at": "2026-05-12T04:43:20.225870941+00:00",
+      "summary": "worker reviewer-loader set to Reviewer"
+    },
+    {
+      "at": "2026-05-12T04:43:20.227157197+00:00",
+      "summary": "task review-loader-agent-turn-runrecordset added to lane review"
+    },
+    {
+      "at": "2026-05-12T04:43:34.364106530+00:00",
+      "summary": "task review-records-agent-turn-passive-shapes assigned to reviewer active"
+    },
+    {
+      "at": "2026-05-12T04:43:34.370332593+00:00",
+      "summary": "task review-loader-agent-turn-runrecordset assigned to reviewer-loader active"
+    },
+    {
+      "at": "2026-05-12T04:43:34.405513065+00:00",
+      "summary": "task retainer-provider-attempt-map assigned to retainer active"
+    },
+    {
+      "at": "2026-05-12T04:43:34.407846137+00:00",
+      "summary": "task graph-agent-turn-evidence assigned to worker-graph active"
+    },
+    {
+      "at": "2026-05-12T04:43:42.737532841+00:00",
+      "summary": "packet generated for reviewer"
+    },
+    {
+      "at": "2026-05-12T04:43:42.773179091+00:00",
+      "summary": "packet generated for reviewer-loader"
+    },
+    {
+      "at": "2026-05-12T04:43:42.819535255+00:00",
+      "summary": "packet generated for retainer"
+    },
+    {
+      "at": "2026-05-12T04:43:42.859365733+00:00",
+      "summary": "packet generated for worker-graph"
+    },
+    {
+      "at": "2026-05-12T04:50:59.418703595+00:00",
+      "summary": "task graph-agent-turn-evidence completed"
+    },
+    {
+      "at": "2026-05-12T04:50:59.420950420+00:00",
+      "summary": "task retainer-provider-attempt-map completed"
+    },
+    {
+      "at": "2026-05-12T04:50:59.461914764+00:00",
+      "summary": "task review-loader-agent-turn-runrecordset completed"
+    },
+    {
+      "at": "2026-05-12T04:50:59.464029841+00:00",
+      "summary": "task review-records-agent-turn-passive-shapes completed"
+    },
+    {
+      "at": "2026-05-12T04:51:34.711199680+00:00",
+      "summary": "task repair-agent-turn-record-feature-boundary added to lane records"
+    },
+    {
+      "at": "2026-05-12T04:51:34.713981551+00:00",
+      "summary": "task repair-agent-turn-loader-scope added to lane loader"
+    },
+    {
+      "at": "2026-05-12T04:51:34.755571547+00:00",
+      "summary": "task review-graph-agent-turn-evidence added to lane review"
+    },
+    {
+      "at": "2026-05-12T04:51:34.805580614+00:00",
+      "summary": "task retainer-agent-turn-run-path-shape added to lane retainer"
+    },
+    {
+      "at": "2026-05-12T04:51:44.874043379+00:00",
+      "summary": "task repair-agent-turn-record-feature-boundary assigned to worker-records active"
+    },
+    {
+      "at": "2026-05-12T04:51:44.876426130+00:00",
+      "summary": "task repair-agent-turn-loader-scope assigned to worker-loader active"
+    },
+    {
+      "at": "2026-05-12T04:51:44.923212698+00:00",
+      "summary": "task review-graph-agent-turn-evidence assigned to reviewer active"
+    },
+    {
+      "at": "2026-05-12T04:51:44.924769506+00:00",
+      "summary": "task retainer-agent-turn-run-path-shape assigned to retainer active"
+    },
+    {
+      "at": "2026-05-12T04:51:53.248279035+00:00",
+      "summary": "packet generated for worker-records"
+    },
+    {
+      "at": "2026-05-12T04:51:53.250687073+00:00",
+      "summary": "packet generated for worker-loader"
+    },
+    {
+      "at": "2026-05-12T04:51:53.252092175+00:00",
+      "summary": "packet generated for reviewer"
+    },
+    {
+      "at": "2026-05-12T04:51:53.254219275+00:00",
+      "summary": "packet generated for retainer"
+    },
+    {
+      "at": "2026-05-12T04:56:03.429078856+00:00",
+      "summary": "task review-graph-agent-turn-evidence completed"
+    },
+    {
+      "at": "2026-05-12T04:56:03.431993151+00:00",
+      "summary": "task retainer-agent-turn-run-path-shape completed"
+    },
+    {
+      "at": "2026-05-12T04:56:21.667462964+00:00",
+      "summary": "task repair-graph-agent-turn-weak-join added to lane graph"
+    },
+    {
+      "at": "2026-05-12T04:56:21.708518837+00:00",
+      "summary": "task docs-agent-turn-current-state added to lane docs"
+    },
+    {
+      "at": "2026-05-12T04:56:21.759196282+00:00",
+      "summary": "task repair-agent-turn-loader-scope completed"
+    },
+    {
+      "at": "2026-05-12T04:56:48.719906353+00:00",
+      "summary": "task repair-graph-agent-turn-weak-join assigned to worker-graph active"
+    },
+    {
+      "at": "2026-05-12T04:56:48.770042575+00:00",
+      "summary": "task repair-agent-turn-loader-scope completed"
+    },
+    {
+      "at": "2026-05-12T04:56:48.771268637+00:00",
+      "summary": "task docs-agent-turn-current-state assigned to worker-docs active"
+    },
+    {
+      "at": "2026-05-12T04:56:56.760384236+00:00",
+      "summary": "packet generated for worker-graph"
+    },
+    {
+      "at": "2026-05-12T04:56:56.801205340+00:00",
+      "summary": "packet generated for worker-docs"
+    },
+    {
+      "at": "2026-05-12T04:57:24.061890788+00:00",
+      "summary": "task review-loader-agent-turn-scope-repair added to lane review"
+    },
+    {
+      "at": "2026-05-12T04:57:24.112724490+00:00",
+      "summary": "task retainer-records-feature-boundary-map added to lane retainer"
+    },
+    {
+      "at": "2026-05-12T04:57:35.326983789+00:00",
+      "summary": "task review-implementation-lanes-drift added to lane review"
+    },
+    {
+      "at": "2026-05-12T04:57:35.366757223+00:00",
+      "summary": "task review-loader-agent-turn-scope-repair assigned to reviewer-loader active"
+    },
+    {
+      "at": "2026-05-12T04:57:35.369583099+00:00",
+      "summary": "task retainer-records-feature-boundary-map assigned to retainer active"
+    },
+    {
+      "at": "2026-05-12T04:57:46.757371682+00:00",
+      "summary": "task review-implementation-lanes-drift assigned to reviewer queue"
+    },
+    {
+      "at": "2026-05-12T04:57:46.808240931+00:00",
+      "summary": "packet generated for reviewer-loader"
+    },
+    {
+      "at": "2026-05-12T04:57:46.811211278+00:00",
+      "summary": "packet generated for retainer"
+    },
+    {
+      "at": "2026-05-12T04:57:46.813041812+00:00",
+      "summary": "packet generated for reviewer"
+    },
+    {
+      "at": "2026-05-12T05:00:29.195109196+00:00",
+      "summary": "task docs-agent-turn-current-state completed"
+    },
+    {
+      "at": "2026-05-12T05:00:29.197615020+00:00",
+      "summary": "task review-implementation-lanes-drift completed"
+    },
+    {
+      "at": "2026-05-12T05:00:29.245991317+00:00",
+      "summary": "task review-loader-agent-turn-scope-repair completed"
+    },
+    {
+      "at": "2026-05-12T05:00:47.799599229+00:00",
+      "summary": "task repair-graph-agent-turn-weak-join completed"
+    },
+    {
+      "at": "2026-05-12T05:06:29.185922687+00:00",
+      "summary": "task retainer-records-feature-boundary-map completed"
+    },
+    {
+      "at": "2026-05-12T05:06:44.446959739+00:00",
+      "summary": "task review-graph-agent-turn-weak-join-repair added to lane review"
+    },
+    {
+      "at": "2026-05-12T05:06:44.449730799+00:00",
+      "summary": "task docs-update-implementation-lanes-agent-turn added to lane docs"
+    },
+    {
+      "at": "2026-05-12T05:07:07.180438944+00:00",
+      "summary": "task repair-agent-turn-record-feature-boundary completed"
+    },
+    {
+      "at": "2026-05-12T05:07:07.231155238+00:00",
+      "summary": "task review-records-feature-boundary-repair added to lane review"
+    },
+    {
+      "at": "2026-05-12T05:07:15.070030237+00:00",
+      "summary": "task review-graph-agent-turn-weak-join-repair assigned to reviewer active"
+    },
+    {
+      "at": "2026-05-12T05:07:15.073384413+00:00",
+      "summary": "task review-records-feature-boundary-repair assigned to reviewer-loader active"
+    },
+    {
+      "at": "2026-05-12T05:07:15.111759557+00:00",
+      "summary": "task docs-update-implementation-lanes-agent-turn assigned to worker-docs active"
+    },
+    {
+      "at": "2026-05-12T05:07:22.613143297+00:00",
+      "summary": "packet generated for reviewer-loader"
+    },
+    {
+      "at": "2026-05-12T05:07:22.614744252+00:00",
+      "summary": "packet generated for reviewer"
+    },
+    {
+      "at": "2026-05-12T05:07:22.642489778+00:00",
+      "summary": "packet generated for worker-docs"
+    }
+  ]
+}

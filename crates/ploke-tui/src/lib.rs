@@ -95,6 +95,7 @@ use ratatui::{style::Style, widgets::List};
 use uuid::Uuid;
 
 pub static TARGET_DIR_FIXTURE: &str = "fixture_tracking_hash";
+pub(crate) const INDEXING_FAILURE_CONTAINMENT_NOTE: &str = "Temporary containment path: keep the ploke-tui runtime alive so the setup failure can be inspected, then fix the underlying parser/workspace issue before the next release.";
 
 static GLOBAL_EVENT_BUS: Lazy<Mutex<Option<Arc<EventBus>>>> = Lazy::new(|| Mutex::new(None));
 
@@ -389,6 +390,7 @@ impl AppEvent {
             AppEvent::System(SystemEvent::ToolCallRequested { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallCompleted { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallFailed { .. }) => EventPriority::Realtime,
+            AppEvent::System(SystemEvent::ChatTurnFinished { .. }) => EventPriority::Realtime,
             AppEvent::System(_) => EventPriority::Background,
             AppEvent::MessageUpdated(_) => EventPriority::Realtime,
             AppEvent::UpdateFailed(_) => EventPriority::Background,

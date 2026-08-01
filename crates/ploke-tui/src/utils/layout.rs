@@ -10,7 +10,7 @@ use super::super::*;
 /// Rc<[Rect]> containing the split areas for efficient rendering
 ///
 /// # Example
-/// ```
+/// ```rust,ignore
 /// use ratatui::layout::Rect;
 /// use ploke_tui::utils::layout::layout_statusline;
 /// // Split a 100px wide area into 3 sections (33%, 66%, 100% of remaining space)

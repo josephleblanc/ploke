@@ -1,0 +1,13 @@
+[package]
+name = "ploke-tree-browser"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+description = "Compatibility facade for browser playback models now owned by ploke-tree"
+
+[dependencies]
+ploke-tree = { workspace = true, features = ["projection"] }
+
+[features]
+default = []
+projection = ["ploke-tree/projection"]

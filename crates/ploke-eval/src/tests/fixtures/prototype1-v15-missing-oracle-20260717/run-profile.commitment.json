@@ -1,0 +1,7 @@
+{
+  "schema_version": "prototype1-run-profile-commitment.v1",
+  "profile_path": "/home/brasides/.ploke-eval/campaigns/p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429/prototype1/run-profile.toml",
+  "sha256": "cfda200a2ad71803cb405c6e109bca8c80dd6b2101d4ec4a12abe9eedf1c4f95",
+  "source_path": "/home/brasides/.ploke-eval/profiles/p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429.toml",
+  "admitted_at": "2026-07-17T06:47:51.408+00:00"
+}

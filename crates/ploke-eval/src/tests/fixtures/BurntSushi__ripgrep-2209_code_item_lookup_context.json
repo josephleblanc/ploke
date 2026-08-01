@@ -1,0 +1,455 @@
+{
+  "task_id": "BurntSushi__ripgrep-2209",
+  "source_log": "/home/brasides/.ploke-eval/logs/ploke_eval_20260407_164834_34623.log",
+  "api_request": {
+    "messages": [
+      {
+        "role": "system",
+        "content": "Focused crate: globset at /home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/globset. Workspace-wide graph is not loaded; tools operate on the focused crate. Cargo runs against the focused manifest unless a workspace package is specified."
+      },
+      {
+        "role": "system",
+        "content": "file_path: /home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/printer/src/standard.rs\ncanon_path: crate::standard::tests::replacement_multi_line\nkind: Code\nscore: 0.033\ncode_snippet:\n#[test]\n    fn replacement_multi_line() {\n        let matcher = RegexMatcher::new(r\"\\n\").unwrap();\n        let mut printer = StandardBuilder::new()\n            .replacement(Some(b\"?\".to_vec()))\n            .build(NoColor::new(vec![]));\n        SearcherBuilder::new()\n            .line_number(true)\n            .multi_line(true)\n            .build()\n            .search_reader(\n                &matcher,\n                \"hello\\nworld\\n\".as_bytes(),\n                printer.sink(&matcher),\n            )\n            .unwrap();\n... [truncated]"
+      },
+      {
+        "role": "system",
+        "content": "file_path: /home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/printer/src/standard.rs\ncanon_path: crate::standard::tests::replacement_multi_line_combine_lines\nkind: Code\nscore: 0.032\ncode_snippet:\n#[test]\n    fn replacement_multi_line_combine_lines() {\n        let matcher = RegexMatcher::new(r\"\\n(.)?\").unwrap();\n        let mut printer = StandardBuilder::new()\n            .replacement(Some(b\"?$1\".to_vec()))\n            .build(NoColor::new(vec![]));\n        SearcherBuilder::new()\n            .line_number(true)\n            .multi_line(true)\n            .build()\n            .search_reader(\n                &matcher,\n                \"hello\\nworld\\n\".as_bytes(),\n                printer.sink(&matcher),\n            )\n            .unwrap();\n... [truncated]"
+      },
+      {
+        "role": "system",
+        "content": "file_path: /home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/printer/src/util.rs\ncanon_path: crate::util::find_iter_at_in_context\nkind: Code\nscore: 0.032\ncode_snippet:\npub fn find_iter_at_in_context<M, F>(\n    searcher: &Searcher,\n    matcher: M,\n    mut bytes: &[u8],\n    range: std::ops::Range<usize>,\n    mut matched: F,\n) -> io::Result<()>\nwhere\n    M: Matcher,\n    F: FnMut(Match) -> bool,\n{\n    // This strange dance is to account for the possibility of look-ahead in\n    // the regex. The problem here is that mat.bytes() doesn't include the\n    // lines beyond the match boundaries in mulit-line mode, which means that\n    // when we try to rediscover the full set of matches here, the regex may no\n    // longer match if it required some look-ahead beyond the matching lines.\n... [truncated]"
+      },
+      {
+        "role": "system",
+        "content": "file_path: /home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/printer/src/standard.rs\ncanon_path: crate::standard::tests::replacement_multi_line_diff_line_term\nkind: Code\nscore: 0.031\ncode_snippet:\n#[test]\n    fn replacement_multi_line_diff_line_term() {\n        let matcher = RegexMatcherBuilder::new()\n            .line_terminator(Some(b'\\x00'))\n            .build(r\"\\n\")\n            .unwrap();\n        let mut printer = StandardBuilder::new()\n            .replacement(Some(b\"?\".to_vec()))\n            .build(NoColor::new(vec![]));\n        SearcherBuilder::new()\n            .line_terminator(LineTerminator::byte(b'\\x00'))\n            .line_number(true)\n            .multi_line(true)\n            .build()\n            .search_reader(\n                &matcher,\n... [truncated]"
+      },
+      {
+        "role": "system",
+        "content": "file_path: /home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/printer/src/standard.rs\ncanon_path: crate::standard::tests::regression_search_empty_with_crlf\nkind: Code\nscore: 0.031\ncode_snippet:\n#[test]\n    fn regression_search_empty_with_crlf() {\n        let matcher =\n            RegexMatcherBuilder::new().crlf(true).build(r\"x?\").unwrap();\n        let mut printer = StandardBuilder::new()\n            .color_specs(ColorSpecs::default_with_color())\n            .build(Ansi::new(vec![]));\n        SearcherBuilder::new()\n            .line_terminator(LineTerminator::crlf())\n            .build()\n            .search_reader(&matcher, &b\"\\n\"[..], printer.sink(&matcher))\n            .unwrap();\n\n        let got = printer_contents_ansi(&mut printer);\n        assert!(!got.is_empty());\n    }"
+      },
+      {
+        "role": "system",
+        "content": "file_path: /home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/printer/src/json.rs\ncanon_path: crate::json::tests\nkind: Code\nscore: 0.030\ncode_snippet:\n#[cfg(test)]\nmod tests {\n    use grep_matcher::LineTerminator;\n    use grep_regex::{RegexMatcher, RegexMatcherBuilder};\n    use grep_searcher::SearcherBuilder;\n\n    use super::{JSONBuilder, JSON};\n\n    const SHERLOCK: &'static [u8] = b\"\\\nFor the Doctor Watsons of this world, as opposed to the Sherlock\nHolmeses, success in the province of detective work must always\nbe, to a very large extent, the result of luck. Sherlock Holmes\ncan extract a clew from a wisp of straw or a flake of cigar ash;\nbut Doctor Watson has to have it taken out for him and dusted,\nand exhibited clearly, with a label attached.\n\";\n... [truncated]"
+      },
+      {
+        "role": "system",
+        "content": "file_path: /home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/printer/src/standard.rs\ncanon_path: crate::standard::tests::regression_after_context_with_match\nkind: Code\nscore: 0.030\ncode_snippet:\n#[test]\n    fn regression_after_context_with_match() {\n        let haystack = \"\\\na\nb\nc\nd\ne\nd\ne\nd\ne\nd\ne\n\";\n\n... [truncated]"
+      },
+      {
+        "role": "system",
+        "content": "file_path: /home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/printer/src/standard.rs\ncanon_path: crate::standard::tests::replacement_per_match\nkind: Code\nscore: 0.029\ncode_snippet:\n#[test]\n    fn replacement_per_match() {\n        let matcher = RegexMatcher::new(r\"Sherlock|Doctor (\\w+)\").unwrap();\n        let mut printer = StandardBuilder::new()\n            .per_match(true)\n            .replacement(Some(b\"doctah $1 MD\".to_vec()))\n            .build(NoColor::new(vec![]));\n        SearcherBuilder::new()\n            .line_number(true)\n            .build()\n            .search_reader(\n                &matcher,\n                SHERLOCK.as_bytes(),\n                printer.sink(&matcher),\n            )\n            .unwrap();\n... [truncated]"
+      },
+      {
+        "role": "system",
+        "content": "file_path: /home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/searcher/src/searcher/glue.rs\ncanon_path: crate::searcher::glue::tests::scratch\nkind: Code\nscore: 0.029\ncode_snippet:\n#[test]\n    fn scratch() {\n        use crate::sinks;\n        use crate::testutil::RegexMatcher;\n\n        const SHERLOCK: &'static [u8] = b\"\\\nFor the Doctor Wat\\xFFsons of this world, as opposed to the Sherlock\nHolmeses, success in the province of detective work must always\nbe, to a very large extent, the result of luck. Sherlock Holmes\ncan extract a clew from a wisp of straw or a flake of cigar ash;\nbut Doctor Watson has to have it taken out for him and dusted,\nand exhibited clearly, with a label attached.\\\n    \";\n\n        let haystack = SHERLOCK;\n        let matcher = RegexMatcher::new(\"Sherlock\");\n... [truncated]"
+      },
+      {
+        "role": "system",
+        "content": "file_path: /home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/printer/src/standard.rs\ncanon_path: crate::standard::tests::replacement\nkind: Code\nscore: 0.029\ncode_snippet:\n#[test]\n    fn replacement() {\n        let matcher = RegexMatcher::new(r\"Sherlock|Doctor (\\w+)\").unwrap();\n        let mut printer = StandardBuilder::new()\n            .replacement(Some(b\"doctah $1 MD\".to_vec()))\n            .build(NoColor::new(vec![]));\n        SearcherBuilder::new()\n            .line_number(true)\n            .build()\n            .search_reader(\n                &matcher,\n                SHERLOCK.as_bytes(),\n                printer.sink(&matcher),\n            )\n            .unwrap();\n\n... [truncated]"
+      },
+      {
+        "role": "system",
+        "content": "\n<-- BEGIN SYSTEM PROMPT -->\nYou are a highly skilled software engineer, specializing in the Rust programming language.\n\nYou will be asked to provide some assistance in collaborating with the user.\nRAG snippets are intentionally brief; request deeper context with the request_code_context tool.\n<-- END SYSTEM PROMPT -->\n"
+      },
+      {
+        "role": "user",
+        "content": "Solve the following benchmark issue.\n\nTask id: BurntSushi__ripgrep-2209\nRepository root: /home/brasides/.ploke-eval/repos/BurntSushi/ripgrep\nBase SHA: 4dc6c73c5a9203c5a8a89ce2161feca542329812\nTitle: printer: fix duplicative replacement in multiline mode\n\nThis furthers our kludge of dealing with PCRE2's look-around in the\r\nprinter. Because of our bad abstraction boundaries, we added a kludge to\r\ndeal with PCRE2 look-around by extending the bytes we search by a fixed\r\namount to hopefully permit any look-around to operate. But because of\r\nthat kludge, we wind up over extending ourselves in some cases and\r\ndragging along those extra bytes.\r\n\r\nWe had fixed this for simple searching by simply rejecting any matches\r\npast the end point. But we didn't do the same for replacements. So this\r\ncommit extends our kludge to replacements.\r\n\r\nThanks to @sonohgong for diagnosing the problem and proposing a fix. I\r\nmostly went with their solution, but adding the new replacement routine\r\nas an internal helper rather than a new APIn in the 'grep-matcher'\r\ncrate.\r\n\r\nFixes #2095, Fixes #2208\n\nUse the repository tools to inspect the code, make the minimal fix, and finish by producing the patch output."
+      }
+    ],
+    "model": "qwen/qwen3-coder",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "request_code_context",
+          "description": "Request additional code context from the repository up to a token budget.",
+          "parameters": {
+            "properties": {
+              "search_term": {
+                "description": "Search term guide which code guide hybrid semantic search and bm25.",
+                "type": "string"
+              },
+              "token_budget": {
+                "description": "Optional maximum tokens of code context to return, sane defaults",
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "apply_code_edit",
+          "description": "Apply canonical code edits to one or more nodes identified by canonical path.",
+          "parameters": {
+            "properties": {
+              "confidence": {
+                "description": "Optional confidence indicator for the edit proposal.",
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              "edits": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "canon": {
+                      "description": "Canonical path to the node, e.g. crate::module::Item",
+                      "type": "string"
+                    },
+                    "code": {
+                      "description": "Replacement code for the node.",
+                      "type": "string"
+                    },
+                    "file": {
+                      "description": "Absolute or workspace-relative file path.",
+                      "type": "string"
+                    },
+                    "node_type": {
+                      "description": "Node type (function|struct|enum|...).",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "file",
+                    "canon",
+                    "node_type",
+                    "code"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "edits"
+            ],
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "create_file",
+          "description": "Create a new Rust source file atomically within the workspace, staging for approval.",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "content": {
+                "description": "Full file content.",
+                "type": "string"
+              },
+              "create_parents": {
+                "description": "Create parent directories if missing (default: false).",
+                "type": "boolean"
+              },
+              "file_path": {
+                "description": "Absolute or workspace-relative path to new text file; allowed extensions come from tooling.create_file_extensions.",
+                "type": "string"
+              },
+              "on_exists": {
+                "description": "Policy when file already exists (default: error).",
+                "enum": [
+                  "error",
+                  "overwrite"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "file_path",
+              "content"
+            ],
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "non_semantic_patch",
+          "description": "Apply a non-semantic code edit. This tool is most useful in two cases:\n\n1. You need to read/edit non-rust files\n    - While this application as a whole is focused on Rust code, the user may ask you to read or even edit non-Rust files.\n    - This `non_semantic_patch` tool can be used to patch non-Rust files.\n\n2. The parser that allows for semantic edits fails on the target directory\n    - usually because there is an error in the target crate (e.g. a missing closing bracket).\n    - In this case, this `non_semantic_patch tool can be used to apply a code edit.\n    - DO NOT use this tool on Rust files (*.rs) before trying to use the semantic code edit tool first.\n",
+          "parameters": {
+            "properties": {
+              "confidence": {
+                "description": "Optional confidence indicator for the edit proposal.",
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              "patches": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "diff": {
+                      "description": "Raw Unified Diff",
+                      "type": "string"
+                    },
+                    "file": {
+                      "description": "Absolute or workspace-root-relative file path.",
+                      "type": "string"
+                    },
+                    "reasoning": {
+                      "description": "One-sentence description of why these changes are being made",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "file",
+                    "diff",
+                    "reasoning"
+                  ],
+                  "type": "object"
+                },
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "patches"
+            ],
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "read_file",
+          "description": "Read workspace files before editing. Paths must be absolute or workspace-root-relative. Supports optional line ranges and truncation limits to keep responses concise.",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "end_line": {
+                "description": "Optional 1-based line at which to stop reading (inclusive).",
+                "minimum": 1,
+                "type": "integer"
+              },
+              "file": {
+                "description": "Absolute or workspace-root-relative file path.",
+                "type": "string"
+              },
+              "max_bytes": {
+                "description": "Maximum number of UTF-8 bytes to return. Defaults to editor config.",
+                "minimum": 1,
+                "type": "integer"
+              },
+              "start_line": {
+                "description": "Optional 1-based line from which to start reading.",
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "file"
+            ],
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "code_item_lookup",
+          "description": "Find the definition of a known code item. Better than grep. \n\nReturns the code snippet of the item if it exists, and provides positive proof if the item does not exist.\n\nUse this tool when you want to look up a given code item. \n\nPro tip: use it with parallel tool calls to look up as many code items as you want.\n",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "file_path": {
+                "description": "Absolute or workspace-relative file path.",
+                "type": "string"
+              },
+              "item_name": {
+                "description": "The name of the item being search for, e.g.\nif looking for\n\n```rust\nfn example_func() {}`,\n```\n\nThis would be the string: example_func\n",
+                "type": "string"
+              },
+              "module_path": {
+                "description": "canonical module path, e.g. \"crate::mod_one::nested_mod\".\n    Note that this does not include the target item's identifier.",
+                "type": "string"
+              },
+              "node_kind": {
+                "description": "The kind of code item this is. Must be one of:\n- function\n- const\n- enum\n- impl\n- import (e.g. `use` statement)\n- macro\n- module\n- static\n- struct\n- trait\n- type_alias\n- union",
+                "type": "string"
+              }
+            },
+            "required": [
+              "item_name",
+              "file_path",
+              "node_kind",
+              "module_path"
+            ],
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "code_item_edges",
+          "description": "Shows all edges for the target item. Useful for discovering nearby code items.",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "file_path": {
+                "description": "Absolute or workspace-relative file path.",
+                "type": "string"
+              },
+              "item_name": {
+                "description": "The name of the item being search for, e.g.\nif looking for\n\n```rust\nfn example_func() {}`,\n```\n\nThis would be the string: example_func\n",
+                "type": "string"
+              },
+              "module_path": {
+                "description": "canonical module path, e.g. \"crate::mod_one::nested_mod\".\n    Note that this does not include the target item's identifier.",
+                "type": "string"
+              },
+              "node_kind": {
+                "description": "The kind of code item this is. Must be one of:\n- function\n- const\n- enum\n- impl\n- import (e.g. `use` statement)\n- macro\n- module\n- static\n- struct\n- trait\n- type_alias\n- union",
+                "type": "string"
+              }
+            },
+            "required": [
+              "item_name",
+              "file_path",
+              "node_kind",
+              "module_path"
+            ],
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "cargo",
+          "description": "Run cargo check or cargo test with JSON diagnostics output.",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "all_features": {
+                "description": "Enable all features (--all-features).",
+                "type": "boolean"
+              },
+              "benches": {
+                "description": "Check/test all bench targets (--benches).",
+                "type": "boolean"
+              },
+              "bins": {
+                "description": "Check/test all binary targets (--bins).",
+                "type": "boolean"
+              },
+              "command": {
+                "description": "Which cargo command to run: test or check.",
+                "enum": [
+                  "test",
+                  "check"
+                ],
+                "type": "string"
+              },
+              "examples": {
+                "description": "Check/test all example targets (--examples).",
+                "type": "boolean"
+              },
+              "features": {
+                "description": "Optional feature list passed to --features.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "lib": {
+                "description": "Check/test the library target only (--lib).",
+                "type": "boolean"
+              },
+              "no_default_features": {
+                "description": "Disable default features (--no-default-features).",
+                "type": "boolean"
+              },
+              "package": {
+                "description": "Optional workspace package name; providing it runs cargo from the workspace root.",
+                "type": "string"
+              },
+              "profile": {
+                "description": "Cargo profile name for --profile.",
+                "type": "string"
+              },
+              "release": {
+                "description": "Enable release profile (--release).",
+                "type": "boolean"
+              },
+              "target": {
+                "description": "Target triple for --target.",
+                "type": "string"
+              },
+              "test_args": {
+                "description": "Arguments for the test binary (only for cargo test).",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "tests": {
+                "description": "Check/test all test targets (--tests).",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "command"
+            ],
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "list_dir",
+          "description": "List files in a directory (workspace-root scoped) without shell access. Returns a structured entry list with names, kinds, and optional size/mtime metadata.",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "dir": {
+                "description": "Absolute or workspace-root-relative directory path.",
+                "type": "string"
+              },
+              "include_hidden": {
+                "description": "Include hidden entries starting with '.' (default: false).",
+                "type": "boolean"
+              },
+              "max_entries": {
+                "description": "Maximum number of entries to return (default: no limit).",
+                "minimum": 1,
+                "type": "integer"
+              },
+              "sort": {
+                "description": "Sort order: name (asc), mtime (newest first), size (largest first), none (filesystem order). Default: name.",
+                "enum": [
+                  "name",
+                  "mtime",
+                  "size",
+                  "none"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "dir"
+            ],
+            "type": "object"
+          }
+        }
+      }
+    ],
+    "tool_choice": "auto",
+    "provider": {
+      "allow_fallbacks": false,
+      "require_parameters": true,
+      "only": [
+        "deepinfra/turbo"
+      ]
+    }
+  }
+}

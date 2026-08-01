@@ -1,0 +1,27 @@
+{
+  "schema_version": "prototype1-treatment-node.v1",
+  "node_id": "node-6bae782006db482c",
+  "parent_node_id": "node-9c9dcbeeb3a4d400",
+  "generation": 1,
+  "instance_id": "c9f7defd-7888-4152-91ba-b1e05dc5fc8c",
+  "source_state_id": "prototype1-parent-p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429-gen0",
+  "operation_target": {
+    "kind": "artifact",
+    "artifact_id": "artifact:git-commit:02f4ef0993638670bbd155c9e6c9cdd2796f648b"
+  },
+  "base_artifact_id": "artifact:git-commit:02f4ef0993638670bbd155c9e6c9cdd2796f648b",
+  "patch_id": "broad-harness:broad-harness-request:node-9c9dcbeeb3a4d400:r3",
+  "derived_artifact_id": "artifact:git-commit:b5e1c2da4c5a9ca07aa010cafe7f75e78ab43aa5",
+  "parent_branch_id": "prototype1-parent-p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429-gen0",
+  "branch_id": "branch-68afac57e92d5ebd",
+  "candidate_id": "broad-harness-g1-01",
+  "target_relpath": "crates/ploke-protocol/src/llm.rs",
+  "node_dir": "/home/brasides/.ploke-eval/campaigns/p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429/prototype1/nodes/node-6bae782006db482c",
+  "workspace_root": "/home/brasides/.ploke-eval/campaigns/p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429/prototype1/workspaces/edit-harness/node-9c9dcbeeb3a4d400-r3",
+  "binary_path": "/home/brasides/.ploke-eval/campaigns/p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429/prototype1/nodes/node-6bae782006db482c/bin/ploke-eval",
+  "runner_request_path": "/home/brasides/.ploke-eval/campaigns/p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429/prototype1/nodes/node-6bae782006db482c/runner-request.json",
+  "runner_result_path": "/home/brasides/.ploke-eval/campaigns/p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429/prototype1/nodes/node-6bae782006db482c/runner-result.json",
+  "status": "succeeded",
+  "created_at": "2026-07-17T07:22:20.334139020+00:00",
+  "updated_at": "2026-07-17T07:31:29.468955302+00:00"
+}

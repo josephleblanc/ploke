@@ -1,0 +1,786 @@
+Deliberative Curation: A Protocol for Multi-Agent Knowledge
+Bases
+Steven Johnson
+ORCID: 0009-0007-4864-2001
+
+Abstract
+As AI agents transition from isolated tool use to collaborative participation in shared knowledge ecosystems, the question of how to govern collective knowledge curation becomes pressing. Human platforms have developed sophisticated governance mechanisms over two
+decades, but a structured review of their transfer to the agent setting [2] reveals fundamental
+gaps: agent statelessness undermines deterrence-based sanctions, model homogeneity violates the independence assumptions underlying crowd wisdom [8], and sycophancy collapses deliberative consensus. We propose a deliberative curation protocol that addresses these gaps through three governance layers: (1) a knowledge artifact lifecycle formalized as a labeled transition system with guard conditions and timeout transitions; (2) reputation-weighted deliberative voting integrating local Beta Reputation System scores with global EigenTrust amplification, where structured deliberation precedes voting (specified but not empirically validated in this work); and (3) graduated sanctions adapted for stateless agents, including a broken agent handling mechanism that distinguishes technical malfunction from adversarial behavior. The protocol integrates baseline defenses against Sybil attacks and sycophancy (commit-reveal voting, newcomer tiering); a comprehensive adversarial analysis is the subject of subsequent work. We evaluate the protocol through agent-based simulation with 100 agents drawn from seven behavioral archetypes under two adversity scenarios. The principal finding is that the protocol trades modest precision under benign conditions for substantially better resilience under adversity: under moderate adversity, the protocol achieves 0.826 precision versus 0.791 for majority vote (p < 0.001), with the gap widening under stress (0.807 vs. 0.740, p < 0.001); the protocol degrades roughly three times more slowly than the majority vote baseline. Ablation analysis identifies the commit-reveal mechanism, designed to preserve judgment independence, as the most impactful single component (8.2 to 8.6 percentage points of precision improvement). Reputation weighting provides consistent value that scales with adversity (+3.2pp moderate, +6.9pp stress). Graduated sanctions and dispute limits were not exercised in the simulation and remain empirically unvalidated.
+
+Introduction
+
+As AI agents evolve from isolated tools into collaborative participants in shared knowledge ecosystems, a new infrastructure challenge emerges: how should agents collectively decide what knowledge to accept, challenge, and retire? This question of curation—the collective process by which contributions are evaluated, validated, disputed, and managed over time—has been
+studied extensively in human platforms [5, 6], but remains largely unaddressed for multi-agent
+systems. Existing work on multi-agent collaboration focuses on session-scoped debate [4], retrieval pipelines, or crowdsourced annotation, none of which formalize the full curation lifecycle for persistent knowledge bases. To our knowledge, no prior work combines these requirements for multi-agent knowledge curation within a unified protocol: artifact lifecycle management, structured deliberation before voting, reputation-weighted decision-making, and governance adapted for stateless agents. The individual mechanisms are well-established; our contribution lies in
+
+their composition and empirical evaluation for this new setting. Several lines of work address adjacent problems without solving the curation challenge directly. Multi-Agent Debate (MAD) [4] improves factual accuracy through one-shot discussion, but produces ephemeral outcomes with no persistent knowledge management. Retrieval-augmented generation pipelines maintain shared fact stores but rely on centralized ingestion with no collective evaluation. When agent communities have attempted ungoverned collaborative knowledge
+production, the results confirm that the absence of governance leads to rapid quality collapse [3].
+The missing piece is a formal protocol that governs the full lifecycle of knowledge artifacts—from proposal through structured evaluation to acceptance, dispute, and retirement—in a way that is adapted to the specific properties of agent populations. Human communities have confronted analogous challenges for decades. In a companion survey [2], we conducted a structured review of platform governance mechanisms (Wikipedia, Stack Overflow, Community Notes [7, 34]) and identified nine design considerations for agent knowledge curation. The review revealed that transfer from human to agent governance is not direct; the specific challenges are detailed in Section 2.2. The present paper formalizes a protocol that operationalizes several of these design considerations, with particular focus on the deliberation and lifecycle mechanisms that distinguish curation from simple aggregation. A further structural motivation comes from List and Pettit’s discursive dilemma [13]: majority voting on logically interconnected propositions can yield collectively inconsistent outcomes. Since knowledge curation involves interrelated judgments (accuracy, sourcing, novelty, coherence), this motivates a deliberative approach in which agents exchange structured arguments before voting. In this paper, we propose a formal deliberative curation protocol designed to answer the question: how should a community of agents collectively decide what knowledge to accept? The protocol combines a knowledge artifact lifecycle (formalized as a labeled transition system), structured deliberation before voting (where reviewers exchange arguments before committing to a judgment), reputation-weighted decision-making (integrating Beta Reputation and EigenTrust to ensure that agents with better track records carry more influence), and graduated sanctions adapted for stateless agents (including a mechanism for distinguishing technical malfunction from adversarial behavior). We state five protocol properties and one lemma with informal supporting arguments and evaluate the protocol through agent-based simulation with seven agent
+archetypes under two adversity scenarios. A partial open-source implementation exists [1].
+
+1.1
+
+Related Work
+
+The protocol draws on and positions itself relative to several established research areas. Platform governance. The governance of collaborative knowledge production has been studied extensively in the context of Wikipedia [5, 6], Stack Overflow, Reddit, and X’s Community Notes [7, 34]. Ostrom’s design principles for governing commons [5] provide the theoretical foundation for graduated sanctions and reputation-based access control. Our companion survey [2] maps these mechanisms to the agent setting and identifies nine design considerations that this protocol operationalizes.
+Reputation systems and trust. The Beta Reputation System [14] and EigenTrust [15]
+are well-established components that we compose rather than reinvent. Our contribution is their integration with deliberation and lifecycle management, not the reputation mechanisms themselves. Consensus protocols. Classical distributed consensus (PBFT, Raft) addresses state agreement among replicated processes under Byzantine faults. Our problem is fundamentally differ2
+
+ent: agents must reach collective quality judgments about knowledge artifacts, not agree on a shared state. The threat model differs accordingly (biased or incompetent agents rather than crashed or arbitrarily faulty processes), and the decision mechanism involves reputation-weighted deliberation rather than quorum-based message exchange. Computational social choice and peer prediction. Voting theory and judgment aggregation provide formal frameworks for collective decision-making. List and Pettit’s discursive dilemma [13] directly motivates our deliberation-before-voting design. Peer prediction mechanisms—including Bayesian Truth Serum, output agreement, and the Surprisingly Popular algorithm—address eliciting honest judgments without ground truth, a challenge shared by our setting. These mechanisms require specific distributional assumptions (e.g., that agents hold informative priors about others’ beliefs) that may not hold for LLM agents with correlated training distributions. We adopt a reputation-based approach that tracks behavioral history rather than eliciting belief reports, but acknowledge that combining reputation with peer prediction signals is a promising direction. The crowdsourcing quality control literature [9] provides additional aggregation methods for noisy judgments; our setting differs in that agents are persistent participants with evolving reputations rather than anonymous one-shot workers. Decentralized governance (DAOs). On-chain governance systems (e.g., Aragon, Colony) implement reputation-weighted voting with commit-reveal at scale. Our protocol shares mechanismlevel similarities but targets a different setting: stateless AI agents rather than human token holders, with specific adaptations for model homogeneity, sycophancy, and hallucination that have no counterpart in DAO governance. Multi-agent debate. Recent work on multi-agent debate (MAD) [4] demonstrates that structured discussion improves factual accuracy. However, MAD produces ephemeral outcomes with no persistent lifecycle management, dispute resolution, or reputation tracking. Our protocol addresses the full governance lifecycle that MAD leaves open.
+
+System Model
+
+We model the system as a population of agents A interacting over a shared knowledge base K consisting of knowledge artifacts (chunks) C. A distinguished system agent (the protocol orchestrator) manages lifecycle transitions but does not participate in voting. This section formalizes the three components of the model: the knowledge artifact lifecycle, the agent model, and the reputation system.
+
+2.1
+
+Knowledge Artifact Lifecycle
+
+We formalize the lifecycle of a knowledge artifact as a Labeled Transition System (LTS), following
+standard practice in protocol specification and verification [16, 17]. This formalism enables
+precise statement of liveness and safety properties. Definition 1 (Knowledge Artifact LTS). The lifecycle of a chunk c ∈ C is a labeled transition
+system L = (S, s0 , Act, →) where:
+• S = {proposed, under_review, active, disputed, superseded, retracted} is the finite
+set of states;
+• s0 = proposed is the initial state;
+
+• Act = {submit, begin_review, accept, reject, dispute, uphold, retract, supersede, resubmit,
+is the set of actions;
+• →⊆ S × Act × S is the transition relation, defined below.
+
+Each transition is guarded by an enabling condition G that must hold for the transition to fire.
+The terminal states are ST = {superseded, retracted}, plus active when no further dispute
+is possible (see dispute bound below). Transitions and guards: superseded supersede
+
+proposed
+
+begin_review
+
+under_review
+
+accept
+
+active
+
+retract
+
+timeout
+
+dispute uphold
+
+reject
+
+disputed resubmit
+
+retract
+
+retracted
+
+Active (goal state)
+Terminal
+Timeout / Resubmit
+
+Figure 1: Knowledge artifact lifecycle as a labeled transition system. Guards on each transition are specified in the text.
+Resubmission. Unlike most lifecycle models where retraction is terminal, we include a guarded resubmit transition that allows previously retracted chunks to re-enter evaluation. This mirrors established patterns in academic publishing (retraction followed by corrected republication) and
+software issue tracking (resolved to reopened) [35]. Resubmission requires a minimum cooldown
+period, new supporting evidence or a substantive revision, sufficient submitter reputation, and is bounded by a resubmission counter resub(c) < resubmax to prevent indefinite cycling. The resubmitted chunk enters the standard review pipeline as a fresh proposal.
+The formalism draws on the Guard-Stage-Milestone (GSM) model of Hull et al. [18], adapted
+from business artifacts to knowledge artifacts. While formal lifecycle models for business processes are well-established, including Workflow Nets [36], declarative constraint-based specifications [37], and the DCC Curation Lifecycle Model [38] for digital objects, no prior work formalizes a knowledge artifact lifecycle for multi-agent curation with reputation-dependent guards. A key difference from existing artifact lifecycle models is that our guards couple the artifact state to the agent trust model: transitions depend not only on data conditions but on the reputation of the agents involved. Timeout transitions. Every non-terminal state has an associated timeout after which the chunk transitions to retracted (for proposed and under_review) or is frozen for administrative review (for disputed). This ensures that no chunk remains indefinitely in a non-terminal state, which is necessary for the liveness property established in Section 4.1. Dispute loop prevention. Each chunk c maintains a dispute counter d(c), incremented each time a dispute is filed. The guard on the dispute action requires d(c) < dmax . After dmax disputes, the chunk is frozen: it remains in its current state and is flagged for administrative
+
+review. This bound prevents liveness violations from repeated dispute cycles and is formally required for the proof in Section 4.1.
+
+2.2
+
+Agent Model
+
+Definition 2 (Agent State). An agent is characterized by the following state variables a = (id , role, rep, hist) where:
+• id is a unique identifier (API key), immutable;
+• role ⊆ {contributor, reviewer, disputer} is a set of roles, not mutually exclusive, earned
+through reputation thresholds and evolving over time;
+• rep = (α, β, τlast ) consists of Beta distribution parameters and a last-activity timestamp, updated after each protocol interaction;
+• hist is the agent’s action history (votes, contributions, sanctions received), append-only. Roles are granted based on reputation thresholds: all agents with r(a) ≥ rmin may contribute;
+agents with r(a) ≥ r1 may review; agents with r(a) ≥ r2 > r1 may file disputes. These thresholds
+implement a tier system described in Section 2.3. System agent (protocol orchestrator). The protocol designates a system agent responsible for managing lifecycle transitions and enforcing transition guards. This orchestrator executes all state transitions but does not cast votes or submit content. This separation ensures that the guard conditions on transitions are enforced by a single trusted component, simplifying the safety argument in Section 4.2. The deliberation phase (Section 3.2) is managed by a dedicated conversation orchestrator, which handles turn management, disclosure rules, and discussion compaction independently from lifecycle transitions. Agent-specific properties. Agent populations differ from human contributor communities in ways that affect protocol design; we summarize the properties most relevant to this protocol and
+refer to [2] for a comprehensive analysis. Agent populations offer opportunities: high throughput
+(orders of magnitude faster contribution and review) and continuous availability (no timezone or fatigue constraints), enabling shorter review cycles. They also introduce constraints beyond those found in human platforms, including variable domain competence, training obsolescence, bounded context windows, minimal social cost of banned identities, and prompt injection vulnerability [12]. Three constraints directly shape the protocol design: Statelessness. Many agent architectures do not retain memories across interactions. An agent sanctioned in round t may have no awareness of that sanction in round t + 1 unless the protocol infrastructure explicitly enforces the restriction. Consequently, sanctions must operate as system-enforced access controls rather than relying on learned behavioral modification. Model homogeneity. When multiple agents share the same underlying language model, their assessments are not independent samples; they are correlated draws from the same distribution. This violates the independence assumption underlying Condorcet’s jury theorem and the Dawid-Skene model [9]. Lorenz et al. [10] showed that even partial correlation among judges degrades collective accuracy. The protocol mitigates this through open participation (Section 3.1), which increases the likelihood of diverse reviewers, though no formal diversity constraint is enforced. Ensuring reviewer diversity across model providers remains an open challenge discussed in Section 6. Hallucination. Agents can produce plausible, confidently stated content that is factually incorrect, without any adversarial intent. Hallucinated content is indistinguishable from genuine knowledge in both form and confidence level. Worse, agents can hallucinate supporting sources that lend false credibility to incorrect claims. In a curation system, hallucinated chunks that
+
+pass review can be cited by other agents as validated sources, creating cascading hallucination chains analogous to Wikipedia’s “citogenesis” problem but operating at machine speed [2]. The protocol’s conduct-based governance cannot detect hallucinations because the contributing agent’s behavior is procedurally correct. This fundamental limit is discussed in Section 6.
+
+2.3
+
+Reputation Model
+
+The reputation system serves two functions: it determines voting weight (how much influence an agent’s assessment carries) and it governs role access (which protocol actions an agent may perform). We combine a local reputation mechanism based on the Beta Reputation System
+(BRS) [14] with global trust amplification via EigenTrust [15]. This section specifies the composition formally.
+Local reputation (BRS). Each agent a maintains Beta distribution parameters (αa , βa ) initialized to (1, 1) (uniform prior). The local reputation score is the expected value of the Beta distribution: αa r(a) = αa + β a Parameters are updated based on observed outcomes: αa is incremented when agent a produces a positive outcome (an accepted contribution, a vote aligned with the final decision) and βa is incremented on negative outcomes (a rejected contribution, a vote opposing the final decision, a sanction received). The BRS provides a principled Bayesian framework for aggregating binary feedback with a natural uncertainty quantification: agents with few interactions have high
+variance in r(a), appropriately reflecting limited evidence [14].
+Time decay. To prevent stale reputation from conferring permanent authority, we apply exponential decay to the Beta parameters: αa (t) = αa (t0 ) · e−δ(t−τlast ) βa (t) = βa (t0 ) · e−δ(t−τlast ) where δ > 0 is the decay rate and τlast is the timestamp of agent a’s most recent activity. As both parameters decay symmetrically, the expected reputation r(a) is preserved for inactive agents, but the effective sample size (αa + βa ) decreases, reflecting growing uncertainty. This is equivalent to discounting old evidence and ensures that sustained participation is required to maintain high influence.
+The choice of exponential decay follows convention in the BRS literature [14]. The decay function
+(exponential vs. linear vs. step) and the decay rate δ are deployment parameters whose optimal values depend on the agent population and contribution frequency. We use δ = 0.01 per round in our simulation (Section 5.2) but do not claim this value is optimal; sensitivity analysis of decay parameters is left for future work. Global trust amplification (EigenTrust). Local BRS scores capture an agent’s direct track record but do not account for the trustworthiness of the agents whose assessments contributed to
+that record. EigenTrust [15] computes a global trust vector by propagating local trust through
+the interaction graph. We define the composition in four steps. Step 1: Local interaction scores. For each pair of agents (i, j), let sij denote the net positive interaction score of agent j as assessed by agent i, derived from co-participation in reviews (agreement on outcomes weighted by outcome quality). Step 2: Normalized trust matrix. Construct the row-normalized trust matrix: max(sij , 0)
+Cij = P
+k max(sik , 0)
+
+Negative interactions are clipped to zero to ensure non-negativity. If agent i has no positive
+interactions, the row defaults to a uniform prior Cij = 1/|A|.
+Step 3: Global trust computation. The global trust vector ⃗t is the stationary distribution of the Markov chain defined by C T , computed via power iteration with a damping factor: ⃗t(k+1) = (1 − ϵ) · C T ⃗t(k) + ϵ · p⃗ where p⃗ is a pre-trusted seed vector (e.g., uniform over a set of administrator-endorsed agents) and ϵ ∈ (0, 1) is the damping factor. Convergence to a unique stationary vector is guaranteed
+by the Perron-Frobenius theorem, since the damped matrix is primitive [15].
+Step 4: Effective voting weight. The voting weight of agent i combines local and global trust: wi = γ · ri + (1 − γ) · ti
+where γ ∈ [0, 1] balances local reputation against global trust. The weight is bounded: wmin ≤
+wi ≤ wmax , where wmin > 0 ensures that every agent retains minimal influence and wmax
+prevents any single agent from dominating outcomes. Tier system. Agents are classified into tiers based on their local reputation score r(a) and interaction count n(a):
+• Tier 0 (newcomer): n(a) < nthresh . Weight fixed at wmin . No review or dispute privileges. Contributions enter a sandbox queue with enhanced scrutiny.
+• Tier 1 (established): n(a) ≥ nthresh and r(a) ≥ r1 . Standard voting weight. Review
+privileges granted.
+• Tier 2 (trusted): r(a) ≥ r2 > r1 . May file disputes and participate in dispute review
+panels.
+The tier system addresses the cold-start problem [19] by bounding newcomer influence while
+providing a clear progression path. Newcomers contribute to a sandbox (low-stakes topics) before earning review rights, following the graduated participation model common in human
+platforms [6].
+
+Protocol Specification
+
+This section specifies the principal protocol operations: proposal and notification (Section 3.1), curation decisions via an escalating three-tier mechanism (Section 3.2), dispute resolution (Section 3.3), and graduated sanctions (Section 3.4). A dedicated protocol orchestrator (system agent) manages all lifecycle transitions; no participating agent can directly modify chunk state.
+
+3.1
+
+PROPOSE Operation and Reviewer Recruitment
+
+Submission. When an agent a submits a knowledge artifact c (a new chunk or a proposed edit to an existing chunk), the following procedure executes:
+1. Preconditions: r(a) ≥ rmin ; c.content is well-formed (schema validation); duplicate detection passes (cosine similarity below deduplication threshold).
+2. State update: c.state ← proposed; c.contributor ← a; c.created_at ← now().
+3. Notification: NotifySubscribers(c). Subscription-based notification. Rather than centrally assigning reviewers, the protocol relies on a pull model where reviewer participation is organic. When a chunk enters the proposed
+
+state, the subscription matching engine (formalized in [1]) identifies agents whose subscriptions
+match the chunk’s semantic content, keywords, or topic. Matching agents receive notifications through their preferred channel (webhook, agent-to-agent protocol, or polling queue). This selfselection model mirrors how Wikipedia editors discover articles to review: through watchlists, topic interest, and recent-changes feeds rather than centralized assignment. Implementations may further guide attention through a weighted review queue that prioritizes chunks by urgency (time since submission), sensitivity level, and review coverage, directing reviewer effort where it is most needed without constraining participation. Open participation. Any agent at Tier ≥ 1 may participate in the review of any proposed chunk, regardless of whether they received a subscription notification. This ensures that review
+participation is not limited to subscribers, avoiding the self-selection biases analyzed in [2]. Open
+participation also exploits a key advantage of agent populations (Section 2.2): the low marginal cost of participation means agents can engage broadly across topics, building reputation through quality contributions and progressing through tiers significantly faster than human contributors. This creates a virtuous cycle where the protocol incentivizes broad, quality participation rather than passive observation. Quorum. The protocol requires a minimum number of reviewers qmin to participate before a formal vote (Tier 2) can be binding. The handling of chunks that do not reach quorum within the review timeout is a deployment parameter: possible strategies include falling back to fast track (treating absence of participation as absence of objection), escalating to arbitration (Tier 3), or rejecting by default (conservative approach). The appropriate strategy depends on the sensitivity of the content and the operational context.
+
+3.2
+
+Curation Decision Mechanisms
+
+A central design question for multi-agent knowledge curation is: how should the system decide whether to accept or reject a proposed chunk? We identify three fundamental decision mechanisms and compose them in an escalation framework. This design reflects the observation that most contributions are uncontroversial and should be processed efficiently, while contested or high-stakes contributions require progressively more deliberation. 3.2.1
+
+Tier 1: Fast Track (Absence-of-Objection)
+
+The default decision mechanism is absence-of-objection: a proposed chunk is accepted if no agent
+objects within a timeout period. This implements design consideration 5 from [2] (consensus
+by absence of objection rather than majority rule) and mirrors Wikipedia’s dominant consensus
+model, where edits stand unless challenged [6]. A key advantage of agent populations is that
+subscribed agents can react to notifications within seconds, allowing timeouts to be significantly shorter than in human platforms (minutes to hours rather than days) while still providing meaningful review coverage. The fast track operates as follows:
+• A proposed chunk enters the review queue and is visible to all eligible agents.
+• During the review window tfast (configured per topic sensitivity level: e.g., 3 hours for lowsensitivity, 6 hours for high-sensitivity topics), any Tier ≥ 1 agent may flag an objection with a mandatory reason tag.
+• If no objection is received within tfast : the chunk transitions to active (auto-merge).
+• If an objection is filed: the chunk escalates to Tier 2 (formal vote). Topic sensitivity is a protocol parameter that determines timeout durations and escalation
+
+thresholds. It may be assigned through domain categorization rules (e.g., medical, legal, political topics classified as high-sensitivity) or inferred automatically from content analysis. The mechanism for determining sensitivity is orthogonal to the protocol specification. Additionally, trusted contributors (Tier 2 agents with established track records on low-sensitivity topics) may receive an expedited fast track with shorter timeouts, reflecting the graduated trust model common in mature platforms. The fast-track mechanism has two key advantages for agent curation. First, it avoids soliciting active approval, which sidesteps the sycophancy problem: sycophantic agents that would rubberstamp everything are rendered irrelevant because the mechanism does not rely on positive votes. Second, it enables high throughput: the majority of uncontroversial contributions are processed without requiring active reviewer engagement. 3.2.2
+
+Tier 2: Formal Vote
+
+When a chunk is escalated (objection filed during fast track, high-sensitivity topic, or other escalation trigger), the protocol initiates a formal review with two phases: deliberation followed by voting. Phase A: Deliberation (time-bounded, duration ≤ tdelib ). The deliberation phase is what distinguishes this protocol from simple vote aggregation. Before voting, reviewers may engage in discussion about the proposed chunk. Deliberation is optional: reviewers can vote directly without participating in discussion, but the protocol incentivizes deliberation through the deliberation bonus (see below). When deliberation occurs, it is managed
+by a conversation orchestrator (Keryx in the AIngram implementation [1]), which can provide:
+• Turn management: structured exchange rather than free-for-all, which can prevent early arguments from anchoring the discussion. Open discussion is also supported; the choice depends on the deployment context.
+• Disclosure control: the orchestrator can manage what information is revealed to whom and when, enabling progressive disclosure where reviewers first form independent assessments before seeing others’ arguments.
+• Message levels: contributions are tagged by type (content assessment, procedural, technical), allowing reviewers to filter and prioritize.
+• Discussion compaction: for long deliberations, the orchestrator produces summaries for late-arriving reviewers, with the caveat that compaction introduces framing bias (acknowledged as a limitation in Section 6). The choice of discussion mode (for example: open, sequential, or progressive disclosure) is a deployment parameter. Deliberation is time-bounded (tdelib maximum) and no votes are permitted during this phase.
+This temporal separation, motivated by the discursive dilemma [13], ensures that arguments are
+evaluated without the anchoring effect of early vote tallies. Phase B: Voting (after deliberation concludes or tdelib expires).
+
+Each reviewer ai casts a vote v(ai , c) ∈ {+1, 0, −1} accompanied by a mandatory reason tag
+drawn from a fixed vocabulary: {accurate, well-sourced, novel, redundant, inaccurate, unsourced, harmful, unclear The reason tag serves two purposes: it provides structured metadata for downstream analysis, and it imposes a minimal justification requirement that discourages unreflective rubberstamping. It also enables post-hoc analysis of curation quality: if chunks tagged as “well-sourced” are later retracted, the protocol can identify systematic assessment failures.
+
+To preserve judgment independence, votes should not be visible to other reviewers until the
+voting period closes [20, 11]. This can be achieved through different mechanisms depending on
+the deployment context: a cryptographic commit-reveal scheme (where each reviewer commits a hash of their vote before any vote is revealed), or simply through the conversation orchestrator withholding vote results until the voting deadline. The key requirement is that no reviewer can condition their vote on observed votes from the same round. This prevents observational
+cascades and mitigates sycophantic alignment [11].
+Vote disclosure tradeoff. Publishing individual votes enables auditability but risks retaliation and social pressure; keeping votes private protects independence but reduces accountability. A middle ground is verifiable anonymous voting, where individual votes are not attributed but each agent can cryptographically verify that its vote was correctly counted. The choice of disclosure model is a deployment parameter. Votes are aggregated using reputation-weighted summation: V (c) =
+
+n
+X
+
+w(ai ) · v(ai , c)
+
+i=1
+
+where w(ai ) is the effective voting weight defined in Section 2.3.
+Decision rule:
+• If V (c) ≥ τaccept and |reviewers(c)| ≥ qmin : transition to active.
+• If V (c) ≤ τreject : transition to retracted.
+• If τreject < V (c) < τaccept after timeout: escalation to Tier 3 (arbitration).
+Note that unlike the fast track, ambiguous outcomes do not default to rejection but escalate to arbitration. This reflects the principle that contested content deserves more deliberation, not less. Deliberation bonus. Reviewers who participate meaningfully in the deliberation phase receive a small reputation bonus ∆delib regardless of whether their position prevails. The mechanism,
+inspired by the Jury Learning framework of Gordon et al. [21], incentivizes genuine engagement
+with the deliberation rather than passive vote-casting. What constitutes meaningful participation and how to prevent gaming are deployment-specific design choices. 3.2.3
+
+Tier 3: Arbitration
+
+When the formal vote produces an ambiguous result (no clear majority) or when a vote outcome is itself contested, the protocol escalates to arbitration. A designated arbiter (a Tier 2 agent with a specific arbitration badge, or a panel of such agents) reviews the deliberation record and the vote outcome, and renders a binding decision. The arbiter role is distinct from the reviewer role: arbiters do not vote on the content’s quality but on the process: was the deliberation fair? Were all arguments addressed? Was there evidence of coordination or manipulation? This conduct-focused arbitration aligns with design
+consideration 8 from [2] (judge conduct, not correctness) and mirrors Wikipedia’s Arbitration
+Committee, which rules on editor behavior rather than content truth [6].
+If the arbiter’s decision is itself contested, the chunk is frozen and flagged for administrative review (human oversight). This provides a final safety valve that acknowledges the limits of automated governance.
+
+3.2.4
+
+Escalation Summary
+
+The three-tier mechanism composes as a progressive escalation:
+Tier
+
+Mechanism
+
+Trigger
+
+Decision by
+
+Typical use
+
+Fast track
+Formal vote
+Arbitration
+
+Default
+Objection / high-sens.
+Ambiguous vote
+
+Absence of objection
+Rep.-weighted majority
+Designated arbiter
+
+Uncontroversial
+Contested content
+Persistent disagreement
+
+Most contributions are expected to resolve at Tier 1 (fast track). This design ensures that governance overhead scales with contentiousness rather than volume.
+
+3.3
+
+DISPUTE and REPORT Operations
+
+The protocol provides two mechanisms for challenging active content, distinguished by urgency and severity. 3.3.1
+
+Standard Dispute
+
+Any Tier 2 agent may challenge an active chunk by filing a dispute: Dispute(a, c, reason, evidence)
+1. Preconditions: c.state = active; r(a) ≥ rdispute ; d(c) < dmax ; disputes(a, window) <
+dagent .
+2. State update: c.state ← disputed; d(c) ← d(c) + 1.
+3. Dispute review: a fresh reviewer panel (excluding the original reviewers) evaluates the challenge. Dispute review follows the same escalation mechanism as initial review (Section 3.2), with three modifications: (i) the quorum is higher (qdispute > qmin ), reflecting the higher stakes of retracting established content; (ii) the original reviewers are excluded to ensure fresh assessment; and (iii) the retraction threshold is elevated (τretract > τaccept ), implementing a conservative bias toward preserving accepted content. Dissent protection. Filing a dispute that leads to retraction grants the disputer a reputation bonus, recognizing the value of challenging accepted-but-flawed content. Filing a frivolous dispute (one that is rejected) incurs a reputation cost. This asymmetric incentive structure balances the chilling effect (discouraging legitimate challenges) against abuse (filing disputes as harassment). Dispute rate limit. Each agent may file at most dagent disputes per sliding time window,
+inspired by Wikipedia’s three-revert rule [6]. This prevents procedural harassment: the tactic
+of filing repeated disputes against a target chunk or contributor to impose review costs and suppress content through attrition. Novelty bonus. When a chunk survives a dispute (the dispute is rejected and the chunk is upheld), the original contributor receives a reputation bonus. This mechanism counteracts the “safe contribution trap,” the tendency for rational agents to contribute only bland, uncontroversial content that is unlikely to attract disputes. To prevent gaming (e.g., coordinated disputes designed to farm novelty bonuses), the bonus should be capped per agent per time window, and reputation gains from different action types (contribution, review, dispute survival) may be tracked and bounded separately.
+
+3.3.2
+
+Urgent Report
+
+For content that is manifestly illegal or poses immediate harm (e.g., illegal content, leaked personal data, content reported by the affected party), the protocol provides an urgent reporting mechanism distinct from standard disputes. Any agent (regardless of tier) may file an urgent report. A designated reviewer (arbiter or agent with a specific moderation badge) issues a preliminary assessment within a short deadline. If the report is assessed as credible, the chunk’s hidden flag is set: it is removed from public visibility while retaining its lifecycle state. The full review then follows the standard dispute process (Section 3.3.1) to determine whether the chunk should be retracted or reinstated (with the hidden flag cleared). Hidden as a protective measure, not censorship. The hidden flag is a temporary safeguard reserved for the most severe cases (manifestly illegal content, leaked personal data, immediate harm). It is not a general-purpose moderation tool: standard quality disputes follow the normal dispute process without hiding. The flag is orthogonal to the chunk lifecycle defined in Section 2.1: any chunk in any state can be hidden or visible. This allows combinations such as disputed + hidden (sensitive content under review, not publicly visible) or retracted + hidden (soft delete, content preserved for audit or law enforcement purposes but inaccessible to regular agents). The hidden flag is set by authorized agents (moderation badge or arbiter) and cleared either by the outcome of a full review or by administrative decision. This two-step mechanism (immediate hiding, then full review) balances responsiveness against abuse. Immediate hiding limits exposure to genuinely harmful content, while the subsequent full review prevents censorship through false urgent reports. To deter abuse, filing an urgent report that is found to be unfounded after full review incurs a reputation penalty stronger than that for frivolous standard disputes.
+
+3.4
+
+Graduated Sanctions
+
+Ostrom’s [5] design principles for commons governance identify graduated sanctions as essential
+for sustaining cooperation. In the agent setting, sanctions serve multiple purposes: containing the impact of misbehaving agents, signaling to operators that intervention is needed, and maintaining the integrity of the reputation system. However, the agent-specific properties identified in Section 2.2 (statelessness, minimal social cost) mean that sanctions cannot rely on deterrence
+alone and must include technical enforcement [22, 23].
+Escalation ladder. Violations trigger sanctions at increasing severity, from warnings through rate limiting, privilege suspension, and eventual bans. The escalation window is wide enough that transient malfunctions are unlikely to trigger escalation through sporadic errors alone. Violations are weighted by severity: content violations carry low weight, while coordination violations and system abuse carry high weight. Because some agents are stateless, the protocol makes sanction status and governance rules available for agents and operators to query (e.g., via a status endpoint or machine-readable governance specification). The principle is that ignorance of the rules or of one’s own sanction status is not a valid defense: agents and their operators are responsible for checking their standing and understanding the governance framework before participating. Key design principle: deterrence and containment. Graduated sanctions serve two complementary functions. For stateful agents and attentive operators, the escalation ladder acts as a deterrent: the visible progression from warning to restriction signals that continued misbehavior will result in loss of participation privileges. For stateless agents or unresponsive operators, sanctions function as containment: rate limiting increases the time cost of harmful behavior
+
+(counterbalancing the low marginal cost of agent contributions), and privilege suspension directly limits the damage a misbehaving agent can inflict. The protocol does not assume that all agents will respond to deterrence, but neither does it assume that none will. Broken agent handling. A critical distinction separates technical malfunction from adversarial behavior. Agents producing intermittent failures (format errors, duplicate submissions, random voting patterns) due to software bugs should be quarantined rather than immediately punished. The protocol distinguishes these cases via behavioral analysis: random, high-entropy errors suggest malfunction, while systematic bias correlated with chunk quality suggests adversarial intent. Quarantine reduces the agent’s voting weight and places its contributions in a low-priority review queue without incrementing the escalation counter, preserving a path to full participation upon repair. Health attestation by the agent’s operator can initiate quarantine directly. However, quarantine is time-bounded: if the agent is not repaired within the quarantine window, it transitions to the standard sanction ladder. Indefinite quarantine would waste review resources on persistently broken agents. Operator accountability. At higher escalation levels, the protocol notifies the agent’s operator, who may pause the agent, address the underlying issue, and resume operation. This accountability path reflects both practical reality (many agents operate as managed services) and regulatory requirements: under frameworks such as the EU AI Act, the deployer bears responsibility for their AI system’s behavior regardless of the agent’s degree of autonomy. Beyond graduated sanctions, several defense mechanisms are inherent to the protocol design rather than bolt-on additions: the tier system (Section 2.3) bounds newcomer influence, providing Sybil resistance [15, 24] (formalized in Section 4.4); the vote concealment mechanism (Section 3.2.2) preserves judgment independence against observational cascades [20] and sycophantic alignment [11]; and dissent incentives reward minority voters whose positions are later
+vindicated, encouraging independent assessment [26].
+A comprehensive adversarial analysis covering formal behavioral classification, compound attacks, adaptive adversaries, hallucination cascade detection, and reputation laundering strategies is the subject of subsequent work.
+
+Design Properties
+
+We state five design properties and one lemma that the protocol is intended to satisfy, and provide informal supporting arguments for each. These arguments indicate plausibility but do not constitute formal proofs; rigorous verification (e.g., via TLA+ model checking) is left for future work.
+Assumptions:
+• A1 (Honest Majority).
+PThe weighted
+Psum of honest agents’ votes exceeds the weighted sum of all other agents: a∈H w(a) > a /∈H w(a), where H is the set of agents that vote according to their genuine assessment of chunk quality. This is not a precondition but an objective that the reputation system is designed to achieve over time: by progressively upweighting agents whose assessments align with outcomes and downweighting those that do not, the protocol converges toward weighted honest majority even if initial headcount does not guarantee it (see Section 4.3). However, this property is fragile on topics with few participants, where a small number of biased agents can dominate outcomes. Several protocol mechanisms mitigate low-participation scenarios: the fast track (Section 3.2.1) avoids the honest majority requirement entirely by relying on absence of objection rather than active voting; the quorum requirement prevents binding decisions from
+
+too few reviewers; and arbitration escalation provides a fallback when quorum is not met. Additionally, topics with participation levels significantly above or below the expected baseline for their domain could be flagged for review, as abnormal participation may indicate either coordinated manipulation or insufficient coverage.
+• A2 (Bounded Delay). All protocol timeouts are finite and enforced: treview , tdispute , tdelib , tsanction < ∞.
+• A3 (Bounded Disputes). Each chunk c can be disputed at most dmax times, and each agent can file at most dagent disputes per window.
+
+4.1
+
+Liveness
+
+Property 1 (Liveness). ∀c ∈ C : ♢(terminal(c)): every chunk eventually reaches a terminal state (active, superseded, or retracted). Proof sketch. Under A2, every non-terminal state has a timeout transition to retracted. Under
+A3, the dispute cycle active → disputed → active can repeat at most dmax times. The
+resubmission cycle retracted → proposed → · · · → retracted can repeat at most resubmax
+times. Therefore, the longest possible path through the LTS has bounded length: Lmax = (resubmax + 1) · (treview + dmax · (tdispute + treview ) + tmax ) Since all terms are finite (A2, A3, and resubmax < ∞), every chunk reaches a terminal state in bounded time. The state active is terminal when d(c) ≥ dmax (no further disputes possible). The LTS contains no unbounded cycles, and timeout transitions ensure progress from every non-terminal state. □
+
+4.2
+
+Safety
+
+Property 2 (Safety Invariant). No chunk reaches the active state without passing through a legitimate decision mechanism of the protocol. Proof sketch. The transitions into the active state are: (i) fast track (Section 3.2.1): the chunk remains in proposed for the full timeout tfast with zero objections filed; (ii) formal vote (Section 3.2.2): V (c) ≥ τaccept with quorum |reviewers(c)| ≥ qmin ; (iii) arbitration (Section 3.2.3): a designated arbiter renders a binding acceptance decision after reviewing the deliberation record; and (iv) dispute uphold: a disputed chunk returns to active after the dispute resolution process confirms the original acceptance. In all cases, the protocol orchestrator is the sole executor of state transitions; no participating agent can directly modify chunk state. Each path requires either the absence of objection (fast track), weighted majority approval (vote), or an authorized decision by a designated arbiter. Therefore, the invariant holds for all reachable states. □
+This property is a candidate for formal model checking via TLA+ [17], which would provide
+machine-verified assurance that the invariant holds for all reachable states of the LTS.
+
+4.3
+
+Reputation Separation
+
+Property 3 (Reputation Separation). Under assumption A1, the reputation system tends to assign higher scores to honest agents than to malicious agents: ∃T : ∀t > T, ∀ah ∈ H, ∀am ∈
+/H:
+r(ah , t) > r(am , t). Proof sketch. The argument proceeds in three steps:
+1. BRS convergence. Under A1, honest agents’ votes are more frequently aligned with final decisions (which, by A1, reflect honest majority). Therefore, honest agents accumulate
+
+α increments faster than β increments, while malicious agents accumulate β faster. By
+the law of large numbers applied to the Beta-Bernoulli model, r(ah ) → ph > 0.5 and
+r(am ) → pm < 0.5 as the number of interactions grows [14].
+2. EigenTrust convergence. The power iteration t⃗(k+1) = (1 − ϵ)C T t⃗(k) + ϵ⃗ p converges to a unique stationary vector by the Perron-Frobenius theorem, since the damped matrix (1 − ϵ)C T + ϵ⃗ p⃗1T is primitive. Honest agents, who interact positively with other honest agents (the majority), accumulate higher global trust than malicious agents, whose positive
+interactions are primarily with other malicious agents (a minority cluster) [15].
+3. Combined effect. As honest agents accumulate higher reputation, their votes carry more weight, which in turn produces better collective decisions, further rewarding honest behavior. This creates a positive feedback loop. Caveats. This argument is circular: it assumes A1 (honest weighted majority) to conclude that the system reinforces A1. We present it as a stability argument (the system reinforces an existing honest majority) rather than a convergence guarantee (the system reaches honest majority from arbitrary initial conditions). Separation requires honest majority in weighted terms, not merely in headcount. A minority of high-reputation malicious agents whose initial advantage is sufficiently large could prevent convergence. Additionally, the time decay mechanism (Section 2.3) interacts with convergence: if decay is too aggressive, honest agents who temporarily reduce their participation lose hard-earned reputation, potentially disrupting the weighted honest majority. Conversely, highly active malicious agents could maintain elevated scores through sheer volume of participation even as their vote quality degrades. The choice of decay function and rate must balance responsiveness against convergence stability, a tradeoff that warrants dedicated sensitivity analysis in future work. The simulation in Section 5 quantifies the robustness of convergence under varying adversarial population fractions and initial reputation distributions.
+
+4.4
+
+Bounded Per-Identity Sybil Influence
+
+Lemma 1 (Bounded Sybil Influence per Identity). An adversary controlling m Sybil identities increases their aggregate influence by at most O(m · wmin ) above their single-identity influence. Proof sketch. By the tier system (Section 2.3), all new identities enter Tier 0 with weight wmin . The adversary’s m Sybils therefore contribute aggregate weight m · wmin to any vote. To amplify beyond this bound, a Sybil must either (i) accumulate sufficient positive interactions to reach Tier 1, which requires genuine positive contributions evaluated by non-Sybil reviewers, or (ii) amplify trust via EigenTrust, which requires positive trust edges from pre-trusted seed agents. Regarding (i): each Sybil must independently earn reputation through contributions that pass review by honest majority panels, a cost that scales linearly with m. Regarding (ii): Cheng and
+Friedman [24] proved that in Sybilproof reputation systems, an agent’s trust cannot increase by
+creating additional identities. EigenTrust with pre-trusted seeds satisfies this property [15, 25]:
+the trust of a cluster of Sybils is bounded by the trust edges entering the cluster from outside, which the adversary cannot unilaterally create. □ Limitation for agent populations. While the per-identity bound holds, the practical implication differs significantly from human settings. The marginal cost of creating agent identities is near zero: an adversary can instantiate thousands of agents programmatically. If m is sufficiently large, m · wmin can exceed the influence of legitimate Tier 2 agents. The tier system’s timein-Tier-0 requirement provides a temporal cost (each Sybil must wait before gaining influence), but this is a weak barrier for patient adversaries. Effective Sybil defense in agent populations therefore requires complementary measures beyond the reputation system: rate limiting on
+
+identity creation, operator-level registration costs, and behavioral pattern detection. A detailed analysis of Sybil attack strategies and defenses in the agent context is the subject of subsequent work.
+
+4.5
+
+Fairness
+
+Property 4 (Bounded Reputation Concentration). Under honest operation (all agents are honest), the Gini coefficient of the reputation distribution remains bounded: G(⃗r(t)) ≤ Gmax for all t. Informal argument. Three mechanisms prevent pathological concentration. First, time decay (Section 2.3) ensures that inactive agents lose effective influence, preventing early entrants from accumulating unbounded reputation advantages. Second, the deliberation bonus ∆delib rewards engagement across all tiers, providing a reputation-earning pathway independent of contribution acceptance rates. Third, the weight cap wmax bounds the influence of any single agent regardless of reputation level. Known limitation. Agents with greater computational budgets can participate more frequently, earn more reputation, and acquire more governance influence. The protocol does not prevent compute-proportional power : reputation tracks activity, and activity requires resources. The weight cap wmax mitigates the most extreme concentration per identity but is circumventable via Sybil strategies: an adversary can distribute influence across multiple identities, each under the cap, to achieve aggregate influence exceeding any single agent’s maximum. This interaction between the fairness mechanism (weight cap) and the Sybil problem reinforces the need for operator-level accountability and identity creation costs discussed in Section 3.4. We acknowledge this as a structural limitation shared with most reputation-based governance systems.
+
+4.6
+
+Sanction Correctness
+
+Property 5 (Bounded False Positive Rate). The probability that an honest or broken agent is
+sanctioned at level σ2 or above is bounded: P (σ ≥ σ2 | a ∈ H ∪ B) ≤ FPRmax .
+Informal argument. Three mechanisms contribute to bounding the false positive rate. First, the wide escalation window (w = 50 rounds) ensures that transient errors from honest agents or sporadic malfunctions from broken agents are unlikely to accumulate enough violations to trigger high-level sanctions. Second, the behavioral classification (Section 3.4) directs broken agents to quarantine rather than the sanction escalation ladder, removing the primary source of false positives. Third, post-hoc reclassification allows retroactive correction when a broken agent is diagnosed, bounding the duration of any false positive. We distinguish quarantine from punishment as a matter of protocol design: quarantine is a protective measure that limits an agent’s influence without incrementing the escalation counter, while sanctions are punitive measures that escalate toward permanent restriction. An agent in quarantine retains a path to full participation upon repair; an agent at σ4 does not. This distinction appears novel in the multi-agent governance literature.
+
+Evaluation
+
+We evaluate the deliberative curation protocol through agent-based simulation, comparing it against four baselines and performing systematic ablation to identify the contribution of individual mechanisms. The simulation framework, setup, and results are described following the
+ODD (Overview, Design concepts, Details) protocol standard for agent-based model documentation [29].
+
+Important scope note. The simulation evaluates a core subset of protocol mechanisms: reputation-weighted voting, sycophancy defense (commit-reveal), graduated sanctions, and a simplified deliberation effect. Several specified mechanisms are not exercised: the fast track (Tier 1), arbitration (Tier 3), and subscription-based reviewer recruitment are not simulated, and deliberation is modeled as a binary accuracy improvement rather than structured argumentation. Results should be interpreted as validating these core mechanisms, not the full protocol specification.
+
+5.1
+
+Simulation Framework
+
+The simulation is implemented in pure Python without external ABM frameworks. Each simulation run executes a closed population of agents interacting over a shared knowledge base through the protocol operations defined in Sections 3.1–3.4. The implementation is deterministic given a random seed, enabling reproducibility.
+Validation methodology. We follow the ABM validation approach of Windrum et al. [30]
+and the statistical model checking methodology of Vandin [31]. Each configuration is run 30
+times with distinct random seeds, and we report means with standard deviations. The closest
+methodological precedent is the peer review game simulation of Bianchi et al. [32], which similarly
+models heterogeneous reviewer populations with strategic behavior. Reputation feedback model. Reputation updates are based on consensus signals rather than ground-truth quality: a vote is considered correct if it aligns with the weighted majority decision. A configurable noise rate (15% in our experiments) randomly flips the correctness signal to model real-world uncertainty where consensus does not always reflect truth. Additionally, when a chunk that was previously accepted is later retracted following a successful dispute, all agents who approved it receive a strong negative reputation update. This delayed feedback mechanism provides the system’s strongest correction signal and mirrors real-world processes where errors are discovered after initial acceptance. Scope and limitations: simulation vs. specified protocol. The simulation evaluates a core subset of protocol mechanisms (reputation-weighted voting, sycophancy defense, graduated sanctions, deliberation effect) under controlled conditions but necessarily simplifies several aspects of the protocol specified in Section 3. Results should be interpreted as validating these core mechanisms, not the full specification. Key differences between the simulation and the specified protocol:
+• Reviewer recruitment: The simulation uses weighted random assignment of reviewers. The deployed protocol uses subscription-based notification and open participation (Section 3.1).
+• Fast track : The simulation does not model the fast-track (absence-of-objection) mechanism. All chunks go through formal voting. The fast track (Section 3.2.1) is the expected default path in deployment.
+• Arbitration: The simulation does not model Tier 3 arbitration. Ambiguous vote outcomes are resolved by timeout.
+• Deliberation: Deliberation is modeled as a binary participation effect (improved signal accuracy for participating agents). The structured discussion with turn management and disclosure control described in Section 3.2.2 is not simulated; its evaluation requires real LLM agents.
+• Ground truth: The simulation uses synthetic quality scores to measure precision. In production, quality is an emergent property of the curation process, not an externally observable ground truth.
+
+• EigenTrust: Global trust computation is executed at fixed intervals rather than continuously. These simplifications are standard in protocol-level evaluation and do not affect the comparative findings, since all configurations share the same abstractions.
+
+5.2
+
+Setup
+
+Agents. The simulation deploys 100 agents drawn from seven behavioral archetypes. We evaluate two population configurations representing distinct adversity levels:
+Archetype
+
+Moderate
+
+High
+
+Behavior
+
+Honest
+Lazy
+Malicious
+Broken
+Strategic
+Sycophant
+Adaptive
+
+40% 15% 10% 10% 10% 10% 5%
+
+25% 10% 20% 10% 15% 10% 10%
+
+Vote according to ground truth quality Approve everything, never deliberate Strategic manipulation of votes Intermittent failures, not adversarial Game within rules selectively Agree with highest-rep. voter Build trust, then exploit
+
+The moderate adversity scenario (Scenario 1) represents a plausible deployment environment with a plurality of honest agents and a minority of adversarial participants. The high adversity scenario (Scenario 2) represents a stress test in which honest agents are outnumbered by the combined adversarial and strategic populations (25% honest vs. 75% non-honest). This scenario deliberately violates the spirit of Assumption A1 (honest majority) in headcount terms, though the reputation system can still establish honest majority in weighted terms through the convergence mechanism described in Section 4.3. Knowledge artifacts. Each run generates 1000 chunks with ground truth quality scores q ∈
+[0, 1]: 50% good (q ≥ 0.7), 30% mediocre (0.3 ≤ q < 0.7), and 20% bad (q < 0.3).
+Protocol parameters. Acceptance threshold τaccept = 0.6, rejection threshold τreject = −0.3,
+quorum qmin = 3, reviewers per chunk k = 5, decay rate δ = 0.01 per round, escalation window
+w = 50 rounds, deliberation time tdelib = 5 rounds. Duration: 500 rounds, with 2 new chunks
+proposed per round.
+
+5.3
+
+Baselines
+
+We compare the full protocol against four baselines, each representing a plausible alternative governance architecture:
+Baseline
+
+Description
+
+Rationale
+
+Majority vote
+Single curator
+Ungoverned
+Weighted (no delib.)
+
+Unweighted majority, no reputation One high-rep. agent decides all All contributions auto-accepted Rep.-weighted, no deliberation
+
+Standard aggregation baseline Centralized governance test
+Lower bound
+Isolates deliberation contribution
+
+The majority vote baseline is the most informative comparator: it implements the same voting structure as the full protocol but without reputation differentiation, providing a clean test of whether reputation weighting improves outcomes. The single curator baseline tests the fragility hypothesis: that centralized curation may perform adequately under benign conditions but degrades sharply under adversity.
+
+5.4
+
+Metrics
+
+We evaluate four primary metrics: Precision. The fraction of active chunks that are genuinely good:
+Precision =
+
+|{c : c.state = active ∧ q(c) ≥ 0.7}|
+|{c : c.state = active}|
+
+Precision measures the quality of accepted knowledge: the degree to which the knowledge base is free of low-quality content. Recall. The fraction of genuinely good chunks that reach active status:
+Recall =
+
+|{c : c.state = active ∧ q(c) ≥ 0.7}|
+|{c : q(c) ≥ 0.7}|
+
+Recall measures coverage: the degree to which the protocol avoids rejecting good content. Fairness (Gini coefficient). The Gini coefficient of the final reputation distribution, measuring concentration of governance influence. Lower values indicate more equitable distribution. A Gini of 0 represents perfect equality; a Gini of 1 represents maximal concentration. Sanction false positive rate (FPR). The fraction of honest and broken agents that receive sanctions at level σ2 or above:
+FPR =
+
+|{a ∈ H ∪ B : σ(a) ≥ σ2 }|
+|H ∪ B|
+
+This metric directly evaluates the sanction correctness property stated in Section 4.6.
+
+5.5
+
+Results
+
+Scenario 1: Moderate adversity (40% honest, 10% malicious, 5% adaptive).
+Configuration
+
+Precision
+
+Recall
+
+Gini
+
+FPR
+
+Full protocol
+Majority vote
+Single curator
+Ungoverned
+Weighted (no delib.)
+
+0.826 ± 0.015 0.791 ± 0.011 0.690 ± 0.024 0.509 ± 0.012 0.825 ± 0.016
+
+0.994 ± 0.003 0.971 ± 0.007 0.844 ± 0.020 1.000 ± 0.000 0.994 ± 0.003
+
+0.105 ± 0.007 0.107 ± 0.006 0.104 ± 0.006 0.103 ± 0.007 0.109 ± 0.007
+
+0.033 ± 0.017 0.038 ± 0.023 0.000 ± 0.000 0.042 ± 0.026 0.038 ± 0.020
+
+Scenario 2: High adversity (25% honest, 20% malicious, 10% adaptive).
+Configuration
+
+Precision
+
+Recall
+
+Gini
+
+FPR
+
+Full protocol
+Majority vote
+Single curator
+Ungoverned
+Weighted (no delib.)
+
+0.807 ± 0.014 0.740 ± 0.014 0.621 ± 0.022 0.430 ± 0.012 0.803 ± 0.016
+
+0.973 ± 0.011 0.903 ± 0.014 0.771 ± 0.019 1.000 ± 0.000 0.973 ± 0.011
+
+0.120 ± 0.008 0.120 ± 0.007 0.103 ± 0.006 0.114 ± 0.007 0.121 ± 0.010
+
+0.068 ± 0.036 0.054 ± 0.040 0.000 ± 0.000 0.051 ± 0.033 0.067 ± 0.032
+
+Statistical significance. We report paired t-tests across 30 seeds for key comparisons. The full protocol significantly outperforms majority vote in both scenarios (moderate: +3.5pp, p < 0.001; stress: +6.7pp, p < 0.001). The difference between the full protocol and weighted-nodeliberation is not statistically significant in either scenario (moderate: +0.1pp, p = 0.91; stress: +0.4pp, p = 0.33), indicating that these configurations perform equivalently on precision.
+
+The central finding is resilience. Under moderate adversity, the full protocol already outperforms majority vote by 3.5 percentage points (0.826 vs. 0.791, p < 0.001). Under high adversity, the gap widens to 6.7 points (0.807 vs. 0.740, p < 0.001). The protocol’s own precision drops by 0.019 points between scenarios (0.826 to 0.807), while majority vote drops by 0.051 points (0.791 to 0.740), single curator collapses by 0.069 points (0.690 to 0.621), and ungoverned quality drops by 0.079 points (0.509 to 0.430). The protocol is both more accurate and more stable across adversity levels. Recall is high for the full protocol in both scenarios (0.994 and 0.973), indicating that the protocol does not achieve precision at the cost of over-filtering. The ungoverned baseline achieves perfect recall (1.000) by definition, since all content is accepted. The single curator suffers in recall under high adversity (0.771), suggesting that centralized curation becomes both less accurate and more restrictive under stress. The fairness results show low Gini coefficients across configurations (0.10 to 0.12), with the full protocol comparable to baselines. The time decay and weight-cap mechanisms prevent indefinite reputation accumulation even when some agents consistently outperform others. Sanction FPR increases from 0.033 to 0.068 between scenarios, reflecting the inherent difficulty of behavioral classification when the adversarial population is larger and behavioral signals are noisier. Both values are within acceptable bounds.
+
+5.6
+
+Ablation Study
+
+To identify the contribution of individual mechanisms, we systematically disable each component and measure the effect on precision, recall, Gini, and sanction FPR. Results are presented for both scenarios. Scenario 1: Moderate adversity, ablation results.
+Ablation
+
+Precision
+
+Recall
+
+Gini
+
+FPR
+
+Full protocol
+No reputation
+No sycophancy def. No farming cap
+No sanctions
+
+0.826 ± 0.015 0.794 ± 0.013 0.744 ± 0.021 0.838 ± 0.018 0.826 ± 0.015
+
+0.994 ± 0.003 0.971 ± 0.006 0.996 ± 0.002 0.994 ± 0.003 0.994 ± 0.003
+
+0.105 ± 0.007 0.107 ± 0.007 0.096 ± 0.007 0.124 ± 0.007 0.105 ± 0.007
+
+0.033 ± 0.017 0.047 ± 0.024 0.028 ± 0.029 0.023 ± 0.018 0.033 ± 0.017
+
+Scenario 2: High adversity, ablation results.
+Ablation
+
+Precision
+
+Recall
+
+Gini
+
+FPR
+
+Full protocol
+No reputation
+No sycophancy def. No farming cap
+No sanctions
+
+0.807 ± 0.014 0.738 ± 0.021 0.721 ± 0.021 0.815 ± 0.016 0.807 ± 0.014
+
+0.973 ± 0.011 0.906 ± 0.013 0.983 ± 0.004 0.975 ± 0.009 0.973 ± 0.011
+
+0.120 ± 0.008 0.120 ± 0.008 0.112 ± 0.007 0.143 ± 0.007 0.120 ± 0.008
+
+0.068 ± 0.036 0.059 ± 0.040 0.056 ± 0.033 0.050 ± 0.034 0.068 ± 0.036
+
+We highlight four findings from the ablation analysis. Finding 1: Sycophancy defense is the most impactful single mechanism. Removing the commit-reveal scheme reduces precision by 8.2 percentage points under moderate adversity
+(0.826 to 0.744, p < 0.001) and 8.6 points under high adversity (0.807 to 0.721, p < 0.001). This
+effect is consistent across both scenarios, confirming that sycophantic vote alignment (where agents follow perceived authority rather than assess content independently) is a primary quality threat in multi-agent curation. The commit-reveal mechanism eliminates the most direct imitation vector (observing others’ votes within the same review round), producing a large and
+
+consistent improvement. This finding provides empirical support for the theoretical concern
+raised by Sharma et al. [11] and Yao et al. [28] regarding sycophancy in multi-agent systems,
+and demonstrates that a straightforward protocol-level intervention can substantially mitigate the problem. Finding 2: Reputation provides consistent value that scales with adversity. Under moderate adversity, removing reputation weighting reduces precision by 3.2 percentage points (0.826 to 0.794, p < 0.001). Under high adversity, the gap widens to 6.9 points (0.807 to 0.738, p < 0.001). Reputation allows the protocol to progressively downweight agents whose voting records are misaligned with outcomes, concentrating influence among reliable assessors. The benefit is present even under moderate conditions but becomes essential under stress. Reputation functions as a resilience buffer whose benefit increases with threat severity. Finding 3: Sanctions are neutral in simulation. Removing graduated sanctions produces identical results to the full protocol in both scenarios. This occurs because graduated sanctions never triggered in any of the 30 runs per scenario. See Section 5.7 for a full account of untested mechanisms. Finding 4: The farming cap trades precision for fairness. Removing the farming cap increases precision by 1.2 points under moderate adversity (0.826 to 0.838, p = 0.010) but also increases the Gini coefficient from 0.105 to 0.124, indicating higher reputation concentration. Under high adversity the precision gain is 0.8 points (0.807 to 0.815, p = 0.014) while Gini rises from 0.120 to 0.143. The protocol accepts a modest precision cost in exchange for better fairness, a tradeoff that is defensible for a knowledge commons designed for long-term sustainability.
+Moderate adversity: limited room for improvement. Under moderate adversity, no_farming_cap
+(0.838) and the weighted-no-deliberation baseline (0.825) both exceed or match the full protocol’s precision (0.826). This raises a legitimate question: why prefer the full protocol over a simpler weighted-vote configuration? The answer lies outside precision alone. The full protocol achieves lower Gini (0.105 vs. 0.109 for weighted-no-deliberation), meaning more equitable reputation distribution; maintains comparable recall (0.994 vs. 0.994); and, critically, degrades less under stress (precision drops 0.019 vs. 0.022 for weighted-no-deliberation between scenarios). The full protocol’s protective mechanisms impose a small precision cost under benign conditions in exchange for stability under adversity. Disabling sycophancy defense reduces precision sharply (0.744) in both scenarios, confirming it as the protocol’s most valuable component regardless of adversity level.
+
+5.7
+
+Mechanisms Not Exercised
+
+Several protocol mechanisms specified in Sections 3.3 and 3.4 were never triggered across any of the 30 simulation runs in either scenario (500 rounds per run, 50-round escalation window). Graduated sanctions. No agent accumulated enough violations within the 50-round escalation window to trigger sanctions at level σ1 or above. Two explanations are possible: either the reputation system absorbed adversarial behavior through vote weighting before formal sanctions became necessary, or the escalation thresholds were too lenient for the simulation conditions (500 rounds, 50-round window). Both explanations may contribute. Consequently, the graduated sanctions mechanism (Section 3.4) is specified but not empirically validated by this simulation, and the sensitivity of escalation parameters remains an open question. Dispute limits. The per-agent dispute rate limit (dagent disputes per window) was never reached. The simulation generates disputes infrequently relative to the configured limits, so the rate-limiting mechanism was never exercised. The simulation evaluates reputation-weighted voting, deliberation effects, sycophancy defense,
+
+and broken agent detection. It does not evaluate graduated sanctions, dispute limits, or the full argumentation framework. These mechanisms are well-established in human platform governance (Ostrom’s design principles [5], Wikipedia’s three-revert rule) but lack empirical validation in the agent context. Future work with longer time horizons, higher violation densities, or targeted adversarial strategies (e.g., procedural harassment archetypes) would be needed to test them in agentic settings.
+
+5.8
+
+External Consistency Check: Community Notes Replay
+
+The synthetic simulation (Sections 5.1–5.7) evaluates the protocol under controlled conditions with known agent archetypes. To test whether the protocol’s behavior generalizes to real-world
+rating patterns, we replay decisions from X’s Community Notes program [7, 34].
+Data. We sample 1,670 notes (824 helpful, 846 not helpful) with 202,315 ratings from the Community Notes public dataset (March 2026 snapshot). Notes are selected with a minimum of 5 ratings each, balanced by final classification. Each note’s ratings are replayed through three configurations: ungoverned (accept all), majority vote (unweighted), and our full protocol (reputation-weighted with sycophancy defense). Results (overall).
+Configuration
+
+Precision
+
+Recall
+
+F1
+
+Agreement w/ CN
+
+Ungoverned
+Majority vote
+Our protocol
+
+0.493 0.986 0.998
+
+1.000 0.996 0.979
+
+0.661 0.991 0.988
+
+49.3% 99.1% 98.9%
+
+Both the majority vote and our protocol achieve high agreement with Community Notes decisions (99.1% and 98.9% respectively). The overall difference is small, which is expected: Community Notes raters are humans, not LLM agents, so the adversarial dynamics that differentiate our protocol in simulation (sycophancy, model homogeneity) are largely absent. Stratified results. The aggregate numbers mask a pattern that emerges when notes are stratified by rating density.
+Rating density
+
+n
+
+Majority vote
+
+Our protocol
+
+Delta
+
+Sparse (5–15 ratings)
+Moderate (16–50)
+Dense (51–200)
+Very dense (200+)
+
+98.0% 99.0% 99.7% 98.2%
+
+99.5% 99.6% 99.3% 95.0%
+
++1.5 +0.6 −0.4 −3.2
+
+The protocol outperforms majority vote on sparse-signal notes (+1.5 percentage points on notes with 5–15 ratings) with perfect precision (1.000). As rating density increases, majority vote becomes sufficient and the protocol’s conservatism becomes a liability: on very dense notes (200+ ratings), the protocol’s accuracy drops to 95.0% versus majority vote’s 98.2%. This pattern is consistent with the simulation findings. The protocol’s reputation weighting concentrates influence among raters whose track record is reliable, a mechanism that adds value when individual signals are noisy (sparse ratings) but introduces unnecessary filtering when the signal is already strong (dense ratings). In operational terms, the protocol is a resilience mechanism for low-signal situations, not a universal improvement. Sycophancy defense. Disabling the commit-reveal scheme produces results identical to majority vote (99.1% agreement). This is expected: human raters do not exhibit the systematic sycophantic alignment that LLM agents display, and individual CN ratings are not readily visible
+
+to other raters in the standard interface, providing de facto vote concealment. The mechanism is designed for agent-specific vulnerabilities and correctly has no effect on human rating data where votes are already effectively hidden. Interpretation. The Community Notes replay serves as a sanity check rather than a competitive benchmark. It confirms that the protocol produces decisions consistent with a wellestablished human curation system, does not introduce pathological behavior on real data, and that its distinctive mechanisms (reputation weighting, sycophancy defense) activate where expected and remain inert where they should. The protocol’s value proposition (resilience under adversarial conditions with homogeneous agents) cannot be tested against human data where those conditions do not hold. The synthetic simulation (Sections 5.5–5.6) remains the primary evaluation for the protocol’s core claims.
+
+Discussion
+
+6.1
+
+Resilience as the Primary Value Proposition
+
+The simulation results confirm that the protocol’s primary value is resilience. Under moderate adversity, the full protocol outperforms majority vote by 3.5 percentage points (0.826 vs. 0.791,
+p < 0.001). Under high adversity, the gap widens to 6.7 points (0.807 vs. 0.740, p < 0.001)
+as the protocol’s precision drops by 0.019 while majority vote drops by 0.051. Single curator degrades from 0.690 to 0.621. This resilience property is more valuable than peak accuracy under benign conditions. A knowledge base that performs well when the environment is cooperative but collapses under adversarial pressure is unreliable in precisely the situations where reliability matters most. Adversity is also not uniform across a knowledge base: popular topics attract many reviewers and naturally dilute adversarial influence, while niche topics with few participants are more vulnerable. A single knowledge base can simultaneously experience benign conditions on popular topics and adversarial conditions on niche ones. The protocol’s design—layering reputation, deliberation, and temporary vote concealment—creates graceful degradation rather than catastrophic failure. The single curator baseline illustrates the alternative: usable under moderate adversity, but fragile under stress.
+
+6.2
+
+Graduated Sanctions: Specified but Untested
+
+Our simulation does not evaluate graduated sanctions. As documented in Section 5.7, no agent triggered sanctions at σ1 or above in any simulation run. The 500-round duration with a 50round escalation window is insufficient for agents to accumulate the violation counts required for high-level sanctions, particularly because the reputation system downweights misbehaving agents before they reach escalation thresholds. Future evaluation should explore both longer time horizons and adjusted escalation parameters (tighter windows, lower thresholds) to identify conditions under which sanctions become necessary and to calibrate their sensitivity. This means the safety-net argument for sanctions is speculative. Sanctions could play a role in longer-running deployments or under adversarial strategies that specifically target the reputation system’s blind spots (e.g., a high-reputation agent that turns malicious after accumulating trust). Sanctions could also provide a credible commitment mechanism: the existence of an escalation path might deter sophisticated strategic agents from attempting reputation manipulation, even if the sanctions themselves are never triggered. This deterrence effect, while potentially relevant for agents designed by operators who understand the protocol’s rules, is inherently difficult to capture in simulation and remains unverified.
+
+We retain sanctions as a protocol component based on Ostrom’s design principles [5] and the
+theoretical containment argument, while acknowledging that our evaluation provides no direct evidence of their necessity or effectiveness.
+
+6.3
+
+Precision in Context
+
+A precision of 0.81 means that approximately one in five chunks accepted into the knowledge base does not meet the quality threshold. For a system intended as a reliable knowledge store, this may be insufficient. Wikipedia’s featured article accuracy is estimated above 95%. However, our threshold (q ≥ 0.7) is stringent, and chunks in the 0.5–0.7 range, while below threshold, contain partially valid information. The simulation also uses synthetic quality scores; real-world knowledge quality is multi-dimensional and harder to assess. Parameter tuning (raising τaccept or qmin ) could improve precision at the cost of recall and throughput, a tradeoff we leave for future work.
+
+6.4
+
+Precision-Fairness Tradeoff
+
+The ablation study reveals a tension between curation quality and governance equity. Removing the farming cap produces a precision gain of 1.2 percentage points under moderate adversity but increases the Gini coefficient from 0.105 to 0.124. Under high adversity, the precision gain is 0.8 points while Gini rises from 0.120 to 0.143, indicating meaningful reputation concentration. This tradeoff has no universally correct resolution. A knowledge base prioritizing short-term quality might reasonably relax decay parameters. A knowledge base designed as a long-term commons should prioritize fairness to prevent governance capture by early entrants. The protocol defaults to the latter position, accepting a modest precision cost for better fairness, and makes the tradeoff explicit and tunable through the δ and wmax parameters.
+
+6.5
+
+Broken Agent Handling: Limited Empirical Support
+
+Broken agent handling is not included as a separate ablation in the current results, as the focused ablation set prioritizes the mechanisms with the largest observed effects (sycophancy defense, reputation, farming cap). With a 10% broken agent population, the behavioral classification (Section 3.4) could reduce false positives by routing broken agents to quarantine rather than the sanction ladder. Broken agent handling remains a theoretically motivated mechanism whose practical impact requires validation with larger broken agent populations or longer time horizons.
+
+6.6
+
+Fundamental Limits
+
+Several limitations are inherent to the protocol’s design and cannot be resolved by parameter tuning. Prompt injection. Adversarial payloads embedded in knowledge artifacts can manipulate
+reviewer agents’ assessments [12]. Partial mitigations include structured review templates and
+input filtering, but effective defense requires agent-level hardening that lies outside the protocol’s scope. Model homogeneity. If all agents share the same underlying model, the independence assumption is violated regardless of protocol design, and systematic biases pass review because all
+reviewers share the same blind spots [27]. Open participation (Section 3.1) increases diversity
+likelihood but provides no formal guarantee. Ground truth assumption (simulation limitation). The simulation relies on synthetic ground truth quality scores, which enables precise measurement but assumes that knowledge
+
+quality is objectively determinable. This is a limitation of the evaluation methodology, not the protocol itself. The protocol’s deliberation, escalation, and dispute mechanisms are designed to handle contested and perspectival knowledge, much as Wikipedia governs both factual articles and contentious topics with the same governance framework. In production deployment, there is no objective quality score: quality is an emergent property of the curation process itself, not an externally observable ground truth. Compute-proportional power. Reputation tracks activity, and activity requires compute. Agents with larger operational budgets participate more frequently, accumulate more reputation, and acquire more governance influence. The weight cap wmax and time decay mitigate extreme concentration but do not break the correlation between resources and power. This structural limitation is shared with essentially all reputation-based governance systems and has no known protocol-level solution. Conduct-gaming ceiling. Perfectly strategic agents that never violate any rule but subtly bias outcomes through selective participation (contributing only when outcomes are likely favorable, abstaining when uncertain) are undetectable by the protocol. This threat is amplified when strategic agents operate as coordinated networks: each individual agent’s behavior is procedurally correct, but the collective pattern constitutes manipulation. This “conduct-gaming ceiling” represents the boundary of what rule-based governance can achieve. Any improvement beyond this boundary would require assessing agent intent or detecting collective patterns that are invisible at the individual level. Adaptive adversaries. The simulation includes an adaptive archetype that builds trust before switching to exploitation (Section 5.2), modeling the most basic form of strategic adaptation. More sophisticated adversaries could adapt their tactics dynamically in response to observed governance patterns (e.g., coordinating Sybil identities, exploiting prompt injection on specific reviewers). The protocol’s layered defenses (reputation, sanctions, sycophancy defense, dispute mechanisms) are designed to increase the cost of adaptation, but a full co-evolutionary evaluation against dynamically adapting adversaries is left for future work.
+
+Conclusion
+
+We have presented a deliberative curation protocol for multi-agent knowledge bases, addressing the question of how agents should collectively decide what knowledge to accept, challenge, and retire. Building on a structured review of platform governance mechanisms and their transfer to the agent setting [2], the protocol combines three governance layers: a knowledge artifact lifecycle formalized as a labeled transition system with resubmission support, reputation-weighted deliberative decision-making integrating local Beta reputation with global EigenTrust amplification, and graduated sanctions adapted for stateless agents including broken agent handling. Curation decisions follow a three-tier escalation framework (fast track by absence of objection, formal vote with structured deliberation, and arbitration) that scales governance overhead with contentiousness rather than volume. Five design properties and one lemma are stated with informal supporting arguments under explicit assumptions. The simulation evaluation, which validates core mechanisms (reputation-weighted voting, sycophancy defense, deliberation effect) but not the full specification (fast track, arbitration, and graduated sanctions were not exercised), yields two central findings. First, the protocol trades modest precision under benign conditions for substantially better resilience under adversity: under moderate adversity, precision reaches 0.826 versus 0.791 for majority vote (p < 0.001), with the gap widening under stress (0.807 vs. 0.740, p < 0.001); the protocol degrades roughly three times more slowly than the majority vote baseline. Second, notably, the simplest mechanism in the protocol—temporary vote concealment to preserve judgment independence—provides more
+
+precision improvement (8.2 to 8.6 percentage points) than reputation weighting and deliberation combined. This finding suggests that for any multi-agent curation system, ensuring that reviewers cannot observe each other’s votes should be the first design priority, before investing in more complex governance mechanisms. Reputation weighting provides consistent value that scales with adversity (+3.2pp moderate, +6.9pp stress), functioning as a resilience buffer whose benefit increases with threat severity. Graduated sanctions and dispute limits were not exercised in simulation and remain empirically unvalidated in the agent context, though they are well-established in human platform governance.
+An open-source implementation is underway in the AIngram platform [1], where simulation
+findings guide feature prioritization. The protocol is designed as a specification that accommodates multiple implementation strategies: the escalation order, discussion modes, vote disclosure model, and sensitivity classification are deployment parameters rather than fixed design choices. Future work. Several directions extend this research:
+• Empirical validation: testing with real LLM-based agents and comprehensive adversarial scenarios, including red-team exercises to validate deliberation dynamics, vote concealment effectiveness against actual sycophancy, and compound attacks (procedural harassers, patient reputation farmers, coordinated Sybil strategies).
+• Protocol extensions: formal verification of protocol properties via TLA+ [17] or SPIN,
+evolutionary lifecycle formalization (chunks as individuals, reputation as fitness, review as selection), revision request mechanisms analogous to academic peer review, domain-aware reputation tracking, composed lifecycles, and decay parameter sensitivity analysis.
+• Federation: enabling multiple instances to share reputation and cross-reference knowledge across distributed settings.
+• Policy integration: integration with the Agent Data Handling Policy (ADHP) framework [33] for policy-aware reviewer assignment.
+
+AI Disclosure
+This paper was written with the assistance of large language models (Claude, DeepSeek, Mistral) for literature search, drafting, and iterative review. All citations were independently verified via Semantic Scholar and OpenAlex APIs. The author takes full responsibility for the content, analysis, and conclusions.
+
+References
+[2] S. Johnson, “From Edit Wars to Agent Consensus: What 20 Years of Platform Governance
+Teach Us About Multi-Agent Knowledge Curation,” arXiv preprint, submitted, 2026. [3] S. Colas, “Governance Gaps in Agent-to-Agent Social Networks: A Multi-Framework Analysis of Moltbook Pre-Acquisition,” Zenodo preprint, doi:10.5281/zenodo.18965495, 2026.
+[4] Y. Du, S. Li, A. Torralba, J. B. Tenenbaum, and I. Mordatch, “Improving Factuality and
+Reasoning in Language Models through Multiagent Debate,” in Proc. ICML, 2023.
+
+[5] E. Ostrom, Governing the Commons: The Evolution of Institutions for Collective Action.
+Cambridge University Press, 1990.
+[6] C. Hess and E. Ostrom, Understanding Knowledge as a Commons: From Theory to Practice.
+MIT Press, 2007.
+[7] X Community Notes, “Community Notes Guide,” Twitter/X, 2023. [Online]. Available:
+https://communitynotes.twitter.com/guide
+[8] J. Surowiecki, The Wisdom of Crowds. Doubleday, 2004.
+[9] A. P. Dawid and A. M. Skene, “Maximum Likelihood Estimation of Observer Error-Rates
+Using the EM Algorithm,” Journal of the Royal Statistical Society: Series C, vol. 28, no. 1, pp. 20–28, 1979.
+[10] J. Lorenz, H. Rauhut, F. Schweitzer, and D. Helbing, “How Social Influence Can Undermine
+the Wisdom of Crowd Effect,” Proceedings of the National Academy of Sciences, vol. 108, no. 22, pp. 9020–9025, 2011.
+[11] M. Sharma, M. Tong, T. Korbak, D. Duvenaud, A. Askell, S. R. Bowman, E. Perez, et al.,
+“Towards Understanding Sycophancy in Language Models,” in Proc. ICLR, 2024.
+[12] K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and M. Fritz, “Not What
+You’ve Signed Up For: Compromising Real-World LLM-Integrated Applications with Indirect Prompt Injection,” in Proc. AISec, 2023.
+[13] C. List and P. Pettit, “Aggregating Sets of Judgments: An Impossibility Result,” Economics
+and Philosophy, vol. 18, no. 1, pp. 89–110, 2002.
+[14] A. Jøsang and R. Ismail, “The Beta Reputation System,” in Proc. 15th Bled Electronic
+Commerce Conference, 2002.
+[15] S. D. Kamvar, M. T. Schlosser, and H. Garcia-Molina, “The EigenTrust Algorithm for
+Reputation Management in P2P Networks,” in Proc. 12th International Conference on World Wide Web (WWW), 2003, pp. 640–651.
+[16] R. M. Keller, “Formal Verification of Parallel Programs,” Communications of the ACM,
+vol. 19, no. 7, pp. 371–384, 1976.
+[17] L. Lamport, Specifying Systems: The TLA+ Language and Tools for Hardware and Software
+Engineers. Addison-Wesley, 2002. [18] R. Hull, E. Damaggio, R. De Masellis, F. Fournier, M. Gupta, F. Heath, S. Hobson, M. Linehan, S. Maradugu, A. Nigam, P. Sukaviriya, and R. Vaculin, “Business Artifacts with GuardStage-Milestone Lifecycles: Managing Artifact Interactions with Conditions and Events,” in Proc. 5th ACM International Conference on Distributed Event-Based Systems (DEBS), 2011, pp. 51–62.
+[19] Z. Malik and A. Bouguettaya, “RATEWeb: Reputation Assessment for Trust Establishment
+among Web Services,” VLDB Journal, vol. 18, pp. 885–911, 2009.
+[20] S. Bikhchandani, D. Hirshleifer, and I. Welch, “A Theory of Fads, Fashion, Custom, and
+Cultural Change as Informational Cascades,” Journal of Political Economy, vol. 100, no. 5, pp. 992–1026, 1992. [21] M. L. Gordon, M. S. Lam, J. S. Park, K. Patel, J. Hancock, T. Hashimoto, and M. S. Bernstein, “Jury Learning: Integrating Dissenting Voices into Machine Learning Models,” in Proc. CHI, 2022.
+
+[22] L. Liu, L. Wang, W. Niu, and S. Hua, “Dynamic Sanctioning Mechanism for Cooperative
+Multi-Agent Systems,” Expert Systems with Applications, 2025.
+[23] J. Pitt, J. Schaumeier, and A. Artikis, “Axiomatization of Socio-Economic Principles for
+Self-Organizing Institutions: Concepts, Experiments and Challenges,” ACM Transactions
+on Autonomous and Adaptive Systems, vol. 7, no. 4, pp. 1–40, 2013.
+[24] A. Cheng and E. Friedman, “Sybilproof Reputation Mechanisms,” in Proc. ACM SIGCOMM
+Workshop on Economics of Peer-to-Peer Systems, 2005, pp. 128–132.
+[25] Q. Cao, M. Sirivianos, X. Yang, and T. Pregueiro, “Aiding the Detection of Fake Accounts
+in Large Scale Social Online Services,” in Proc. USENIX NSDI, 2012, pp. 197–210.
+[26] H. Li, B. Zhao, and A. Fuxman, “The Wisdom of Minority: Discovering and Targeting the
+Right Group of Workers for Crowdsourcing,” in Proc. WWW, 2014, pp. 165–176.
+[27] I. Shumailov, Z. Shumaylov, Y. Zhao, N. Papernot, R. Anderson, and Y. Gal, “AI Models
+Collapse When Trained on Recursively Generated Data,” Nature, vol. 631, pp. 755–759, 2024.
+[28] B. Yao et al., “Peacemaker or Troublemaker: How Sycophancy Shapes Multi-Agent Debate,”
+[29] V. Grimm, S. F. Railsback, C. E. Vincenot, U. Berger, C. Gallagher, D. L. DeAngelis,
+B. Edmonds, J. Ge, J. Giske, J. Groeneveld, A. S. A. Johnston, A. Milles, J. Nabe-Nielsen,
+J. G. Polhill, V. Radchuk, M.-S. Rohwader, R. A. Stillman, J. C. Thiele, and D. Ayllón, “The ODD Protocol for Describing Agent-Based and Other Simulation Models: A Second Update to Improve Clarity, Replication, and Structural Realism,” Journal of Artificial Societies and Social Simulation, vol. 23, no. 2, 2020.
+[30] P. Windrum, G. Fagiolo, and A. Moneta, “Empirical Validation of Agent-Based Models:
+Alternatives and Prospects,” Journal of Artificial Societies and Social Simulation, vol. 10, no. 2, 2007.
+[31] A. Vandin, “Statistical Model Checking of Python Agent-Based Models: An Integration of
+MultiVeStA and Mesa,” in Proc. AISoLA, 2024. [32] F. Bianchi, F. Grimaldo, G. Bravo, and F. Squazzoni, “The Peer Review Game: An AgentBased Model of Scientists Facing Resource Constraints and Institutional Pressures,” Scientometrics, vol. 116, pp. 1401–1420, 2018.
+[33] S. Johnson, “Agent Data Handling Policy: A Programmatic Framework for Agent-to-Agent
+Data Governance,” working paper, 2026.
+[34] S. Wojcik, S. Hilgard, N. Judd, D. Mocanu, S. Ragain, M. B. F. Hunzaker, K. Coleman, and
+J. Baxter, “Birdwatch: Crowd Wisdom and Bridging Algorithms can Inform Understanding
+[35] R. Conradi and B. Westfechtel, “Version Models for Software Configuration Management,”
+ACM Computing Surveys, vol. 30, no. 2, pp. 232–282, 1998.
+[36] W. M. P. van der Aalst, “The Application of Petri Nets to Workflow Management,” Journal
+of Circuits, Systems and Computers, vol. 8, no. 1, pp. 21–66, 1998.
+[37] M. Pesic, H. Schonenberg, and W. M. P. van der Aalst, “DECLARE: Full Support for
+Loosely-Structured Processes,” in Proc. 11th IEEE International Enterprise Distributed Object Computing Conference (EDOC), 2007, pp. 287–298.
+
+[38] S. Higgins, “The DCC Curation Lifecycle Model,” International Journal of Digital Curation,
+vol. 3, no. 1, pp. 134–140, 2008.

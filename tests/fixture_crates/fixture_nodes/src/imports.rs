@@ -84,6 +84,8 @@ pub mod sub_imports {
 
     pub struct SubItem;
 
+    pub fn tuple_struct_from_grandparent_import(_value: TupleStruct) {}
+
     pub mod nested_sub {
         pub struct NestedItem;
     }
@@ -92,6 +94,14 @@ pub mod sub_imports {
         pub(in crate::imports::sub_imports::restricted_scope) use crate::traits::SimpleTrait as RestrictedTraitAlias;
     }
 }
+
+pub fn renamed_local_struct_import_param(_value: MySimpleStruct) {}
+
+pub fn glob_imported_documented_trait_bound<T: DocumentedTrait>(_value: &T) {}
+
+pub fn multi_hop_reexport_trait_bound<T: trait_chain::ChainPublicTraitAlias>(_value: &T) {}
+
+pub fn crate_boundary_type_alias_param(_value: SimpleId) {}
 
 // --- Items used by imports to ensure fixture compiles ---
 pub fn use_imported_items() {

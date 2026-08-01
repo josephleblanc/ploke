@@ -1,0 +1,301 @@
+//! Artifact-carried parent identity for Prototype 1.
+//!
+//! The record is stored at `.ploke/prototype1/parent_identity.json` inside a
+//! parent-capable checkout. Control commands read it to map the checkout to a
+//! campaign, node, generation, branch, and predecessor chain before loading the
+//! campaign manifest or admitted run profile.
+//!
+//! This record identifies the parent coordinate for the checkout. It is not a
+//! process id, scheduler snapshot, run root, or standalone proof of authority;
+//! startup and handoff still validate the checkout against campaign and History
+//! state. Child worktrees do not carry parent control state and are rejected by
+//! parent-control commands.
+
+use crate::prelude::*;
+
+use crate::intervention::Prototype1NodeRecord;
+
+pub(crate) use ploke_records::identity::{
+    PARENT_IDENTITY_RELPATH, PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentityRecord,
+};
+
+/// Checkout-local identity for the active Prototype 1 parent coordinate.
+///
+/// The wrapped record names the campaign, parent/node id, generation,
+/// branch/artifact coordinate, optional benchmark instance, and predecessor
+/// links. The file is committed into the Artifact so a hydrated Runtime can
+/// recover its parent coordinate from the checkout itself.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(transparent)]
+pub(crate) struct ParentIdentity(ParentIdentityRecord);
+
+impl ParentIdentity {
+    pub(crate) fn record(&self) -> &ParentIdentityRecord {
+        &self.0
+    }
+
+    pub(crate) fn schema_version(&self) -> &str {
+        &self.0.schema_version
+    }
+
+    pub(crate) fn campaign_id(&self) -> &CampaignId {
+        &self.0.campaign_id
+    }
+
+    pub(crate) fn parent_id(&self) -> &str {
+        &self.0.parent_id
+    }
+
+    pub(crate) fn node_id(&self) -> &str {
+        &self.0.node_id
+    }
+
+    pub(crate) fn generation(&self) -> u32 {
+        self.0.generation
+    }
+
+    pub(crate) fn instance_id(&self) -> Option<&str> {
+        self.0.instance_id.as_deref()
+    }
+
+    pub(crate) fn previous_parent_id(&self) -> Option<&str> {
+        self.0.previous_parent_id.as_deref()
+    }
+
+    pub(crate) fn parent_node_id(&self) -> Option<&str> {
+        self.0.parent_node_id.as_deref()
+    }
+
+    pub(crate) fn branch_id(&self) -> &str {
+        &self.0.branch_id
+    }
+
+    pub(crate) fn artifact_branch(&self) -> Option<&str> {
+        self.0.artifact_branch.as_deref()
+    }
+
+    pub(crate) fn created_at(&self) -> &str {
+        &self.0.created_at
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_record_for_test(record: ParentIdentityRecord) -> Self {
+        Self(record)
+    }
+
+    /// Construct the generation-0 parent identity from setup facts.
+    ///
+    /// Root parents have no predecessor parent or parent node.
+    pub(crate) fn root_bootstrap(
+        campaign_id: impl Into<CampaignId>,
+        node_id: impl Into<String>,
+        instance_id: impl Into<String>,
+        branch_id: impl Into<String>,
+        artifact_branch: Option<String>,
+    ) -> Self {
+        let node_id = node_id.into();
+        Self(ParentIdentityRecord {
+            schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
+            campaign_id: campaign_id.into(),
+            parent_id: node_id.clone(),
+            node_id,
+            generation: 0,
+            instance_id: Some(instance_id.into()),
+            previous_parent_id: None,
+            parent_node_id: None,
+            branch_id: branch_id.into(),
+            artifact_branch,
+            created_at: Utc::now().to_rfc3339(),
+        })
+    }
+
+    /// Construct a parent identity for a selected node.
+    ///
+    /// The node supplies the parent coordinate; the previous parent supplies
+    /// predecessor linkage for startup and History validation.
+    pub(crate) fn from_node(
+        campaign_id: impl Into<CampaignId>,
+        node: &Prototype1NodeRecord,
+        previous_parent: Option<&ParentIdentity>,
+        artifact_branch: Option<String>,
+    ) -> Self {
+        Self(ParentIdentityRecord {
+            schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
+            campaign_id: campaign_id.into(),
+            parent_id: node.node_id.clone(),
+            node_id: node.node_id.clone(),
+            generation: node.generation,
+            instance_id: Some(node.instance_id.clone()),
+            previous_parent_id: previous_parent.map(|identity| identity.parent_id().to_string()),
+            parent_node_id: node.parent_node_id.clone(),
+            branch_id: node.branch_id.clone(),
+            artifact_branch,
+            created_at: Utc::now().to_rfc3339(),
+        })
+    }
+
+    /// Construct a parent identity with an explicit recorded timestamp.
+    ///
+    /// Receipt-backed setup uses the same timestamp as its root-node carrier so
+    /// exact intent can be regenerated without consulting the wall clock.
+    pub(crate) fn from_node_at(
+        campaign_id: impl Into<CampaignId>,
+        node: &Prototype1NodeRecord,
+        previous_parent: Option<&ParentIdentity>,
+        artifact_branch: Option<String>,
+        created_at: impl Into<String>,
+    ) -> Self {
+        Self(ParentIdentityRecord {
+            schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
+            campaign_id: campaign_id.into(),
+            parent_id: node.node_id.clone(),
+            node_id: node.node_id.clone(),
+            generation: node.generation,
+            instance_id: Some(node.instance_id.clone()),
+            previous_parent_id: previous_parent.map(|identity| identity.parent_id().to_string()),
+            parent_node_id: node.parent_node_id.clone(),
+            branch_id: node.branch_id.clone(),
+            artifact_branch,
+            created_at: created_at.into(),
+        })
+    }
+
+    /// Validate command-supplied expectations against the checkout identity.
+    ///
+    /// This checks schema, campaign, and optional node id only. Authority still
+    /// depends on later checkout/startup/History validation.
+    pub(crate) fn validate_for_command(
+        &self,
+        campaign_id: &CampaignId,
+        command_node_id: Option<&str>,
+    ) -> Result<(), PrepareError> {
+        if self.schema_version() != PARENT_IDENTITY_SCHEMA_VERSION {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "parent identity schema '{}' is not supported",
+                    self.schema_version()
+                ),
+            });
+        }
+        if self.campaign_id() != campaign_id {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "parent identity campaign '{}' does not match command campaign '{}'",
+                    self.campaign_id(),
+                    campaign_id
+                ),
+            });
+        }
+        if let Some(node_id) = command_node_id {
+            if self.node_id() != node_id {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "parent identity node '{}' does not match command node '{}'",
+                        self.node_id(),
+                        node_id
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Repo-relative parent identity path.
+pub(crate) fn parent_identity_relpath() -> PathBuf {
+    PathBuf::from(PARENT_IDENTITY_RELPATH)
+}
+
+/// Absolute parent identity path for a checkout root.
+pub(crate) fn parent_identity_path(repo_root: &Path) -> PathBuf {
+    repo_root.join(PARENT_IDENTITY_RELPATH)
+}
+
+/// Canonical commit message for admitting a parent-capable Artifact.
+pub(crate) fn parent_identity_commit_message(identity: &ParentIdentity) -> String {
+    format!(
+        "prototype1: initializing gen {} parent {}",
+        identity.generation(),
+        identity.parent_id()
+    )
+}
+
+/// Load a parent identity from a checkout root.
+pub(crate) fn load_parent_identity(repo_root: &Path) -> Result<ParentIdentity, PrepareError> {
+    let path = parent_identity_path(repo_root);
+    let text = fs::read_to_string(&path).map_err(|source| PrepareError::ReadManifest {
+        path: path.clone(),
+        source,
+    })?;
+    serde_json::from_str(&text).map_err(|source| PrepareError::ParseManifest { path, source })
+}
+
+/// Load a parent identity when present.
+pub(crate) fn load_parent_identity_optional(
+    repo_root: &Path,
+) -> Result<Option<ParentIdentity>, PrepareError> {
+    let path = parent_identity_path(repo_root);
+    match fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text)
+            .map(Some)
+            .map_err(|source| PrepareError::ParseManifest { path, source }),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(PrepareError::ReadManifest { path, source }),
+    }
+}
+
+/// Write a parent identity into a checkout root without committing it.
+pub(crate) fn write_parent_identity(
+    repo_root: &Path,
+    identity: &ParentIdentity,
+) -> Result<PathBuf, PrepareError> {
+    let path = parent_identity_path(repo_root);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    let bytes = serde_json::to_vec_pretty(identity).map_err(PrepareError::Serialize)?;
+    fs::write(&path, bytes).map_err(|source| PrepareError::WriteManifest {
+        path: path.clone(),
+        source,
+    })?;
+    Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn identity() -> ParentIdentity {
+        ParentIdentity::from_record_for_test(ParentIdentityRecord {
+            schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
+            campaign_id: CampaignId::from("campaign-1"),
+            parent_id: "node-1".to_string(),
+            node_id: "node-1".to_string(),
+            generation: 0,
+            instance_id: Some("instance-1".to_string()),
+            previous_parent_id: None,
+            parent_node_id: None,
+            branch_id: "branch-1".to_string(),
+            artifact_branch: Some("prototype1-parent-0".to_string()),
+            created_at: "2026-04-26T00:00:00Z".to_string(),
+        })
+    }
+
+    #[test]
+    fn validates_matching_command_identity() {
+        identity()
+            .validate_for_command(&CampaignId::from("campaign-1"), Some("node-1"))
+            .expect("matching identity");
+    }
+
+    #[test]
+    fn rejects_mismatched_command_identity() {
+        let err = identity()
+            .validate_for_command(&CampaignId::from("campaign-1"), Some("node-2"))
+            .expect_err("mismatched node should reject");
+        assert!(err.to_string().contains("does not match command node"));
+    }
+}

@@ -2,10 +2,15 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use ploke_core::ArcStr;
-use ploke_llm::{LlmError, response::FinishReason};
+use ploke_llm::{
+    ApiErrorSource, HttpBodyFailure, HttpPhase, HttpReceivePhase, HttpSendFailure, LlmError,
+    ProviderAttempt, ProviderTiming, manager::RequestMessage, response::FinishReason,
+};
 use serde::Serialize;
 use serde_json::json;
 use uuid::Uuid;
+
+use super::semantics::{RecoveryDecision, SemanticLoopErrorSpec};
 
 #[derive(Clone, Debug, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -28,7 +33,7 @@ pub enum ErrorSeverity {
     Fatal,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RetryStrategy {
     Fixed,
@@ -117,6 +122,7 @@ pub struct LoopError {
     pub kind: LoopErrorKind,
     pub code: ArcStr,
     pub severity: ErrorSeverity,
+    pub recovery: RecoveryDecision,
     pub retry: RetryAdvice,
     pub commit_phase: CommitPhase,
     pub summary: ArcStr,
@@ -144,6 +150,23 @@ pub struct ChatSessionReport {
     pub errors: Vec<LoopError>,
     pub commit_phase: CommitPhase,
     pub attempts: u32,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub chat_steps: Vec<ChatStepReport>,
+    /// Request-message state at the point the session returned.
+    ///
+    /// For response-stepped replay/debugger sessions this is the durable resume
+    /// seed: it contains the assistant tool-call message and all tool-result
+    /// messages that were appended before the replay boundary stopped the next
+    /// provider request. It is not a History authority record.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub final_messages: Vec<RequestMessage>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ChatStepReport {
+    pub chain_index: usize,
+    pub provider_timing: ProviderTiming,
+    pub provider_attempts: Vec<ProviderAttempt>,
 }
 
 impl ChatSessionReport {
@@ -162,6 +185,8 @@ impl ChatSessionReport {
             errors: Vec::new(),
             commit_phase: CommitPhase::PreCommit,
             attempts: 0,
+            chat_steps: Vec::new(),
+            final_messages: Vec::new(),
         }
     }
 
@@ -169,21 +194,69 @@ impl ChatSessionReport {
         self.errors.push(error);
     }
 
+    pub fn record_chat_step(
+        &mut self,
+        chain_index: usize,
+        provider_timing: ProviderTiming,
+        provider_attempts: Vec<ProviderAttempt>,
+    ) {
+        if provider_attempts.is_empty() {
+            return;
+        }
+        self.chat_steps.push(ChatStepReport {
+            chain_index,
+            provider_timing,
+            provider_attempts,
+        });
+    }
+
     pub fn last_error(&self) -> Option<&LoopError> {
         self.errors.last()
     }
 
     pub fn summary(&self) -> String {
-        match &self.outcome {
-            SessionOutcome::Completed => "Request summary: [success]".to_string(),
+        let mut summary = match &self.outcome {
+            SessionOutcome::Completed => {
+                if self.errors.is_empty() {
+                    "Request summary: [success]".to_string()
+                } else {
+                    "Request summary: [completed_with_errors]".to_string()
+                }
+            }
             SessionOutcome::Aborted { error_id } => {
                 format!("Request summary: [aborted] error_id={error_id}")
             }
             SessionOutcome::Exhausted { error_id } => {
                 format!("Request summary: [exhausted] error_id={error_id}")
             }
+        };
+        if let Some(error) = self.last_error() {
+            summary.push_str(" code=");
+            summary.push_str(error.code.as_ref());
+            summary.push_str(" kind=");
+            summary.push_str(kind_str(&error.kind));
+            summary.push_str(" error_summary=");
+            summary.push_str(&summary_fragment(&error.summary));
+            if let Some(diagnostics) = &error.diagnostics {
+                summary.push_str(" diagnostic=");
+                summary.push_str(&summary_fragment(&diagnostics.diagnostic));
+            }
         }
+        summary
     }
+}
+
+fn summary_fragment(value: &str) -> String {
+    const MAX_SUMMARY_CHARS: usize = 512;
+    let mut output = String::new();
+    for (index, ch) in value.chars().enumerate() {
+        if index >= MAX_SUMMARY_CHARS {
+            output.push_str("...");
+            return output;
+        }
+        output.push(ch);
+    }
+    output
 }
 
 #[derive(Clone, Debug)]
@@ -220,6 +293,15 @@ pub fn render_error_view(
                 && let Some(action) = &error.user_action
             {
                 details = Some(format!("Suggested action: {}", action));
+            }
+            if matches!(verbosity, Verbosity::Normal | Verbosity::Verbose)
+                && error.code.as_ref() == "TOOL_ARGS_REPAIR_REQUIRED"
+                && let Some(diag) = &error.diagnostics
+            {
+                details = Some(match details {
+                    Some(existing) => format!("{existing}\n{}", diag.diagnostic),
+                    None => diag.diagnostic.to_string(),
+                });
             }
             if matches!(verbosity, Verbosity::Verbose) {
                 let context = format_error_context(error);
@@ -260,40 +342,163 @@ pub fn render_error_view(
     }
 }
 
+pub fn build_loop_error_from_semantic_spec(
+    spec: SemanticLoopErrorSpec,
+    commit_phase: CommitPhase,
+) -> LoopError {
+    let retry = retry_advice_from_recovery(&spec.recovery);
+    LoopError {
+        error_id: Uuid::new_v4(),
+        fingerprint: fingerprint_for(&spec.kind, &spec.code, &spec.context),
+        kind: spec.kind,
+        code: spec.code,
+        severity: spec.severity,
+        recovery: spec.recovery,
+        retry,
+        commit_phase,
+        summary: spec.summary,
+        user_action: spec.user_action,
+        llm_action: spec.llm_action,
+        context: spec.context,
+        diagnostics: spec.diagnostics,
+    }
+}
+
+pub fn build_streak_error(
+    tool: &str,
+    count: usize,
+    limit: usize,
+    mut context: ErrorContext,
+    commit_phase: CommitPhase,
+) -> LoopError {
+    context.tool_name = Some(ArcStr::from(tool.to_string()));
+    let kind = LoopErrorKind::ModelBehavior;
+    let code = ArcStr::from("TOOL_STREAK_LIMIT");
+    let summary = ArcStr::from(format!(
+        "Tool no-progress guard stopped the session after {count} consecutive `{tool}` calls (limit {limit})"
+    ));
+    let retry = RetryAdvice::No {
+        reason: ArcStr::from("The configured tool streak limit was reached"),
+    };
+    let recovery = RecoveryDecision::Abort {
+        reason: ArcStr::from("Return control to the outer attempt driver"),
+    };
+    LoopError {
+        error_id: Uuid::new_v4(),
+        fingerprint: fingerprint_for(&kind, &code, &context),
+        kind,
+        code,
+        severity: ErrorSeverity::Error,
+        recovery,
+        retry,
+        commit_phase,
+        summary,
+        user_action: Some(ArcStr::from(
+            "Review the repeated tool trace before retrying the attempt.",
+        )),
+        llm_action: None,
+        context,
+        diagnostics: None,
+    }
+}
+
 pub fn classify_llm_error(
     err: &LlmError,
     mut context: ErrorContext,
     commit_phase: CommitPhase,
 ) -> LoopError {
     let (kind, code, severity, retry, user_action, llm_action) = match err {
-        LlmError::Request { is_timeout, .. } => {
-            let code = if *is_timeout {
-                ArcStr::from("TRANSPORT_TIMEOUT")
-            } else {
-                ArcStr::from("TRANSPORT_REQUEST_FAILED")
-            };
-            let retry = if *is_timeout {
+        LlmError::Http(http) => match &http.phase {
+            HttpPhase::Send(HttpSendFailure::Timeout) => (
+                LoopErrorKind::Transport,
+                ArcStr::from("HTTP_SEND_TIMEOUT"),
+                ErrorSeverity::Error,
                 RetryAdvice::Yes {
                     strategy: RetryStrategy::Backoff,
-                    reason: ArcStr::from("Transient timeout"),
-                }
-            } else {
-                RetryAdvice::Maybe {
-                    reason: ArcStr::from("Transient network error"),
-                }
-            };
-            (
-                LoopErrorKind::Transport,
-                code,
-                ErrorSeverity::Error,
-                retry,
-                Some(ArcStr::from("Check network connectivity and retry.")),
+                    reason: ArcStr::from("Transient timeout while sending request"),
+                },
+                Some(ArcStr::from(
+                    "Retry the request and inspect provider connectivity.",
+                )),
                 None,
-            )
-        }
-        LlmError::Api { status, .. } => {
-            let code = ArcStr::from(format!("HTTP_{}", status));
-            let retry = match *status {
+            ),
+            HttpPhase::Send(HttpSendFailure::Failed) => (
+                LoopErrorKind::Transport,
+                ArcStr::from("HTTP_SEND_FAILED"),
+                ErrorSeverity::Error,
+                RetryAdvice::Maybe {
+                    reason: ArcStr::from("Transient network error while sending request"),
+                },
+                Some(ArcStr::from(
+                    "Retry the request and inspect provider connectivity.",
+                )),
+                None,
+            ),
+            HttpPhase::Receive(receive) => match &receive.phase {
+                HttpReceivePhase::Headers => (
+                    LoopErrorKind::Transport,
+                    ArcStr::from("HTTP_HEADERS_FAILED"),
+                    ErrorSeverity::Error,
+                    RetryAdvice::Maybe {
+                        reason: ArcStr::from("Failed while receiving response headers"),
+                    },
+                    Some(ArcStr::from(
+                        "Retry the request and inspect provider/router logs.",
+                    )),
+                    None,
+                ),
+                HttpReceivePhase::Body(HttpBodyFailure::Timeout) => (
+                    LoopErrorKind::Transport,
+                    ArcStr::from("HTTP_BODY_TIMEOUT"),
+                    ErrorSeverity::Error,
+                    RetryAdvice::Yes {
+                        strategy: RetryStrategy::Backoff,
+                        reason: ArcStr::from("Timed out while reading response body"),
+                    },
+                    Some(ArcStr::from(
+                        "Retry the request and inspect provider/router body streaming behavior.",
+                    )),
+                    None,
+                ),
+                HttpReceivePhase::Body(HttpBodyFailure::ReadFailed) => (
+                    LoopErrorKind::Transport,
+                    ArcStr::from("HTTP_BODY_READ_FAILED"),
+                    ErrorSeverity::Error,
+                    RetryAdvice::Maybe {
+                        reason: ArcStr::from("Failed while reading response body"),
+                    },
+                    Some(ArcStr::from(
+                        "Retry the request and inspect provider/router body streaming behavior.",
+                    )),
+                    None,
+                ),
+                HttpReceivePhase::Body(HttpBodyFailure::DecodeFailed) => (
+                    LoopErrorKind::Transport,
+                    ArcStr::from("HTTP_BODY_DECODE_FAILED"),
+                    ErrorSeverity::Error,
+                    RetryAdvice::Maybe {
+                        reason: ArcStr::from("Response body was truncated or could not be decoded"),
+                    },
+                    Some(ArcStr::from(
+                        "Retry the request and inspect the returned payload for truncation or corruption.",
+                    )),
+                    None,
+                ),
+            },
+        },
+        LlmError::Api {
+            status,
+            api_code,
+            provider_slug,
+            provider_name,
+            error_source,
+            ..
+        } => {
+            context.provider = provider_slug.clone().or(provider_name.clone());
+            let effective_status =
+                retry_classification_status(*status, error_source, api_code.as_ref());
+            let code = loop_error_api_code(*status, error_source, api_code.as_ref());
+            let retry = match effective_status {
                 429 => RetryAdvice::Yes {
                     strategy: RetryStrategy::Backoff,
                     reason: ArcStr::from("Rate limited"),
@@ -306,7 +511,7 @@ pub fn classify_llm_error(
                     reason: ArcStr::from("Provider returned an error"),
                 },
             };
-            let action = match *status {
+            let action = match effective_status {
                 429 => Some(ArcStr::from("Wait briefly, then retry.")),
                 401 | 403 => Some(ArcStr::from("Verify API credentials and retry.")),
                 _ => None,
@@ -392,14 +597,7 @@ pub fn classify_llm_error(
             Some(ArcStr::from(
                 "Review tool output and retry with corrected input.",
             )),
-            Some(LlmAction {
-                next_steps: vec![LlmNextStep {
-                    action: ArcStr::from("repair_tool_args"),
-                    details: None,
-                }],
-                constraints: vec![ArcStr::from("Arguments must be strict JSON.")],
-                retry_hint: None,
-            }),
+            None,
         ),
         LlmError::Conversion(_) | LlmError::Unknown(_) | LlmError::Embedding(_) => (
             LoopErrorKind::StateMachine,
@@ -421,9 +619,35 @@ pub fn classify_llm_error(
             None,
             None,
         ),
+        LlmError::ReplayExhausted(_) => (
+            LoopErrorKind::StateMachine,
+            ArcStr::from("REPLAY_EXHAUSTED"),
+            ErrorSeverity::Info,
+            RetryAdvice::No {
+                reason: ArcStr::from("Recorded replay reached its configured boundary"),
+            },
+            None,
+            None,
+        ),
         LlmError::FinishError { finish_reason, .. } => {
             context.finish_reason = Some(finish_reason.clone());
             finish_reason_metadata(finish_reason)
+        }
+        var_err @ LlmError::Var { .. } => {
+            let reason = format!(
+                "Error with authentication of api provider: {}",
+                var_err.to_string()
+            );
+            (
+                LoopErrorKind::ProviderProtocol,
+                ArcStr::from("INTERNAL_ERROR"),
+                ErrorSeverity::Error,
+                RetryAdvice::Maybe {
+                    reason: ArcStr::from(reason),
+                },
+                None,
+                None,
+            )
         }
     };
 
@@ -431,6 +655,7 @@ pub fn classify_llm_error(
     let diagnostics = Some(Diagnostics {
         diagnostic: ArcStr::from(err.diagnostic()),
     });
+    let recovery = recovery_from_retry(&retry);
 
     LoopError {
         error_id: Uuid::new_v4(),
@@ -438,6 +663,7 @@ pub fn classify_llm_error(
         kind,
         code,
         severity,
+        recovery,
         retry,
         commit_phase,
         summary,
@@ -482,6 +708,11 @@ pub fn build_unknown_tool_error(
         kind: LoopErrorKind::ModelBehavior,
         code: ArcStr::from("UNKNOWN_TOOL_NAME"),
         severity: ErrorSeverity::Error,
+        recovery: RecoveryDecision::Repair {
+            strategy: RetryStrategy::Fixed,
+            reason: ArcStr::from("Model must choose a supported tool name"),
+            action: super::semantics::RepairAction::ToolName,
+        },
         retry: RetryAdvice::Yes {
             strategy: RetryStrategy::Fixed,
             reason: ArcStr::from("Model used an unsupported tool name"),
@@ -495,6 +726,51 @@ pub fn build_unknown_tool_error(
     }
 }
 
+pub fn build_tool_arg_repair_error(
+    context: ErrorContext,
+    commit_phase: CommitPhase,
+    summary: String,
+    diagnostic: String,
+    repair_details: Option<String>,
+    constraints: Vec<String>,
+) -> LoopError {
+    LoopError {
+        error_id: Uuid::new_v4(),
+        fingerprint: fingerprint_for(
+            &LoopErrorKind::ModelBehavior,
+            &ArcStr::from("TOOL_ARGS_REPAIR_REQUIRED"),
+            &context,
+        ),
+        kind: LoopErrorKind::ModelBehavior,
+        code: ArcStr::from("TOOL_ARGS_REPAIR_REQUIRED"),
+        severity: ErrorSeverity::Error,
+        recovery: RecoveryDecision::Repair {
+            strategy: RetryStrategy::Fixed,
+            reason: ArcStr::from("Invalid tool arguments require a corrected tool call"),
+            action: super::semantics::RepairAction::ToolArgs,
+        },
+        retry: RetryAdvice::Yes {
+            strategy: RetryStrategy::Fixed,
+            reason: ArcStr::from("Invalid tool arguments require a corrected tool call"),
+        },
+        commit_phase,
+        summary: ArcStr::from(summary),
+        user_action: Some(ArcStr::from("Request a corrected tool call and retry.")),
+        llm_action: Some(LlmAction {
+            next_steps: vec![LlmNextStep {
+                action: ArcStr::from("repair_tool_args"),
+                details: repair_details.map(ArcStr::from),
+            }],
+            constraints: constraints.into_iter().map(ArcStr::from).collect(),
+            retry_hint: Some(RetryStrategy::Fixed),
+        }),
+        context,
+        diagnostics: Some(Diagnostics {
+            diagnostic: ArcStr::from(diagnostic),
+        }),
+    }
+}
+
 pub fn classify_finish_reason(
     finish_reason: &FinishReason,
     mut context: ErrorContext,
@@ -504,6 +780,7 @@ pub fn classify_finish_reason(
     let (kind, code, severity, retry, user_action, llm_action) =
         finish_reason_metadata(finish_reason);
     let summary = finish_reason_summary(finish_reason);
+    let recovery = recovery_from_retry(&retry);
 
     LoopError {
         error_id: Uuid::new_v4(),
@@ -511,6 +788,7 @@ pub fn classify_finish_reason(
         kind,
         code,
         severity,
+        recovery,
         retry,
         commit_phase,
         summary,
@@ -535,6 +813,7 @@ fn format_error_context(error: &LoopError) -> String {
     let mut lines = vec![
         format!("kind: {:?}", error.kind),
         format!("severity: {:?}", error.severity),
+        format!("recovery: {:?}", error.recovery),
         format!("retry: {:?}", error.retry),
         format!("commit_phase: {:?}", error.commit_phase),
     ];
@@ -575,12 +854,40 @@ fn build_llm_payload(error: &LoopError) -> serde_json::Value {
         .as_ref()
         .map(|action| action.constraints.clone())
         .unwrap_or_default();
-    let retry = match &error.retry {
-        RetryAdvice::No { reason } => json!({ "allowed": false, "reason": reason }),
-        RetryAdvice::Maybe { reason } => json!({ "allowed": true, "reason": reason }),
-        RetryAdvice::Yes { strategy, reason } => {
-            json!({ "allowed": true, "strategy": strategy_str(strategy), "reason": reason })
+    let recovery = match &error.recovery {
+        RecoveryDecision::Abort { reason } => {
+            json!({ "decision": "abort", "reason": reason })
         }
+        RecoveryDecision::MaybeRetry { reason } => {
+            json!({ "decision": "maybe_retry", "reason": reason })
+        }
+        RecoveryDecision::Retry { strategy, reason } => json!({
+            "decision": "retry",
+            "strategy": strategy_str(strategy),
+            "reason": reason
+        }),
+        RecoveryDecision::Repair {
+            strategy,
+            reason,
+            action,
+        } => json!({
+            "decision": "repair",
+            "strategy": strategy_str(strategy),
+            "reason": reason,
+            "action": repair_action_str(action)
+        }),
+    };
+    let retry = match &error.recovery {
+        RecoveryDecision::Repair { reason, .. } => {
+            json!({ "allowed": false, "reason": format!("Repair required: {reason}") })
+        }
+        _ => match &error.retry {
+            RetryAdvice::No { reason } => json!({ "allowed": false, "reason": reason }),
+            RetryAdvice::Maybe { reason } => json!({ "allowed": true, "reason": reason }),
+            RetryAdvice::Yes { strategy, reason } => {
+                json!({ "allowed": true, "strategy": strategy_str(strategy), "reason": reason })
+            }
+        },
     };
     json!({
         "type": "ploke.error",
@@ -588,6 +895,7 @@ fn build_llm_payload(error: &LoopError) -> serde_json::Value {
         "code": error.code,
         "kind": kind_str(&error.kind),
         "summary": error.summary,
+        "recovery": recovery,
         "where": {
             "phase": error.context.phase,
             "tool_name": error.context.tool_name,
@@ -624,6 +932,53 @@ fn finish_reason_metadata(
             },
             Some(ArcStr::from("Rephrase the request and retry.")),
             None,
+        ),
+        FinishReason::MalformedFunctionCall => (
+            LoopErrorKind::ModelBehavior,
+            ArcStr::from("MALFORMED_FUNCTION_CALL"),
+            ErrorSeverity::Error,
+            RetryAdvice::Maybe {
+                reason: ArcStr::from("Provider returned malformed function call output"),
+            },
+            Some(ArcStr::from(
+                "Retry with a valid tool call using strict JSON arguments.",
+            )),
+            Some(LlmAction {
+                next_steps: vec![LlmNextStep {
+                    action: ArcStr::from("retry_tool_call_with_valid_json"),
+                    details: Some(ArcStr::from(
+                        "Use tool_calls with valid JSON arguments, not Python-style code.",
+                    )),
+                }],
+                constraints: vec![
+                    ArcStr::from("Arguments must be strict JSON."),
+                    ArcStr::from("Do not emit Python-style function calls."),
+                ],
+                retry_hint: Some(RetryStrategy::Fixed),
+            }),
+        ),
+        FinishReason::UnexpectedToolCall => (
+            LoopErrorKind::ModelBehavior,
+            ArcStr::from("UNEXPECTED_TOOL_CALL"),
+            ErrorSeverity::Error,
+            RetryAdvice::Maybe {
+                reason: ArcStr::from("Provider invoked an undeclared function"),
+            },
+            Some(ArcStr::from(
+                "Retry, calling only a tool declared in the request's tool set.",
+            )),
+            Some(LlmAction {
+                next_steps: vec![LlmNextStep {
+                    action: ArcStr::from("retry_with_declared_tool"),
+                    details: Some(ArcStr::from(
+                        "Call one of the provided tools by its exact declared name.",
+                    )),
+                }],
+                constraints: vec![ArcStr::from(
+                    "Only call functions that were declared in the request.",
+                )],
+                retry_hint: Some(RetryStrategy::Fixed),
+            }),
         ),
         FinishReason::Length => (
             LoopErrorKind::ModelBehavior,
@@ -677,12 +1032,104 @@ fn finish_reason_metadata(
     }
 }
 
+fn retry_classification_status(
+    status: u16,
+    error_source: &ApiErrorSource,
+    api_code: Option<&ArcStr>,
+) -> u16 {
+    if matches!(error_source, ApiErrorSource::TopLevelError)
+        && (200..300).contains(&status)
+        && let Some(code) = parse_http_like_api_code(api_code)
+    {
+        return code;
+    }
+    status
+}
+
+pub fn recovery_from_retry(retry: &RetryAdvice) -> RecoveryDecision {
+    match retry {
+        RetryAdvice::No { reason } => RecoveryDecision::Abort {
+            reason: reason.clone(),
+        },
+        RetryAdvice::Maybe { reason } => RecoveryDecision::MaybeRetry {
+            reason: reason.clone(),
+        },
+        RetryAdvice::Yes { strategy, reason } => RecoveryDecision::Retry {
+            strategy: strategy.clone(),
+            reason: reason.clone(),
+        },
+    }
+}
+
+pub fn retry_advice_from_recovery(recovery: &RecoveryDecision) -> RetryAdvice {
+    match recovery {
+        RecoveryDecision::Abort { reason } => RetryAdvice::No {
+            reason: reason.clone(),
+        },
+        RecoveryDecision::MaybeRetry { reason } => RetryAdvice::Maybe {
+            reason: reason.clone(),
+        },
+        RecoveryDecision::Retry { strategy, reason }
+        | RecoveryDecision::Repair {
+            strategy, reason, ..
+        } => RetryAdvice::Yes {
+            strategy: strategy.clone(),
+            reason: reason.clone(),
+        },
+    }
+}
+
+pub fn mark_repair_budget_exhausted(error: &mut LoopError) {
+    let reason = ArcStr::from("Repair budget exhausted for this chat turn");
+    error.kind = LoopErrorKind::ModelBehavior;
+    error.code = ArcStr::from("REPAIR_BUDGET_EXHAUSTED");
+    error.severity = ErrorSeverity::Error;
+    error.recovery = RecoveryDecision::Abort {
+        reason: reason.clone(),
+    };
+    error.retry = RetryAdvice::No {
+        reason: reason.clone(),
+    };
+    error.summary = ArcStr::from("Repeated repair attempts did not converge to a valid tool call.");
+    error.user_action = Some(ArcStr::from(
+        "Adjust the prompt, inspect the provider output, or switch providers.",
+    ));
+    error.llm_action = None;
+    error.fingerprint = fingerprint_for(&error.kind, &error.code, &error.context);
+}
+
+fn loop_error_api_code(
+    status: u16,
+    error_source: &ApiErrorSource,
+    api_code: Option<&ArcStr>,
+) -> ArcStr {
+    if matches!(error_source, ApiErrorSource::TopLevelError)
+        && (200..300).contains(&status)
+        && let Some(code) = parse_http_like_api_code(api_code)
+    {
+        return ArcStr::from(format!("EMBEDDED_API_{code}"));
+    }
+    ArcStr::from(format!("HTTP_{status}"))
+}
+
+fn parse_http_like_api_code(api_code: Option<&ArcStr>) -> Option<u16> {
+    let raw = api_code?;
+    let parsed = raw.as_ref().parse::<u16>().ok()?;
+    (100..=599).contains(&parsed).then_some(parsed)
+}
+
 fn finish_reason_summary(finish_reason: &FinishReason) -> ArcStr {
     match finish_reason {
         FinishReason::Error(msg) => ArcStr::from(format!("Finish reason error: {}", msg)),
         FinishReason::Length => ArcStr::from("Finish reason length: response truncated."),
         FinishReason::Timeout => ArcStr::from("Finish reason timeout from provider."),
         FinishReason::ContentFilter => ArcStr::from("Finish reason content filter."),
+        FinishReason::MalformedFunctionCall => {
+            ArcStr::from("Finish reason malformed function call.")
+        }
+        FinishReason::UnexpectedToolCall => {
+            ArcStr::from("Finish reason unexpected tool call (undeclared function).")
+        }
         FinishReason::ToolCalls => ArcStr::from("Finish reason tool calls."),
         FinishReason::Stop => ArcStr::from("Finish reason stop."),
     }
@@ -704,5 +1151,249 @@ fn strategy_str(strategy: &RetryStrategy) -> &'static str {
     match strategy {
         RetryStrategy::Fixed => "fixed",
         RetryStrategy::Backoff => "backoff",
+    }
+}
+
+fn repair_action_str(action: &super::semantics::RepairAction) -> &'static str {
+    match action {
+        super::semantics::RepairAction::ToolArgs => "tool_args",
+        super::semantics::RepairAction::ToolName => "tool_name",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Real refusal text captured from the state6 `gemini-2.5-pro` direct-Google
+    /// incident: a Python `print(default_api.non_semantic_patch(...))` call whose
+    /// `diff` argument is a multi-line unified diff, rejected by Vertex as a
+    /// malformed function call.
+    ///
+    /// Provenance: `~/.ploke-eval/instances/prototype1/`
+    /// `p1-g25p-direct-protocol-2target-g0g2-1x3-state6-20260610-014509/`
+    /// `BurntSushi__ripgrep-2209/runs/`
+    /// `run-1781081390723-structured-current-policy-9b2c8ea1/agent-turn-summary.json`
+    const MALFORMED_NON_SEMANTIC_PATCH_REFUSAL: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/google/malformed_non_semantic_patch_refusal.txt"
+    ));
+
+    #[test]
+    fn classify_finish_error_malformed_multiline_patch_is_model_behavior_code() {
+        use ploke_llm::response::OpenAiResponse;
+
+        // The captured multi-line `non_semantic_patch` refusal must classify as a
+        // MALFORMED_FUNCTION_CALL / ModelBehavior loop error, never an
+        // UNKNOWN_TOOL_NAME repair, and the multi-line body must not break
+        // classification.
+        let err = LlmError::FinishError {
+            msg: MALFORMED_NON_SEMANTIC_PATCH_REFUSAL.to_string(),
+            full_response: OpenAiResponse {
+                id: "ZSUpar6LGMiFodAP1JvsmQQ".to_string(),
+                choices: vec![],
+                created: 1781081445,
+                model: "google/gemini-2.5-pro".to_string(),
+                object: "chat.completion".to_string(),
+                provider: None,
+                system_fingerprint: None,
+                usage: None,
+                logprobs: None,
+            },
+            finish_reason: FinishReason::MalformedFunctionCall,
+        };
+
+        let loop_error = classify_llm_error(&err, ErrorContext::new(1, 0), CommitPhase::PreCommit);
+
+        assert_eq!(loop_error.code.as_ref(), "MALFORMED_FUNCTION_CALL");
+        assert!(matches!(loop_error.kind, LoopErrorKind::ModelBehavior));
+        assert_ne!(loop_error.code.as_ref(), "UNKNOWN_TOOL_NAME");
+        assert_ne!(loop_error.code.as_ref(), "REPAIR_BUDGET_EXHAUSTED");
+        assert!(!matches!(
+            loop_error.recovery,
+            RecoveryDecision::Repair { .. }
+        ));
+        assert_eq!(
+            loop_error.context.finish_reason,
+            Some(FinishReason::MalformedFunctionCall)
+        );
+    }
+
+    #[test]
+    fn classify_finish_error_malformed_function_call_is_model_behavior_not_tool_name_repair() {
+        use ploke_llm::response::OpenAiResponse;
+
+        let err = LlmError::FinishError {
+            msg: "Malformed function call: print(default_api.apply_code_edit(...))".to_string(),
+            full_response: OpenAiResponse {
+                id: "test".to_string(),
+                choices: vec![],
+                created: 0,
+                model: "google/gemini-2.5-flash".to_string(),
+                object: "chat.completion".to_string(),
+                provider: None,
+                system_fingerprint: None,
+                usage: None,
+                logprobs: None,
+            },
+            finish_reason: FinishReason::MalformedFunctionCall,
+        };
+
+        let loop_error = classify_llm_error(&err, ErrorContext::new(1, 0), CommitPhase::PreCommit);
+
+        assert_eq!(loop_error.code.as_ref(), "MALFORMED_FUNCTION_CALL");
+        assert!(matches!(
+            loop_error.recovery,
+            RecoveryDecision::Retry { .. } | RecoveryDecision::MaybeRetry { .. }
+        ));
+        assert!(!matches!(
+            loop_error.recovery,
+            RecoveryDecision::Repair {
+                action: crate::llm::manager::semantics::RepairAction::ToolName,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn classify_llm_error_embedded_top_level_rate_limit_is_retryable() {
+        let err = LlmError::Api {
+            status: 200,
+            message: "Provider returned error (code: 429)".to_string(),
+            url: None,
+            body_snippet: None,
+            api_code: Some(ArcStr::from("429")),
+            provider_name: Some(ArcStr::from("Io Net")),
+            provider_slug: None,
+            error_source: ApiErrorSource::TopLevelError,
+        };
+
+        let loop_error = classify_llm_error(&err, ErrorContext::new(1, 0), CommitPhase::PreCommit);
+
+        assert_eq!(loop_error.code.as_ref(), "EMBEDDED_API_429");
+        assert!(matches!(
+            loop_error.retry,
+            RetryAdvice::Yes {
+                strategy: RetryStrategy::Backoff,
+                ..
+            }
+        ));
+        assert_eq!(loop_error.context.provider.as_deref(), Some("Io Net"));
+    }
+
+    #[test]
+    fn chat_session_summary_preserves_last_error_detail() {
+        let err = LlmError::Http(ploke_llm::HttpFailure::send(
+            None,
+            None,
+            "failed to resolve bearer token: ADC token unavailable".to_string(),
+            HttpSendFailure::Failed,
+        ));
+        let loop_error = classify_llm_error(&err, ErrorContext::new(1, 0), CommitPhase::PreCommit);
+        let error_id = loop_error.error_id;
+        let mut report = ChatSessionReport::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        report.record_error(loop_error);
+        report.outcome = SessionOutcome::Aborted { error_id };
+
+        let summary = report.summary();
+
+        assert!(summary.contains("[aborted]"));
+        assert!(summary.contains("code=HTTP_SEND_FAILED"));
+        assert!(summary.contains("kind=transport"));
+        assert!(summary.contains("failed to resolve bearer token"));
+    }
+
+    #[test]
+    fn chat_session_summary_completed_without_errors_is_success() {
+        let report = ChatSessionReport::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+
+        let summary = report.summary();
+
+        assert!(
+            summary.starts_with("Request summary: [success]"),
+            "error-free completion must report [success]: {summary}"
+        );
+        assert!(!summary.contains("[completed_with_errors]"));
+        assert!(!summary.contains(" code="));
+    }
+
+    #[test]
+    fn chat_session_summary_completed_with_errors_is_not_labeled_success() {
+        // A turn that ended cleanly (Completed) but recorded a tool-execution
+        // failure must not be presented as `[success]`; it should be labeled
+        // honestly while still preserving the failed-call detail. Mirrors the
+        // live state11 ripgrep-2209 incident where a tool failure remained in
+        // the terminal diagnostic on an otherwise-completed turn.
+        let err = LlmError::ToolCall(
+            "apply_code_edit: fuzzy match rejected: no matching span".to_string(),
+        );
+        let loop_error = classify_llm_error(&err, ErrorContext::new(1, 0), CommitPhase::PreCommit);
+        let mut report = ChatSessionReport::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        report.record_error(loop_error);
+        // Outcome stays Completed (the chat loop ended cleanly).
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+
+        let summary = report.summary();
+
+        assert!(
+            summary.starts_with("Request summary: [completed_with_errors]"),
+            "completed turn with recorded errors must not be labeled [success]: {summary}"
+        );
+        assert!(!summary.contains("[success]"));
+        // The failed-call detail suffix must still be preserved.
+        assert!(summary.contains("code=TOOL_EXECUTION_FAILED"));
+        assert!(summary.contains("kind=tool_execution"));
+    }
+
+    #[test]
+    fn llm_payload_for_repair_does_not_expose_retry_as_allowed() {
+        let loop_error = build_tool_arg_repair_error(
+            ErrorContext::new(1, 0),
+            CommitPhase::PreCommit,
+            "Invalid tool args.".to_string(),
+            "diagnostic".to_string(),
+            Some("repair details".to_string()),
+            vec!["Arguments must be strict JSON.".to_string()],
+        );
+
+        let payload = render_error_view(&loop_error, ErrorAudience::Llm, Verbosity::Normal)
+            .llm_payload
+            .expect("llm payload");
+
+        assert_eq!(payload["recovery"]["decision"], "repair");
+        assert_eq!(payload["retry"]["allowed"], false);
+    }
+
+    #[test]
+    fn user_error_view_includes_diagnostics_for_tool_arg_repairs() {
+        let loop_error = build_tool_arg_repair_error(
+            ErrorContext::new(1, 0),
+            CommitPhase::PreCommit,
+            "Invalid tool args.".to_string(),
+            "tool=RequestCodeContext code=WrongType: failed to parse tool arguments\nRejected arguments: {\"search_term\":42}".to_string(),
+            Some("repair details".to_string()),
+            vec!["Arguments must be strict JSON.".to_string()],
+        );
+
+        let view = render_error_view(&loop_error, ErrorAudience::User, Verbosity::Normal);
+        let details = view.details.expect("details");
+        assert!(details.contains("Suggested action: Request a corrected tool call and retry."));
+        assert!(details.contains("Rejected arguments: {\"search_term\":42}"));
     }
 }

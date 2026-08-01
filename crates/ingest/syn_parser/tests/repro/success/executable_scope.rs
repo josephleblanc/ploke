@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::process::Command;
 
 use ploke_common::workspace_root;
 use syn_parser::try_run_phases_and_resolve;

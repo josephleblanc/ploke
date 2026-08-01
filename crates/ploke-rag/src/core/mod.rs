@@ -14,6 +14,8 @@ use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::IoManagerHandle;
 use std::collections::HashMap;
+#[cfg(feature = "typed_type_graph")]
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -68,6 +70,31 @@ pub struct RagConfig {
     pub assembly_policy: AssemblyPolicy,
     pub token_counter: Arc<dyn TokenCounter>,
     pub reranker: Option<Arc<dyn Reranker>>,
+    pub type_context: TypeContextConfig,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TypeContextConfig {
+    pub enabled: bool,
+    pub max_seed_hits: usize,
+    pub max_expanded_hits: usize,
+    pub score_factor: f32,
+    pub options: TypeContextOptions,
+}
+
+impl Default for TypeContextConfig {
+    fn default() -> Self {
+        Self {
+            enabled: cfg!(feature = "typed_type_graph"),
+            max_seed_hits: 12,
+            max_expanded_hits: 48,
+            score_factor: 0.6,
+            options: TypeContextOptions {
+                max_distance: 4,
+                ..TypeContextOptions::default()
+            },
+        }
+    }
 }
 
 impl Default for RagConfig {
@@ -83,6 +110,7 @@ impl Default for RagConfig {
             assembly_policy: AssemblyPolicy::default(),
             token_counter: Arc::new(crate::context::ApproxCharTokenizer),
             reranker: None,
+            type_context: TypeContextConfig::default(),
         }
     }
 }
@@ -116,6 +144,21 @@ impl Reranker for NoopReranker {
     }
 }
 
+#[cfg(feature = "typed_type_graph")]
+fn type_context_kind(relation: TypeContextRelation) -> TypeContextKind {
+    match relation {
+        TypeContextRelation::SameResolvedType => TypeContextKind::SameResolvedType,
+        TypeContextRelation::UsesTypeNested => TypeContextKind::UsesTypeNested,
+        TypeContextRelation::TypeDefinitionImpact => TypeContextKind::TypeDefinitionImpact,
+        TypeContextRelation::ImplOfTrait => TypeContextKind::ImplOfTrait,
+        TypeContextRelation::ImplSelfType => TypeContextKind::ImplSelfType,
+        TypeContextRelation::AliasExpansion => TypeContextKind::AliasExpansion,
+        TypeContextRelation::TraitBound => TypeContextKind::TraitBound,
+        TypeContextRelation::IteratorSurface => TypeContextKind::IteratorSurface,
+        TypeContextRelation::ConstGenericAlias => TypeContextKind::ConstGenericAlias,
+    }
+}
+
 /// RAG orchestration service.
 ///
 /// This orchestrates hybrid search by combining:
@@ -135,20 +178,53 @@ pub struct RagService {
     bm_embedder: mpsc::Sender<Bm25Cmd>,
     cfg: RagConfig,
     io: Option<Arc<IoManagerHandle>>,
+    type_context_degraded: bool,
 }
 
 impl RagService {
-    /// Construct a new RAG service, starting the BM25 service actor.
-    pub fn new(db: Arc<Database>, dense_embedder: Arc<EmbeddingRuntime>) -> Result<Self, RagError> {
-        // ensure_tracer_initialized();
-        let bm_embedder = bm25_service::start_default(db.clone())?;
+    fn assemble(
+        db: Arc<Database>,
+        dense_embedder: Arc<EmbeddingRuntime>,
+        bm_embedder: mpsc::Sender<Bm25Cmd>,
+        mut cfg: RagConfig,
+        io: Option<Arc<IoManagerHandle>>,
+    ) -> Result<Self, RagError> {
+        let type_context_degraded = Self::apply_type_context_gate(&db, &mut cfg)?;
         Ok(Self {
             db,
             dense_embedder,
             bm_embedder,
-            cfg: RagConfig::default(),
-            io: None,
+            cfg,
+            io,
+            type_context_degraded,
         })
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn apply_type_context_gate(db: &Database, cfg: &mut RagConfig) -> Result<bool, RagError> {
+        if !cfg.type_context.enabled {
+            return Ok(false);
+        }
+        if db.has_typed_type_graph_relations()? {
+            return Ok(false);
+        }
+        tracing::warn!(
+            "typed type-context expansion disabled: active database is missing typed-graph relations (type_contains, type_use, type_relation)"
+        );
+        cfg.type_context.enabled = false;
+        Ok(true)
+    }
+
+    #[cfg(not(feature = "typed_type_graph"))]
+    fn apply_type_context_gate(_db: &Database, _cfg: &mut RagConfig) -> Result<bool, RagError> {
+        Ok(false)
+    }
+
+    /// Construct a new RAG service, starting the BM25 service actor.
+    pub fn new(db: Arc<Database>, dense_embedder: Arc<EmbeddingRuntime>) -> Result<Self, RagError> {
+        // ensure_tracer_initialized();
+        let bm_embedder = bm25_service::start_default(db.clone())?;
+        Self::assemble(db, dense_embedder, bm_embedder, RagConfig::default(), None)
     }
 
     /// Construct with explicit configuration (no IoManager).
@@ -158,13 +234,7 @@ impl RagService {
         cfg: RagConfig,
     ) -> Result<Self, RagError> {
         let bm_embedder = bm25_service::start_default(db.clone())?;
-        Ok(Self {
-            db,
-            dense_embedder,
-            bm_embedder,
-            cfg,
-            io: None,
-        })
+        Self::assemble(db, dense_embedder, bm_embedder, cfg, None)
     }
 
     /// Construct with an IoManager and default configuration.
@@ -184,13 +254,7 @@ impl RagService {
         cfg: RagConfig,
     ) -> Result<Self, RagError> {
         let bm_embedder = bm25_service::start_default(db.clone())?;
-        Ok(Self {
-            db,
-            dense_embedder,
-            bm_embedder,
-            cfg,
-            io: Some(Arc::new(io)),
-        })
+        Self::assemble(db, dense_embedder, bm_embedder, cfg, Some(Arc::new(io)))
     }
 
     /// Construct with both IoManager and rebuild avgld from db contents.
@@ -201,13 +265,13 @@ impl RagService {
         cfg: RagConfig,
     ) -> Result<Self, RagError> {
         let bm_embedder = bm25_service::start_rebuilt(db.clone())?;
-        Ok(Self {
-            db,
-            dense_embedder,
-            bm_embedder,
-            cfg,
-            io: Some(Arc::new(io)),
-        })
+        Self::assemble(db, dense_embedder, bm_embedder, cfg, Some(Arc::new(io)))
+    }
+
+    /// Returns true when typed type-context expansion was requested but disabled
+    /// because the active database lacks typed-graph relations.
+    pub fn type_context_degraded(&self) -> bool {
+        self.type_context_degraded
     }
 
     /// Convenience constructor for tests with an in-memory database and mock embedder.
@@ -217,13 +281,8 @@ impl RagService {
             ploke_embed::indexer::EmbeddingProcessor::new_mock(),
         ));
         let bm_embedder = bm25_service::start_default(db.clone()).expect("start bm25");
-        Self {
-            db,
-            dense_embedder,
-            bm_embedder,
-            cfg: RagConfig::default(),
-            io: None,
-        }
+        Self::assemble(db, dense_embedder, bm_embedder, RagConfig::default(), None)
+            .expect("in-memory test database should satisfy type-context gate")
     }
 
     /// Execute a BM25 search against the in-memory sparse index.
@@ -335,32 +394,114 @@ impl RagService {
     /// For now, this is a fire-and-forget command to the BM25 service.
     #[instrument(skip(self))]
     pub async fn bm25_rebuild(&self) -> Result<(), RagError> {
-        self.bm_embedder.send(Bm25Cmd::Rebuild).await.map_err(|e| {
-            RagError::Channel(format!("failed to send BM25 rebuild command: {}", e))
-        })?;
-        debug!("BM25 rebuild command sent");
-        Ok(())
+        match self.bm_embedder.try_send(Bm25Cmd::Rebuild) {
+            Ok(()) => {
+                debug!("BM25 rebuild command sent");
+                Ok(())
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => Err(RagError::Channel(
+                "failed to send BM25 rebuild command: mailbox is full".to_string(),
+            )),
+            Err(mpsc::error::TrySendError::Closed(_)) => Err(RagError::Channel(
+                "failed to send BM25 rebuild command: mailbox is closed".to_string(),
+            )),
+        }
     }
 
     /// Query BM25 actor for current status with a client-side timeout.
     #[instrument(skip(self), fields(timeout_ms = BM25_TIMEOUT_MS))]
     pub async fn bm25_status(&self) -> Result<Bm25Status, RagError> {
-        let (tx, rx) = oneshot::channel();
-        self.bm_embedder
-            .send(Bm25Cmd::Status { resp: tx })
+        self.bm25_status_with_timeout(Duration::from_millis(self.cfg.bm25_timeout_ms))
             .await
-            .map_err(|e| RagError::Channel(format!("failed to send BM25 status command: {}", e)))?;
-        match timeout(Duration::from_millis(self.cfg.bm25_timeout_ms), rx).await {
-            Ok(Ok(Ok(status))) => Ok(status),
-            Ok(Ok(Err(db_err))) => Err(RagError::Db(db_err)),
-            Ok(Err(recv_err)) => Err(RagError::Channel(format!(
-                "BM25 status response channel closed: {}",
-                recv_err
-            ))),
-            Err(_) => Err(RagError::Channel(format!(
-                "timeout waiting for BM25 status ({} ms)",
-                self.cfg.bm25_timeout_ms
-            ))),
+    }
+
+    /// Query BM25 actor for current status with a caller-supplied timeout.
+    ///
+    /// Long-running setup paths may have just queued a rebuild and need to wait
+    /// behind that rebuild rather than treating the normal interactive timeout
+    /// as a fatal actor failure.
+    #[instrument(skip(self), fields(timeout_ms = timeout_duration.as_millis()))]
+    pub async fn bm25_status_with_timeout(
+        &self,
+        timeout_duration: Duration,
+    ) -> Result<Bm25Status, RagError> {
+        let deadline = tokio::time::Instant::now() + timeout_duration;
+        let (tx, rx) = oneshot::channel();
+        tracing::info!(
+            target: "ploke_rag::bm25_freshness",
+            timeout_ms = timeout_duration.as_millis() as u64,
+            "bm25_status_send_start"
+        );
+        let send_started = std::time::Instant::now();
+        match tokio::time::timeout_at(
+            deadline,
+            self.bm_embedder.send(Bm25Cmd::Status { resp: tx }),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                return Err(RagError::Channel(format!(
+                    "failed to send BM25 status command: {err}"
+                )));
+            }
+            Err(_) => {
+                return Err(RagError::Channel(format!(
+                    "timeout sending BM25 status command ({} ms)",
+                    timeout_duration.as_millis()
+                )));
+            }
+        }
+        tracing::info!(
+            target: "ploke_rag::bm25_freshness",
+            send_ms = send_started.elapsed().as_millis() as u64,
+            "bm25_status_send_done"
+        );
+
+        let response_started = std::time::Instant::now();
+        match tokio::time::timeout_at(deadline, rx).await {
+            Ok(Ok(Ok(status))) => {
+                tracing::info!(
+                    target: "ploke_rag::bm25_freshness",
+                    response_ms = response_started.elapsed().as_millis() as u64,
+                    status = ?status,
+                    "bm25_status_response_done"
+                );
+                Ok(status)
+            }
+            Ok(Ok(Err(db_err))) => {
+                tracing::info!(
+                    target: "ploke_rag::bm25_freshness",
+                    response_ms = response_started.elapsed().as_millis() as u64,
+                    error = %db_err,
+                    "bm25_status_response_db_error"
+                );
+                Err(RagError::Db(db_err))
+            }
+            Ok(Err(recv_err)) => {
+                tracing::info!(
+                    target: "ploke_rag::bm25_freshness",
+                    response_ms = response_started.elapsed().as_millis() as u64,
+                    error = %recv_err,
+                    "bm25_status_response_channel_closed"
+                );
+                Err(RagError::Channel(format!(
+                    "BM25 status response channel closed: {}",
+                    recv_err
+                )))
+            }
+            Err(_) => {
+                tracing::info!(
+                    target: "ploke_rag::bm25_freshness",
+                    response_ms = response_started.elapsed().as_millis() as u64,
+                    timeout_ms = timeout_duration.as_millis() as u64,
+                    "bm25_status_response_timeout"
+                );
+                Err(RagError::Channel(format!(
+                    "timeout waiting for BM25 status ({} ms)",
+                    timeout_duration.as_millis()
+                )))
+            }
         }
     }
 
@@ -513,16 +654,12 @@ impl RagService {
 
         for node_type in node_types {
             let params = self.cfg.params_for(node_type);
-            let max_hits = if params.max_hits == 0 {
-                top_k
-            } else {
-                params.max_hits
-            };
+            let max_hits = params.max_hits.max(top_k);
             let args = SimilarArgs {
                 db: &self.db,
                 vector_query: &query_embedding,
                 scope,
-                k: top_k,
+                k: top_k * 8,
                 ef: params.ef, // Configurable ef value
                 ty: node_type,
                 max_hits,
@@ -548,6 +685,121 @@ impl RagService {
         all_results.truncate(top_k);
 
         Ok(all_results)
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn expand_hits_with_type_context(
+        &self,
+        hits: &[(Uuid, f32)],
+    ) -> Result<(Vec<(Uuid, f32)>, HashMap<Uuid, TypeContextInfo>), RagError> {
+        let cfg = self.cfg.type_context;
+        if !cfg.enabled || cfg.max_seed_hits == 0 || cfg.max_expanded_hits == 0 || hits.is_empty() {
+            return Ok((hits.to_vec(), HashMap::new()));
+        }
+
+        let mut scores: HashMap<Uuid, f32> = HashMap::with_capacity(
+            hits.len()
+                + cfg
+                    .max_seed_hits
+                    .saturating_mul(cfg.max_expanded_hits.min(8)),
+        );
+        for &(id, score) in hits {
+            scores.entry(id).or_insert(score);
+        }
+
+        let mut expanded_scores: HashMap<Uuid, f32> = HashMap::new();
+        let mut expanded_context: HashMap<Uuid, TypeContextInfo> = HashMap::new();
+        let mut owner_terminal_targets: HashSet<Uuid> = HashSet::new();
+        for &(seed_id, seed_score) in hits.iter().take(cfg.max_seed_hits) {
+            owner_terminal_targets.extend(
+                self.db
+                    .type_targets_reachable_from_owner(seed_id)?
+                    .into_iter()
+                    .map(|target| target.target_id),
+            );
+            for seed in [
+                TypeContextSeed::Owner(seed_id),
+                TypeContextSeed::Target(seed_id),
+            ] {
+                for candidate in self.db.expand_type_context(seed, cfg.options)? {
+                    if candidate.node_id == seed_id || scores.contains_key(&candidate.node_id) {
+                        continue;
+                    }
+
+                    let distance = candidate.distance.max(1) as f32;
+                    let derived_score = seed_score * cfg.score_factor / distance;
+                    expanded_scores
+                        .entry(candidate.node_id)
+                        .and_modify(|score| *score = score.max(derived_score))
+                        .or_insert(derived_score);
+                    expanded_context
+                        .entry(candidate.node_id)
+                        .and_modify(|existing| {
+                            if candidate.distance < existing.distance {
+                                *existing = TypeContextInfo {
+                                    seed_id,
+                                    relation: type_context_kind(candidate.relation),
+                                    distance: candidate.distance,
+                                };
+                            }
+                        })
+                        .or_insert(TypeContextInfo {
+                            seed_id,
+                            relation: type_context_kind(candidate.relation),
+                            distance: candidate.distance,
+                        });
+                }
+            }
+        }
+
+        if expanded_scores.is_empty() {
+            return Ok((hits.to_vec(), HashMap::new()));
+        }
+
+        let mut expanded: Vec<(Uuid, f32)> = expanded_scores.into_iter().collect();
+        expanded.sort_by(|(left_id, left_score), (right_id, right_score)| {
+            match owner_terminal_targets
+                .contains(right_id)
+                .cmp(&owner_terminal_targets.contains(left_id))
+            {
+                std::cmp::Ordering::Equal => match right_score
+                    .partial_cmp(left_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                {
+                    std::cmp::Ordering::Equal => left_id.as_bytes().cmp(right_id.as_bytes()),
+                    other => other,
+                },
+                other => other,
+            }
+        });
+        expanded.truncate(cfg.max_expanded_hits);
+
+        let expanded_ids = expanded.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        let materialized_ids = self
+            .db
+            .get_nodes_ordered(expanded_ids)
+            .map_err(|e| RagError::Embed(e.to_string()))?
+            .into_iter()
+            .map(|node| node.id)
+            .collect::<HashSet<_>>();
+
+        let mut merged = Vec::with_capacity(hits.len() + materialized_ids.len());
+        merged.extend_from_slice(hits);
+        merged.extend(
+            expanded
+                .into_iter()
+                .filter(|(id, _)| materialized_ids.contains(id)),
+        );
+        expanded_context.retain(|id, _| materialized_ids.contains(id));
+        Ok((merged, expanded_context))
+    }
+
+    #[cfg(not(feature = "typed_type_graph"))]
+    fn expand_hits_with_type_context(
+        &self,
+        hits: &[(Uuid, f32)],
+    ) -> Result<(Vec<(Uuid, f32)>, HashMap<Uuid, TypeContextInfo>), RagError> {
+        Ok((hits.to_vec(), HashMap::new()))
     }
 
     /// High-level API: retrieve and assemble a context using the chosen strategy and budget.
@@ -595,6 +847,8 @@ impl RagService {
             }
         };
 
+        let (hits, type_context) = self.expand_hits_with_type_context(&hits)?;
+
         // Optional reranker: requires IoManager to fetch texts
         let final_hits: Vec<(Uuid, f32)> = if let Some(rr) = &self.cfg.reranker {
             let io = self
@@ -609,7 +863,7 @@ impl RagService {
             let ids: Vec<Uuid> = hits.iter().map(|(id, _)| *id).collect();
             let nodes = self
                 .db
-                .get_nodes_ordered(ids.clone())
+                .get_snippet_nodes_ordered(ids.clone())
                 .map_err(|e| RagError::Embed(e.to_string()))?;
             let texts = io.get_snippets_batch(nodes).await.map_err(|e| {
                 RagError::Search(format!("get_snippets_batch failed for rerank: {:?}", e))
@@ -642,7 +896,7 @@ impl RagService {
             .ok_or_else(|| RagError::Search("IoManagerHandle not configured".to_string()))?
             .clone();
 
-        assemble_context(
+        assemble_context_with_type_context(
             query,
             &final_hits,
             budget,
@@ -650,6 +904,7 @@ impl RagService {
             &*self.cfg.token_counter,
             &self.db,
             &io,
+            &type_context,
         )
         .await
     }

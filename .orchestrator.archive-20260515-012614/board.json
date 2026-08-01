@@ -1,0 +1,417 @@
+{
+  "schema_version": "orchestrator-board.v1",
+  "created_at": "2026-05-15T06:30:37.826929300+00:00",
+  "updated_at": "2026-05-15T07:15:10.772672564+00:00",
+  "packet_dir": ".orchestrator/workers",
+  "lanes": {
+    "eval-fitness": {
+      "id": "eval-fitness",
+      "owned_edit": [
+        "crates/ploke-eval/src/branch_evaluation.rs"
+      ],
+      "docs": [
+        "docs/active/CURRENT_FOCUS.md",
+        "docs/active/agents/2026-05-08_bounded-edit-surface-implementation-orientation.md"
+      ],
+      "notes": [
+        "Branch fitness semantics only; no loop orchestration edits."
+      ]
+    },
+    "live-verification": {
+      "id": "live-verification",
+      "owned_edit": [],
+      "docs": [
+        "docs/active/CURRENT_FOCUS.md",
+        "docs/active/agents/2026-05-08_bounded-edit-surface-implementation-orientation.md"
+      ],
+      "notes": [
+        "Read-only live command/request-path discovery and verification plan."
+      ]
+    },
+    "review": {
+      "id": "review",
+      "owned_edit": [],
+      "docs": [
+        "docs/active/CURRENT_FOCUS.md",
+        "docs/active/agents/2026-05-08_bounded-edit-surface-implementation-orientation.md"
+      ],
+      "notes": [
+        "Read-only review of eval and surface changes."
+      ]
+    },
+    "surface-scaffold": {
+      "id": "surface-scaffold",
+      "owned_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs"
+      ],
+      "docs": [
+        "docs/active/CURRENT_FOCUS.md",
+        "docs/active/agents/2026-05-08_bounded-edit-surface-implementation-orientation.md",
+        "docs/active/agents/2026-05-12_loop-readiness-review-wave/readiness.md"
+      ],
+      "notes": [
+        "Deterministic scaffold labeling and focused tests in cli_facing only."
+      ]
+    }
+  },
+  "workers": {
+    "eval-worker": {
+      "id": "eval-worker",
+      "role": "worker",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/workers/eval-worker.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "live-worker": {
+      "id": "live-worker",
+      "role": "worker",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/workers/live-worker.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "retainer": {
+      "id": "retainer",
+      "role": "retainer",
+      "active": null,
+      "queue": [],
+      "packet_path": null,
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "reviewer": {
+      "id": "reviewer",
+      "role": "reviewer",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/workers/reviewer.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    },
+    "surface-worker": {
+      "id": "surface-worker",
+      "role": "worker",
+      "active": null,
+      "queue": [],
+      "packet_path": ".orchestrator/workers/surface-worker.md",
+      "refresh_after_questions": 5,
+      "answered_questions": 0
+    }
+  },
+  "tasks": {
+    "p1-clean-live-splice": {
+      "id": "p1-clean-live-splice",
+      "lane": "live-verification",
+      "title": "Run clean-checkout live broad headless-TUI splice",
+      "priority": 3,
+      "state": {
+        "state": "complete_reviewed"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [],
+      "docs": [
+        "docs/active/CURRENT_FOCUS.md"
+      ],
+      "acceptance": [
+        "Live ignored test runs from a clean source checkout and exits successfully.",
+        "Report records request path, result artifacts, base head, and changed paths without dumping payloads."
+      ],
+      "reports": [
+        ".orchestrator/reports/p1-clean-live-splice.md",
+        ".orchestrator/reports/p1-clean-live-splice.md"
+      ],
+      "blockers": []
+    },
+    "p1-eval-fitness-gate": {
+      "id": "p1-eval-fitness-gate",
+      "lane": "eval-fitness",
+      "title": "Reject operational regressions in branch evaluation",
+      "priority": 3,
+      "state": {
+        "state": "complete_reviewed"
+      },
+      "allowed_edit": [
+        "crates/ploke-eval/src/branch_evaluation.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs"
+      ],
+      "docs": [
+        "docs/active/CURRENT_FOCUS.md"
+      ],
+      "acceptance": [
+        "Branch evaluation rejects tool_calls_failed increases and aborted=false to true.",
+        "Branch evaluation treats nonempty_valid_patch=false to true as improvement and true to false as regression.",
+        "Focused branch_evaluation tests cover the new fields."
+      ],
+      "reports": [
+        ".orchestrator/reports/p1-eval-fitness-gate.md",
+        ".orchestrator/reports/p1-eval-fitness-review.md"
+      ],
+      "blockers": []
+    },
+    "p1-eval-fitness-review": {
+      "id": "p1-eval-fitness-review",
+      "lane": "review",
+      "title": "Review branch evaluation fitness gates",
+      "priority": 3,
+      "state": {
+        "state": "complete_reviewed"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [],
+      "docs": [
+        "docs/active/CURRENT_FOCUS.md"
+      ],
+      "acceptance": [
+        "Review confirms no structural/naming drift and no missing regression edge for the new branch evaluation fields.",
+        "Review report lists any residual test gap or explicitly says none."
+      ],
+      "reports": [
+        ".orchestrator/reports/p1-eval-fitness-review.md",
+        ".orchestrator/reports/p1-eval-fitness-review.md"
+      ],
+      "blockers": []
+    },
+    "p1-live-network-splice": {
+      "id": "p1-live-network-splice",
+      "lane": "live-verification",
+      "title": "Prepare live broad headless-TUI verification",
+      "priority": 3,
+      "state": {
+        "state": "complete_reviewed"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [],
+      "docs": [
+        "docs/active/CURRENT_FOCUS.md",
+        "docs/active/agents/2026-05-08_bounded-edit-surface-implementation-orientation.md"
+      ],
+      "acceptance": [
+        "Reports exact live test command, credential preflight, and newest published request path if present.",
+        "No source files edited by this task.",
+        "If live test runs, reports admitted/rejected outcome without dumping model payloads."
+      ],
+      "reports": [
+        ".orchestrator/reports/p1-live-network-splice.md",
+        ".orchestrator/reports/p1-live-network-splice.md"
+      ],
+      "blockers": []
+    },
+    "p1-scaffold-label": {
+      "id": "p1-scaffold-label",
+      "lane": "surface-scaffold",
+      "title": "Make deterministic TUI candidates visibly scaffold-only",
+      "priority": 3,
+      "state": {
+        "state": "complete_reviewed"
+      },
+      "allowed_edit": [
+        "crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs"
+      ],
+      "forbidden_edit": [
+        "crates/ploke-eval/src/branch_evaluation.rs"
+      ],
+      "docs": [
+        "docs/active/CURRENT_FOCUS.md",
+        "docs/active/agents/2026-05-08_bounded-edit-surface-implementation-orientation.md"
+      ],
+      "acceptance": [
+        "Generated deterministic EOF comments include scaffold/no-op wording.",
+        "Existing deterministic child-plan validation still passes.",
+        "Focused cli_facing test proves scaffold wording is emitted."
+      ],
+      "reports": [
+        ".orchestrator/reports/p1-scaffold-label.md",
+        ".orchestrator/reports/p1-scaffold-label-review.md"
+      ],
+      "blockers": []
+    },
+    "p1-scaffold-label-review": {
+      "id": "p1-scaffold-label-review",
+      "lane": "review",
+      "title": "Review deterministic scaffold labeling",
+      "priority": 3,
+      "state": {
+        "state": "complete_reviewed"
+      },
+      "allowed_edit": [],
+      "forbidden_edit": [],
+      "docs": [
+        "docs/active/CURRENT_FOCUS.md",
+        "docs/active/agents/2026-05-08_bounded-edit-surface-implementation-orientation.md"
+      ],
+      "acceptance": [
+        "Review confirms deterministic scaffold labeling does not create authority/provenance drift.",
+        "Review confirms the focused test covers emitted proposal content and child-plan validation remains meaningful."
+      ],
+      "reports": [
+        ".orchestrator/reports/p1-scaffold-label-review.md",
+        ".orchestrator/reports/p1-scaffold-label-review.md"
+      ],
+      "blockers": []
+    }
+  },
+  "blockers": {},
+  "events": [
+    {
+      "at": "2026-05-15T06:30:37.827213112+00:00",
+      "summary": "initialized board"
+    },
+    {
+      "at": "2026-05-15T06:31:18.754886317+00:00",
+      "summary": "worker retainer set to Retainer"
+    },
+    {
+      "at": "2026-05-15T06:31:22.229946258+00:00",
+      "summary": "worker eval-worker set to Worker"
+    },
+    {
+      "at": "2026-05-15T06:31:24.690496998+00:00",
+      "summary": "worker surface-worker set to Worker"
+    },
+    {
+      "at": "2026-05-15T06:31:28.190173358+00:00",
+      "summary": "worker live-worker set to Worker"
+    },
+    {
+      "at": "2026-05-15T06:31:30.517452840+00:00",
+      "summary": "worker reviewer set to Reviewer"
+    },
+    {
+      "at": "2026-05-15T06:31:34.179464697+00:00",
+      "summary": "lane eval-fitness set"
+    },
+    {
+      "at": "2026-05-15T06:31:39.943630722+00:00",
+      "summary": "lane surface-scaffold set"
+    },
+    {
+      "at": "2026-05-15T06:31:43.369195931+00:00",
+      "summary": "lane live-verification set"
+    },
+    {
+      "at": "2026-05-15T06:31:47.483339312+00:00",
+      "summary": "lane review set"
+    },
+    {
+      "at": "2026-05-15T06:31:52.017051738+00:00",
+      "summary": "task p1-eval-fitness-gate added to lane eval-fitness"
+    },
+    {
+      "at": "2026-05-15T06:31:56.624512820+00:00",
+      "summary": "task p1-scaffold-label added to lane surface-scaffold"
+    },
+    {
+      "at": "2026-05-15T06:32:02.302894213+00:00",
+      "summary": "task p1-live-network-splice added to lane live-verification"
+    },
+    {
+      "at": "2026-05-15T06:32:06.625353858+00:00",
+      "summary": "task p1-eval-fitness-gate assigned to eval-worker active"
+    },
+    {
+      "at": "2026-05-15T06:32:09.229670967+00:00",
+      "summary": "task p1-scaffold-label assigned to surface-worker active"
+    },
+    {
+      "at": "2026-05-15T06:32:11.745839423+00:00",
+      "summary": "task p1-live-network-splice assigned to live-worker active"
+    },
+    {
+      "at": "2026-05-15T06:32:19.113246630+00:00",
+      "summary": "packet generated for eval-worker"
+    },
+    {
+      "at": "2026-05-15T06:32:19.163323222+00:00",
+      "summary": "packet generated for surface-worker"
+    },
+    {
+      "at": "2026-05-15T06:32:19.213518346+00:00",
+      "summary": "packet generated for live-worker"
+    },
+    {
+      "at": "2026-05-15T06:37:47.078235133+00:00",
+      "summary": "task p1-eval-fitness-gate completed"
+    },
+    {
+      "at": "2026-05-15T06:38:00.318249234+00:00",
+      "summary": "task p1-eval-fitness-review added to lane review"
+    },
+    {
+      "at": "2026-05-15T06:38:04.586533555+00:00",
+      "summary": "task p1-eval-fitness-review assigned to reviewer active"
+    },
+    {
+      "at": "2026-05-15T06:38:06.571754753+00:00",
+      "summary": "packet generated for reviewer"
+    },
+    {
+      "at": "2026-05-15T06:39:03.849458985+00:00",
+      "summary": "task p1-scaffold-label completed"
+    },
+    {
+      "at": "2026-05-15T06:39:07.356917790+00:00",
+      "summary": "task p1-scaffold-label-review added to lane review"
+    },
+    {
+      "at": "2026-05-15T06:39:09.568562745+00:00",
+      "summary": "task p1-scaffold-label-review assigned to reviewer queue"
+    },
+    {
+      "at": "2026-05-15T06:39:28.167564380+00:00",
+      "summary": "task p1-eval-fitness-gate reviewed"
+    },
+    {
+      "at": "2026-05-15T06:39:30.385643928+00:00",
+      "summary": "task p1-scaffold-label-review assigned to reviewer active"
+    },
+    {
+      "at": "2026-05-15T06:39:33.460481810+00:00",
+      "summary": "packet generated for reviewer"
+    },
+    {
+      "at": "2026-05-15T06:41:28.865312548+00:00",
+      "summary": "task p1-scaffold-label reviewed"
+    },
+    {
+      "at": "2026-05-15T06:50:14.135381417+00:00",
+      "summary": "task p1-live-network-splice completed"
+    },
+    {
+      "at": "2026-05-15T06:50:55.749511025+00:00",
+      "summary": "task p1-eval-fitness-review completed"
+    },
+    {
+      "at": "2026-05-15T06:50:55.799606205+00:00",
+      "summary": "task p1-live-network-splice reviewed"
+    },
+    {
+      "at": "2026-05-15T06:50:55.849828396+00:00",
+      "summary": "task p1-scaffold-label-review completed"
+    },
+    {
+      "at": "2026-05-15T06:51:04.213498409+00:00",
+      "summary": "task p1-eval-fitness-review reviewed"
+    },
+    {
+      "at": "2026-05-15T06:51:04.263548118+00:00",
+      "summary": "task p1-scaffold-label-review reviewed"
+    },
+    {
+      "at": "2026-05-15T07:15:04.501107817+00:00",
+      "summary": "task p1-clean-live-splice added to lane live-verification"
+    },
+    {
+      "at": "2026-05-15T07:15:08.114822628+00:00",
+      "summary": "task p1-clean-live-splice completed"
+    },
+    {
+      "at": "2026-05-15T07:15:10.772660411+00:00",
+      "summary": "task p1-clean-live-splice reviewed"
+    }
+  ]
+}

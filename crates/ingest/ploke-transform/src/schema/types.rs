@@ -16,6 +16,7 @@ pub fn create_and_insert_types(db: &Db<MemStorage>) -> Result<(), TransformError
     RawPointerTypeSchema::SCHEMA.create_and_insert(db)?;
     TraitObjectTypeSchema::SCHEMA.create_and_insert(db)?;
     ImplTraitTypeSchema::SCHEMA.create_and_insert(db)?;
+    TraitBoundTypeSchema::SCHEMA.create_and_insert(db)?;
     ParenTypeSchema::SCHEMA.create_and_insert(db)?;
     MacroTypeSchema::SCHEMA.create_and_insert(db)?;
     UnknownTypeSchema::SCHEMA.create_and_insert(db)?;
@@ -98,6 +99,14 @@ define_schema!(ImplTraitTypeSchema {
     "impl_trait_type",
     type_id: "Uuid",
     trait_bounds: "[Uuid]?",
+});
+
+define_schema!(TraitBoundTypeSchema {
+    "trait_bound_type",
+    type_id: "Uuid",
+    path: "[String]",
+    is_fully_qualified: "Bool",
+    related_types: "[Uuid]?"
 });
 
 define_schema!(ParenTypeSchema {
