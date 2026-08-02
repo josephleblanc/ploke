@@ -676,6 +676,7 @@ impl ChronoNaiveUtcToolFixture {
     pub(crate) async fn new() -> Self {
         let db = chrono_call_graph_db();
         let target = chrono_naive_utc_target(&db);
+        let mut receiver_counts = [0_usize; 4];
         let callers = db
             .callers_for_target(target.id)
             .expect("DateTime::naive_utc incoming callers")
@@ -683,10 +684,27 @@ impl ChronoNaiveUtcToolFixture {
             .map(|caller| {
                 let receiver = match caller.site.receiver {
                     Some(ploke_db::CallReceiver::TryMethodCallResult { method_name }) => {
+                        assert_eq!(method_name, "ok_or");
+                        receiver_counts[0] += 1;
                         Some(CallReceiverInfo::TryMethodCallResult { method_name })
                     }
+                    Some(ploke_db::CallReceiver::InitializedLocalBinding { name, init_path }) => {
+                        assert_eq!(name, "now");
+                        assert_eq!(init_path, ["Local", "now"]);
+                        receiver_counts[1] += 1;
+                        Some(CallReceiverInfo::InitializedLocalBinding { name, init_path })
+                    }
+                    Some(ploke_db::CallReceiver::PathCallResult { path }) => {
+                        assert_eq!(path, ["DateTime", "from_timestamp_nanos"]);
+                        receiver_counts[2] += 1;
+                        Some(CallReceiverInfo::PathCallResult { path })
+                    }
+                    Some(ploke_db::CallReceiver::SelfValue) => {
+                        receiver_counts[3] += 1;
+                        Some(CallReceiverInfo::SelfValue)
+                    }
                     other => panic!(
-                        "DateTime::naive_utc caller should carry TryMethodCallResult(ok_or), got {other:?}"
+                        "DateTime::naive_utc caller should carry a known resolved receiver, got {other:?}"
                     ),
                 };
                 ExpectedMethodCallSite {
@@ -704,8 +722,13 @@ impl ChronoNaiveUtcToolFixture {
             .collect::<Vec<_>>();
         assert_eq!(
             callers.len(),
-            2,
-            "chrono DateTime::naive_utc should expose the two parsed.rs try-receiver caller rows"
+            7,
+            "chrono DateTime::naive_utc should expose all seven resolved caller rows"
+        );
+        assert_eq!(
+            receiver_counts,
+            [2, 2, 1, 2],
+            "chrono DateTime::naive_utc receiver counts should be TryMethodCallResult(ok_or)=2, InitializedLocalBinding(Local::now)=2, PathCallResult(DateTime::from_timestamp_nanos)=1, SelfValue=2"
         );
         assert!(
             db.project_call_proof_facts_for_node(target.id, "bd:corpus-chrono-call-graph")

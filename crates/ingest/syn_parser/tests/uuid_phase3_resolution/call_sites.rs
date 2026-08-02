@@ -140,22 +140,22 @@ const REEXPORTED_TARGET_CALL_SPAN: (usize, usize) = (1526, 1545);
 const MODULE_ALIAS_TARGET_CALL_SPAN: (usize, usize) = (1599, 1630);
 const INSTANCE_IMPL_SPAN: (usize, usize) = (1634, 1712);
 const INSTANCE_CALL_SPAN: (usize, usize) = (1780, 1802);
-const PARAM_ALIAS_INSTANCE_CALL_SPAN: (usize, usize) = (43242, 43264);
+const PARAM_ALIAS_INSTANCE_CALL_SPAN: (usize, usize) = (43503, 43525);
 const BORROWED_PARAM_ALIAS_INSTANCE_CALL_SPAN: (usize, usize) = (55880, 55902);
 const TYPED_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (1901, 1923);
 const INITIALIZED_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (2016, 2038);
 const INITIALIZED_LOCAL_ALIAS_INSTANCE_CALL_SPAN: (usize, usize) = (31434, 31456);
-const TUPLE_PATTERN_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (34471, 34493);
-const TYPED_TUPLE_PATTERN_LOCAL_INIT_CALL_SPAN: (usize, usize) = (34679, 34702);
-const TYPED_TUPLE_PATTERN_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (34708, 34730);
-const TUPLE_RETURN_PATTERN_LOCAL_INIT_CALL_SPAN: (usize, usize) = (36266, 36289);
-const TUPLE_RETURN_PATTERN_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (36295, 36317);
-const METHOD_TUPLE_RETURN_PATTERN_LOCAL_INIT_CALL_SPAN: (usize, usize) = (40981, 40999);
-const METHOD_TUPLE_RETURN_PATTERN_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (41005, 41026);
-const METHOD_TUPLE_RETURN_LOCAL_ASSOC_IMPL_SPAN: (usize, usize) = (40757, 40858);
-const TRY_METHOD_RESULT_LOCAL_ASSOC_IMPL_SPAN: (usize, usize) = (35825, 36015);
-const DIRECT_SELF_FIELD_DISPATCHER_IMPL_SPAN: (usize, usize) = (56020, 56381);
-const DIRECT_SELF_FIELD_DISPATCHER_CALL_SPAN: (usize, usize) = (56104, 56121);
+const TUPLE_PATTERN_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (34732, 34754);
+const TYPED_TUPLE_PATTERN_LOCAL_INIT_CALL_SPAN: (usize, usize) = (34940, 34963);
+const TYPED_TUPLE_PATTERN_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (34969, 34991);
+const TUPLE_RETURN_PATTERN_LOCAL_INIT_CALL_SPAN: (usize, usize) = (36527, 36550);
+const TUPLE_RETURN_PATTERN_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (36556, 36578);
+const METHOD_TUPLE_RETURN_PATTERN_LOCAL_INIT_CALL_SPAN: (usize, usize) = (41242, 41260);
+const METHOD_TUPLE_RETURN_PATTERN_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (41266, 41287);
+const METHOD_TUPLE_RETURN_LOCAL_ASSOC_IMPL_SPAN: (usize, usize) = (41018, 41119);
+const TRY_METHOD_RESULT_LOCAL_ASSOC_IMPL_SPAN: (usize, usize) = (36086, 36276);
+const DIRECT_SELF_FIELD_DISPATCHER_IMPL_SPAN: (usize, usize) = (56281, 56642);
+const DIRECT_SELF_FIELD_DISPATCHER_CALL_SPAN: (usize, usize) = (56365, 56382);
 const ASSOC_CONST_CARRIER_IMPL_SPAN: (usize, usize) = (2125, 2210);
 const IMPL_ASSOC_CONST_CALL_SPAN: (usize, usize) = (2188, 2207);
 const TRAIT_ASSOC_CONST_CALL_SPAN: (usize, usize) = (2280, 2299);
@@ -178,8 +178,8 @@ const LOCAL_STATIC_INITIALIZER_ASSOC_CONST_VALUE_CALL_SPAN: (usize, usize) = (31
 const LOCAL_FN_BODY_ASSOC_CONST_VALUE_CALL_SPAN: (usize, usize) = (31828, 31847);
 const LOCAL_FN_OUTER_INNER_CALL_SPAN: (usize, usize) = (31859, 31866);
 const LOCAL_IMPL_METHOD_BODY_ASSOC_CONST_VALUE_CALL_SPAN: (usize, usize) = (32194, 32213);
-const LOCAL_FN_FORWARD_OUTER_INNER_CALL_SPAN: (usize, usize) = (35043, 35050);
-const LOCAL_FN_FORWARD_BODY_ASSOC_CONST_VALUE_CALL_SPAN: (usize, usize) = (35085, 35104);
+const LOCAL_FN_FORWARD_OUTER_INNER_CALL_SPAN: (usize, usize) = (35304, 35311);
+const LOCAL_FN_FORWARD_BODY_ASSOC_CONST_VALUE_CALL_SPAN: (usize, usize) = (35346, 35365);
 const IF_INITIALIZED_FUNCTION_ITEM_BINDING_CALL_SPAN: (usize, usize) = (28481, 28484);
 const PARENTHESIZED_MATCH_INITIALIZED_FUNCTION_ITEM_BINDING_CALL_SPAN: (usize, usize) =
     (28672, 28677);
@@ -217,22 +217,22 @@ const METHOD_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (11650, 11686);
 const METHOD_RESULT_BINDING_CLONE_CALL_SPAN: (usize, usize) = (49462, 49481);
 const METHOD_RESULT_BINDING_INSTANCE_CALL_SPAN: (usize, usize) = (49487, 49510);
 const TUPLE_FIELD_INSTANCE_CALL_SPAN: (usize, usize) = (11853, 11877);
-const PARAM_FIELD_INSTANCE_CALL_SPAN: (usize, usize) = (41185, 41214);
-const MATCH_ARM_INITIALIZED_RECEIVER_GUARD_CALL_SPAN: (usize, usize) = (41337, 41359);
-const MATCH_ARM_INITIALIZED_RECEIVER_BODY_CALL_SPAN: (usize, usize) = (41367, 41389);
-const MATCH_STRUCT_PATTERN_INITIALIZED_RECEIVER_CALL_SPAN: (usize, usize) = (41792, 41814);
+const PARAM_FIELD_INSTANCE_CALL_SPAN: (usize, usize) = (41446, 41475);
+const MATCH_ARM_INITIALIZED_RECEIVER_GUARD_CALL_SPAN: (usize, usize) = (41598, 41620);
+const MATCH_ARM_INITIALIZED_RECEIVER_BODY_CALL_SPAN: (usize, usize) = (41628, 41650);
+const MATCH_STRUCT_PATTERN_INITIALIZED_RECEIVER_CALL_SPAN: (usize, usize) = (42053, 42075);
 const TUPLE_FIELD_FUNCTION_CALL_SPAN: (usize, usize) = (12028, 12037);
 const AWAIT_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (12175, 12222);
 const TRY_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (12370, 12405);
-const TRY_METHOD_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (36130, 36175);
+const TRY_METHOD_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (36391, 36436);
 const LITERAL_TO_STRING_CALL_SPAN: (usize, usize) = (12462, 12483);
 const TYPED_VEC_LEN_CALL_SPAN: (usize, usize) = (12577, 12588);
 const PARAM_VEC_LEN_CALL_SPAN: (usize, usize) = (32684, 32695);
 const BORROWED_PARAM_VEC_LEN_CALL_SPAN: (usize, usize) = (32776, 32787);
 const IF_EXPRESSION_RECEIVER_METHOD_CALL_SPAN: (usize, usize) = (29986, 30047);
-const MATCH_EXPRESSION_RECEIVER_METHOD_CALL_SPAN: (usize, usize) = (35722, 35821);
-const IF_INITIALIZED_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (41959, 41981);
-const MATCH_INITIALIZED_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (42155, 42177);
+const MATCH_EXPRESSION_RECEIVER_METHOD_CALL_SPAN: (usize, usize) = (35983, 36082);
+const IF_INITIALIZED_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (42220, 42242);
+const MATCH_INITIALIZED_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (42416, 42438);
 const LOCAL_VEC_IMPL_SPAN: (usize, usize) = (12648, 12725);
 const SHADOWED_TYPED_VEC_LEN_CALL_SPAN: (usize, usize) = (12817, 12828);
 const FUNCTION_POINTER_CAST_PATH_DYNAMIC_CALL_SPAN: (usize, usize) = (12892, 12923);
@@ -247,35 +247,35 @@ const MATCH_GUARDED_FUNCTION_ITEM_DYNAMIC_CALL_SPAN: (usize, usize) = (13871, 13
 const IF_CLOSURE_BRANCH_DYNAMIC_CALL_SPAN: (usize, usize) = (14017, 14059);
 const MATCH_CLOSURE_ARM_DYNAMIC_CALL_SPAN: (usize, usize) = (14118, 14194);
 const FUNCTION_POINTER_PARAM_CALL_SPAN: (usize, usize) = (14262, 14265);
-const SINGLE_FUNCTION_POINTER_PARAM_CALL_SPAN: (usize, usize) = (33065, 33068);
-const SINGLE_FUNCTION_POINTER_CALLER_SPAN: (usize, usize) = (33147, 33195);
-const SINGLE_GENERIC_FN_ONCE_PARAM_CALL_SPAN: (usize, usize) = (33296, 33307);
-const SINGLE_GENERIC_FN_ONCE_CALLER_SPAN: (usize, usize) = (33385, 33432);
-const SINGLE_PARENTHESIZED_GENERIC_FN_ONCE_PARAM_CALL_SPAN: (usize, usize) = (39099, 39112);
-const SINGLE_PARENTHESIZED_GENERIC_FN_ONCE_CALLER_SPAN: (usize, usize) = (39204, 39265);
-const SINGLE_PARENTHESIZED_FUNCTION_POINTER_PARAM_CALL_SPAN: (usize, usize) = (33517, 33522);
-const SINGLE_PARENTHESIZED_FUNCTION_POINTER_CALLER_SPAN: (usize, usize) = (33615, 33677);
-const SINGLE_IF_FUNCTION_POINTER_PARAM_BRANCH_DYNAMIC_CALL_SPAN: (usize, usize) = (36877, 36905);
-const SINGLE_IF_FUNCTION_POINTER_PARAM_BRANCH_CALLER_SPAN: (usize, usize) = (37004, 37068);
-const SINGLE_MATCH_FUNCTION_POINTER_PARAM_ARM_DYNAMIC_CALL_SPAN: (usize, usize) = (37161, 37222);
-const SINGLE_MATCH_FUNCTION_POINTER_PARAM_ARM_CALLER_SPAN: (usize, usize) = (37321, 37385);
+const SINGLE_FUNCTION_POINTER_PARAM_CALL_SPAN: (usize, usize) = (33326, 33329);
+const SINGLE_FUNCTION_POINTER_CALLER_SPAN: (usize, usize) = (33408, 33456);
+const SINGLE_GENERIC_FN_ONCE_PARAM_CALL_SPAN: (usize, usize) = (33557, 33568);
+const SINGLE_GENERIC_FN_ONCE_CALLER_SPAN: (usize, usize) = (33646, 33693);
+const SINGLE_PARENTHESIZED_GENERIC_FN_ONCE_PARAM_CALL_SPAN: (usize, usize) = (39360, 39373);
+const SINGLE_PARENTHESIZED_GENERIC_FN_ONCE_CALLER_SPAN: (usize, usize) = (39465, 39526);
+const SINGLE_PARENTHESIZED_FUNCTION_POINTER_PARAM_CALL_SPAN: (usize, usize) = (33778, 33783);
+const SINGLE_PARENTHESIZED_FUNCTION_POINTER_CALLER_SPAN: (usize, usize) = (33876, 33938);
+const SINGLE_IF_FUNCTION_POINTER_PARAM_BRANCH_DYNAMIC_CALL_SPAN: (usize, usize) = (37138, 37166);
+const SINGLE_IF_FUNCTION_POINTER_PARAM_BRANCH_CALLER_SPAN: (usize, usize) = (37265, 37329);
+const SINGLE_MATCH_FUNCTION_POINTER_PARAM_ARM_DYNAMIC_CALL_SPAN: (usize, usize) = (37422, 37483);
+const SINGLE_MATCH_FUNCTION_POINTER_PARAM_ARM_CALLER_SPAN: (usize, usize) = (37582, 37646);
 const SINGLE_ALIASED_FUNCTION_POINTER_PARAM_CALL_SPAN: (usize, usize) = (37740, 37743);
 const SINGLE_ALIASED_FUNCTION_POINTER_CALLER_SPAN: (usize, usize) = (37830, 37886);
 const SINGLE_PARENTHESIZED_ALIASED_FUNCTION_POINTER_PARAM_CALL_SPAN: (usize, usize) =
     (37994, 37999);
 const SINGLE_PARENTHESIZED_ALIASED_FUNCTION_POINTER_CALLER_SPAN: (usize, usize) = (38100, 38170);
-const MULTI_FUNCTION_POINTER_PARAM_CALL_SPAN: (usize, usize) = (39335, 39338);
-const MULTI_FUNCTION_POINTER_CALLER_A_SPAN: (usize, usize) = (39418, 39465);
-const MULTI_FUNCTION_POINTER_CALLER_B_SPAN: (usize, usize) = (39545, 39592);
-const MULTI_CONFLICTING_FUNCTION_POINTER_PARAM_CALL_SPAN: (usize, usize) = (39674, 39677);
-const MULTI_CONFLICTING_FUNCTION_POINTER_LOCAL_CALLER_SPAN: (usize, usize) = (39767, 39826);
-const MULTI_CONFLICTING_FUNCTION_POINTER_OTHER_CALLER_SPAN: (usize, usize) = (39916, 39975);
-const MULTI_GENERIC_FN_ONCE_PARAM_CALL_SPAN: (usize, usize) = (40075, 40086);
-const MULTI_GENERIC_FN_ONCE_CALLER_A_SPAN: (usize, usize) = (40165, 40211);
-const MULTI_GENERIC_FN_ONCE_CALLER_B_SPAN: (usize, usize) = (40290, 40336);
-const MULTI_CONFLICTING_GENERIC_FN_ONCE_PARAM_CALL_SPAN: (usize, usize) = (40448, 40459);
-const MULTI_CONFLICTING_GENERIC_FN_ONCE_LOCAL_CALLER_SPAN: (usize, usize) = (40548, 40606);
-const MULTI_CONFLICTING_GENERIC_FN_ONCE_OTHER_CALLER_SPAN: (usize, usize) = (40695, 40753);
+const MULTI_FUNCTION_POINTER_PARAM_CALL_SPAN: (usize, usize) = (39596, 39599);
+const MULTI_FUNCTION_POINTER_CALLER_A_SPAN: (usize, usize) = (39679, 39726);
+const MULTI_FUNCTION_POINTER_CALLER_B_SPAN: (usize, usize) = (39806, 39853);
+const MULTI_CONFLICTING_FUNCTION_POINTER_PARAM_CALL_SPAN: (usize, usize) = (39935, 39938);
+const MULTI_CONFLICTING_FUNCTION_POINTER_LOCAL_CALLER_SPAN: (usize, usize) = (40028, 40087);
+const MULTI_CONFLICTING_FUNCTION_POINTER_OTHER_CALLER_SPAN: (usize, usize) = (40177, 40236);
+const MULTI_GENERIC_FN_ONCE_PARAM_CALL_SPAN: (usize, usize) = (40336, 40347);
+const MULTI_GENERIC_FN_ONCE_CALLER_A_SPAN: (usize, usize) = (40426, 40472);
+const MULTI_GENERIC_FN_ONCE_CALLER_B_SPAN: (usize, usize) = (40551, 40597);
+const MULTI_CONFLICTING_GENERIC_FN_ONCE_PARAM_CALL_SPAN: (usize, usize) = (40709, 40720);
+const MULTI_CONFLICTING_GENERIC_FN_ONCE_LOCAL_CALLER_SPAN: (usize, usize) = (40809, 40867);
+const MULTI_CONFLICTING_GENERIC_FN_ONCE_OTHER_CALLER_SPAN: (usize, usize) = (40956, 41014);
 const FORWARDED_FUNCTION_POINTER_LEAF_CALL_SPAN: (usize, usize) = (44875, 44878);
 const FORWARDED_FUNCTION_POINTER_WRAPPER_CALL_SPAN: (usize, usize) = (44954, 44993);
 const FORWARDED_FUNCTION_POINTER_PUBLIC_CALLER_SPAN: (usize, usize) = (45075, 45128);
@@ -316,8 +316,8 @@ const TWO_HOP_FORWARDED_CONFLICTING_NAMED_FIELD_MIDDLE_CALL_SPAN: (usize, usize)
 const TWO_HOP_FORWARDED_CONFLICTING_NAMED_FIELD_WRAPPER_CALL_SPAN: (usize, usize) = (48865, 48926);
 const TWO_HOP_FORWARDED_CONFLICTING_NAMED_FIELD_LOCAL_CALLER_SPAN: (usize, usize) = (49023, 49133);
 const TWO_HOP_FORWARDED_CONFLICTING_NAMED_FIELD_OTHER_CALLER_SPAN: (usize, usize) = (49230, 49340);
-const SINGLE_FUNCTION_POINTER_PARAM_CAST_CALL_SPAN: (usize, usize) = (34806, 34826);
-const SINGLE_FUNCTION_POINTER_PARAM_CAST_CALLER_SPAN: (usize, usize) = (34910, 34963);
+const SINGLE_FUNCTION_POINTER_PARAM_CAST_CALL_SPAN: (usize, usize) = (35067, 35087);
+const SINGLE_FUNCTION_POINTER_PARAM_CAST_CALLER_SPAN: (usize, usize) = (35171, 35224);
 const SINGLE_REFERENCED_DYN_FN_PARAM_CALL_SPAN: (usize, usize) = (51280, 51283);
 const SINGLE_REFERENCED_DYN_FN_CALLER_SPAN: (usize, usize) = (51363, 51413);
 const SINGLE_PARENTHESIZED_REFERENCED_DYN_FN_PARAM_CALL_SPAN: (usize, usize) = (51504, 51509);
@@ -326,22 +326,22 @@ const SINGLE_BOXED_DYN_FN_PARAM_CALL_SPAN: (usize, usize) = (51743, 51746);
 const SINGLE_BOXED_DYN_FN_CALLER_SPAN: (usize, usize) = (51821, 51875);
 const SINGLE_PARENTHESIZED_BOXED_DYN_FN_PARAM_CALL_SPAN: (usize, usize) = (51965, 51970);
 const SINGLE_PARENTHESIZED_BOXED_DYN_FN_CALLER_SPAN: (usize, usize) = (52059, 52127);
-const SINGLE_NAMED_FIELD_FUNCTION_PARAM_CALL_SPAN: (usize, usize) = (35452, 35471);
-const SINGLE_NAMED_FIELD_FUNCTION_CALLER_SPAN: (usize, usize) = (35554, 35648);
-const SINGLE_ALIASED_NAMED_FIELD_FUNCTION_PARAM_CALL_SPAN: (usize, usize) = (58251, 58269);
-const SINGLE_ALIASED_NAMED_FIELD_FUNCTION_CALLER_SPAN: (usize, usize) = (58360, 58462);
-const MULTI_NAMED_FIELD_FUNCTION_PARAM_CALL_SPAN: (usize, usize) = (42259, 42278);
-const MULTI_NAMED_FIELD_FUNCTION_CALLER_A_SPAN: (usize, usize) = (42362, 42455);
-const MULTI_NAMED_FIELD_FUNCTION_CALLER_B_SPAN: (usize, usize) = (42539, 42632);
-const MULTI_CONFLICTING_NAMED_FIELD_FUNCTION_PARAM_CALL_SPAN: (usize, usize) = (42726, 42745);
-const MULTI_CONFLICTING_NAMED_FIELD_FUNCTION_LOCAL_CALLER_SPAN: (usize, usize) = (42839, 42944);
-const MULTI_CONFLICTING_NAMED_FIELD_FUNCTION_OTHER_CALLER_SPAN: (usize, usize) = (43038, 43143);
-const SINGLE_INDEXED_FIELD_FUNCTION_PARAM_CALL_SPAN: (usize, usize) = (33876, 33897);
-const SINGLE_INDEXED_FIELD_FUNCTION_CALLER_SPAN: (usize, usize) = (33982, 34073);
-const SINGLE_INDEXED_TUPLE_FIELD_FUNCTION_PARAM_CALL_SPAN: (usize, usize) = (34174, 34187);
-const SINGLE_INDEXED_TUPLE_FIELD_FUNCTION_CALLER_SPAN: (usize, usize) = (34278, 34366);
-const SINGLE_INDEXED_FUNCTION_POINTER_PARAM_CALL_SPAN: (usize, usize) = (36405, 36415);
-const SINGLE_INDEXED_FUNCTION_POINTER_CALLER_SPAN: (usize, usize) = (36502, 36560);
+const SINGLE_NAMED_FIELD_FUNCTION_PARAM_CALL_SPAN: (usize, usize) = (35713, 35732);
+const SINGLE_NAMED_FIELD_FUNCTION_CALLER_SPAN: (usize, usize) = (35815, 35909);
+const SINGLE_ALIASED_NAMED_FIELD_FUNCTION_PARAM_CALL_SPAN: (usize, usize) = (58446, 58464);
+const SINGLE_ALIASED_NAMED_FIELD_FUNCTION_CALLER_SPAN: (usize, usize) = (58555, 58657);
+const MULTI_NAMED_FIELD_FUNCTION_PARAM_CALL_SPAN: (usize, usize) = (42520, 42539);
+const MULTI_NAMED_FIELD_FUNCTION_CALLER_A_SPAN: (usize, usize) = (42623, 42716);
+const MULTI_NAMED_FIELD_FUNCTION_CALLER_B_SPAN: (usize, usize) = (42800, 42893);
+const MULTI_CONFLICTING_NAMED_FIELD_FUNCTION_PARAM_CALL_SPAN: (usize, usize) = (42987, 43006);
+const MULTI_CONFLICTING_NAMED_FIELD_FUNCTION_LOCAL_CALLER_SPAN: (usize, usize) = (43100, 43205);
+const MULTI_CONFLICTING_NAMED_FIELD_FUNCTION_OTHER_CALLER_SPAN: (usize, usize) = (43299, 43404);
+const SINGLE_INDEXED_FIELD_FUNCTION_PARAM_CALL_SPAN: (usize, usize) = (34137, 34158);
+const SINGLE_INDEXED_FIELD_FUNCTION_CALLER_SPAN: (usize, usize) = (34243, 34334);
+const SINGLE_INDEXED_TUPLE_FIELD_FUNCTION_PARAM_CALL_SPAN: (usize, usize) = (34435, 34448);
+const SINGLE_INDEXED_TUPLE_FIELD_FUNCTION_CALLER_SPAN: (usize, usize) = (34539, 34627);
+const SINGLE_INDEXED_FUNCTION_POINTER_PARAM_CALL_SPAN: (usize, usize) = (36666, 36676);
+const SINGLE_INDEXED_FUNCTION_POINTER_CALLER_SPAN: (usize, usize) = (36763, 36821);
 const PARENTHESIZED_FUNCTION_POINTER_PARAM_DYNAMIC_CALL_SPAN: (usize, usize) = (14347, 14352);
 const FUNCTION_POINTER_PARAM_CAST_DYNAMIC_CALL_SPAN: (usize, usize) = (14425, 14445);
 const CLOSURE_BINDING_CAST_DYNAMIC_CALL_SPAN: (usize, usize) = (14522, 14548);
@@ -363,11 +363,11 @@ const TRAIT_DEFAULT_REQUIRED_METHOD_CALL_SPAN: (usize, usize) = (16264, 16279);
 const IMPORTED_MACRO_ALIAS_CALL_SPAN: (usize, usize) = (16502, 16525);
 const EXPLICIT_DROP_METHOD_CALL_SPAN: (usize, usize) = (16722, 16734);
 const ITEM_MACRO_INSIDE_BODY_CALL_SPAN: (usize, usize) = (16918, 16942);
-const GENERATED_ITEM_MACRO_CALL_SPAN: (usize, usize) = (50435, 50459);
-const GENERATED_ITEM_MACRO_FUNCTION_CALL_SPAN: (usize, usize) = (50465, 50490);
-const GENERATED_CONST_ITEM_MACRO_CALL_SPAN: (usize, usize) = (50905, 50935);
-const GENERATED_STATIC_ITEM_MACRO_CALL_SPAN: (usize, usize) = (53112, 53143);
-const GENERATED_EXPR_PATH_MACRO_CALL_SPAN: (usize, usize) = (54665, 54694);
+const GENERATED_ITEM_MACRO_CALL_SPAN: (usize, usize) = (50696, 50720);
+const GENERATED_ITEM_MACRO_FUNCTION_CALL_SPAN: (usize, usize) = (50726, 50751);
+const GENERATED_CONST_ITEM_MACRO_CALL_SPAN: (usize, usize) = (51166, 51196);
+const GENERATED_STATIC_ITEM_MACRO_CALL_SPAN: (usize, usize) = (53373, 53404);
+const GENERATED_EXPR_PATH_MACRO_CALL_SPAN: (usize, usize) = (54926, 54955);
 const PARENTHESIZED_GENERIC_FN_ONCE_DYNAMIC_CALL_SPAN: (usize, usize) = (17069, 17082);
 const PARENTHESIZED_BOXED_DYN_FN_BOX_NEW_CALL_SPAN: (usize, usize) = (17191, 17213);
 const PARENTHESIZED_BOXED_DYN_FN_DYNAMIC_CALL_SPAN: (usize, usize) = (17219, 17231);
@@ -446,9 +446,10 @@ const TYPED_DOUBLE_REFERENCE_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (26377, 
 const SELF_FIELD_ASSOC_OWNER_IMPL_SPAN: (usize, usize) = (26462, 26591);
 const SELF_FIELD_INSTANCE_CALL_SPAN: (usize, usize) = (26556, 26583);
 const SELF_FIELD_RESULT_ASSOC_OWNER_IMPL_SPAN: (usize, usize) = (31155, 31312);
+const CLONE_ASSOC_SPAN: (usize, usize) = (31263, 31287);
 const SELF_FIELD_METHOD_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (31263, 31304);
-const NESTED_SELF_FIELD_ASSOC_OWNER_IMPL_SPAN: (usize, usize) = (36638, 36786);
-const NESTED_SELF_FIELD_INSTANCE_CALL_SPAN: (usize, usize) = (36745, 36778);
+const NESTED_SELF_FIELD_ASSOC_OWNER_IMPL_SPAN: (usize, usize) = (36899, 37047);
+const NESTED_SELF_FIELD_INSTANCE_CALL_SPAN: (usize, usize) = (37006, 37039);
 const LOCAL_TRAIT_OBJECT_BINDING_METHOD_CALL_SPAN: (usize, usize) = (22763, 22782);
 const TRAIT_IMPL_BODY_CALL_IMPL_SPAN: (usize, usize) = (22908, 23107);
 const TRAIT_IMPL_BODY_SELF_METHOD_CALL_SPAN: (usize, usize) = (23074, 23099);
@@ -1363,13 +1364,217 @@ fn fixture_call_graph_local_shadow_vec_method_args(
     }
 }
 
-paranoid_call_site_test!(
-    fixture_nodes_public_method_records_and_resolves_self_private_method_call_site,
-    fixture: "fixture_nodes",
-    owner: method {
-        args: simple_struct_inherent_method_args("public_method")
-    },
-    expected: {
+/// Generates individually named function-owner cases while hoisting fixture and module setup.
+macro_rules! function_call_site_cases {
+    (
+        $fixture:expr, $module_path:expr;
+        $(
+            $test_name:ident: $owner_name:expr => $expected:expr;
+        )+
+    ) => {
+        $(
+            paranoid_call_site_test!(
+                $test_name,
+                fixture: $fixture,
+                owner: function {
+                    module_path: $module_path,
+                    name: $owner_name
+                },
+                expected: $expected,
+            );
+        )+
+    };
+}
+
+/// Generates individually named method-owner cases while hoisting fixture setup.
+macro_rules! method_call_site_cases {
+    (
+        $fixture:expr;
+        $(
+            $test_name:ident: $owner_args:expr => $expected:expr;
+        )+
+    ) => {
+        $(
+            paranoid_call_site_test!(
+                $test_name,
+                fixture: $fixture,
+                owner: method { args: $owner_args },
+                expected: $expected,
+            );
+        )+
+    };
+}
+
+/// Generates simple external path-call cases with no cfgs or local semantic edge.
+macro_rules! external_path_call_cases {
+    ($(
+        $test_name:ident:
+            $fixture:literal, $module_path:expr, $owner_name:literal,
+            $path:expr, $span:expr, $arg_count:literal, $generic_arg_count:literal;
+    )+) => {
+        $(
+            paranoid_call_site_test!(
+                $test_name,
+                fixture: $fixture,
+                owner: function {
+                    module_path: $module_path,
+                    name: $owner_name
+                },
+                expected: ExpectedCallSite::path(
+                    $path,
+                    $span,
+                    $arg_count,
+                    $generic_arg_count,
+                    &[],
+                    ExpectedCallOutcome::External,
+                ),
+            );
+        )+
+    };
+}
+
+/// Generates simple external method-call cases with no cfgs or local semantic edge.
+macro_rules! external_method_call_cases {
+    ($(
+        $test_name:ident:
+            $fixture:literal, $module_path:expr, $owner_name:literal,
+            $method_name:literal, $receiver:expr, $span:expr,
+            $arg_count:literal, $generic_arg_count:literal;
+    )+) => {
+        $(
+            paranoid_call_site_test!(
+                $test_name,
+                fixture: $fixture,
+                owner: function {
+                    module_path: $module_path,
+                    name: $owner_name
+                },
+                expected: ExpectedCallSite::method(
+                    $method_name,
+                    $receiver,
+                    $span,
+                    $arg_count,
+                    $generic_arg_count,
+                    &[],
+                    ExpectedCallOutcome::External,
+                ),
+            );
+        )+
+    };
+}
+
+external_path_call_cases! {
+    fixture_nodes_use_imported_items_records_hashmap_new_path_call_site:
+        "fixture_nodes", &["crate", "imports"], "use_imported_items",
+        &["HashMap", "new"], HASHMAP_NEW_CALL_SPAN, 0, 2;
+    fixture_nodes_use_imported_items_records_fs_read_to_string_path_call_site:
+        "fixture_nodes", &["crate", "imports"], "use_imported_items",
+        &["fs", "read_to_string"], FS_READ_TO_STRING_CALL_SPAN, 1, 0;
+    fixture_nodes_use_imported_items_records_pathbuf_new_path_call_site:
+        "fixture_nodes", &["crate", "imports"], "use_imported_items",
+        &["PathBuf", "new"], PATHBUF_NEW_CALL_SPAN, 0, 0;
+    fixture_nodes_use_imported_items_records_duration_from_secs_path_call_site:
+        "fixture_nodes", &["crate", "imports"], "use_imported_items",
+        &["Duration", "from_secs"], DURATION_FROM_SECS_CALL_SPAN, 1, 0;
+    fixture_nodes_use_imported_items_records_arc_new_path_call_site:
+        "fixture_nodes", &["crate", "imports"], "use_imported_items",
+        &["Arc", "new"], ARC_NEW_CALL_SPAN, 1, 0;
+    fixture_path_resolution_root_func_records_std_path_new_external_path_call_site:
+        "fixture_path_resolution", &["crate"], "root_func",
+        &["std", "path", "Path", "new"], STD_PATH_NEW_CALL_SPAN, 1, 0;
+    fixture_path_resolution_root_func_records_regex_new_external_path_call_site:
+        "fixture_path_resolution", &["crate"], "root_func",
+        &["Regex", "new"], REGEX_NEW_CALL_SPAN, 1, 0;
+    fixture_path_resolution_root_func_records_typeid_synthetic_external_path_call_site:
+        "fixture_path_resolution", &["crate"], "root_func",
+        &["TypeId", "Synthetic"], TYPEID_SYNTHETIC_CALL_SPAN, 1, 0;
+    fixture_path_resolution_root_func_records_nodeid_generate_synthetic_external_path_call_site:
+        "fixture_path_resolution", &["crate"], "root_func",
+        &["NodeId", "generate_synthetic"], NODEID_GENERATE_SYNTHETIC_CALL_SPAN, 7, 0;
+    fixture_path_resolution_root_func_records_uuid_nil_external_path_call_site:
+        "fixture_path_resolution", &["crate"], "root_func",
+        &["uuid", "Uuid", "nil"], UUID_NIL_CALL_SPAN, 0, 0;
+    fixture_generics_generic_function_records_t_default_external_path_call_site:
+        "fixture_generics", &["crate"], "generic_function",
+        &["T", "default"], GENERICS_T_DEFAULT_CALL_SPAN, 0, 0;
+    fixture_call_graph_call_external_default_bound_assoc_is_external_frontier:
+        "fixture_call_graph", &["crate"], "call_external_default_bound_assoc",
+        &["T", "default"], EXTERNAL_DEFAULT_BOUND_ASSOC_CALL_SPAN, 0, 0;
+    fixture_call_graph_call_prelude_drop_value_records_external_path_call_site:
+        "fixture_call_graph", &["crate"], "call_prelude_drop_value",
+        &["drop"], PRELUDE_DROP_CALL_SPAN, 1, 0;
+    fixture_call_graph_call_prelude_string_new_records_external_path_call_site:
+        "fixture_call_graph", &["crate"], "call_prelude_string_new",
+        &["String", "new"], PRELUDE_STRING_NEW_CALL_SPAN, 0, 0;
+    fixture_call_graph_call_prelude_vec_new_records_external_path_call_site:
+        "fixture_call_graph", &["crate"], "call_prelude_vec_new",
+        &["Vec", "new"], PRELUDE_VEC_NEW_CALL_SPAN, 0, 0;
+    fixture_call_graph_call_imported_external_type_alias_constructor_records_external_path_call_site:
+        "fixture_call_graph", &["crate"], "call_imported_external_type_alias_constructor",
+        &["ImportedExternalVec", "new"], IMPORTED_EXTERNAL_TYPE_ALIAS_CONSTRUCTOR_CALL_SPAN, 0, 0;
+    fixture_call_graph_call_boxed_dyn_fn_value_binding_records_box_new_external_path_call_site:
+        "fixture_call_graph", &["crate"], "call_boxed_dyn_fn_value_binding",
+        &["Box", "new"], BOXED_DYN_FN_BOX_NEW_CALL_SPAN, 1, 0;
+    fixture_call_graph_call_parenthesized_boxed_dyn_fn_value_binding_records_box_new_external_path_call_site:
+        "fixture_call_graph", &["crate"], "call_parenthesized_boxed_dyn_fn_value_binding",
+        &["Box", "new"], PARENTHESIZED_BOXED_DYN_FN_BOX_NEW_CALL_SPAN, 1, 0;
+    fixture_call_graph_call_dereferenced_boxed_dyn_fn_value_binding_records_box_new_external_path_call_site:
+        "fixture_call_graph", &["crate"], "call_dereferenced_boxed_dyn_fn_value_binding",
+        &["Box", "new"], DEREFERENCED_BOXED_DYN_FN_BOX_NEW_CALL_SPAN, 1, 0;
+    fixture_call_graph_call_extern_c_function_records_external_path_call_site:
+        "fixture_call_graph", &["crate"], "call_extern_c_function",
+        &["abs"], EXTERN_C_ABS_CALL_SPAN, 1, 0;
+    fixture_call_graph_call_qualified_dyn_any_downcast_mut_projects_external_path_call_site:
+        "fixture_call_graph", &["crate"], "call_qualified_dyn_any_downcast_mut",
+        &["std", "any", "Any", "downcast_mut"], QUALIFIED_DYN_ANY_DOWNCAST_MUT_CALL_SPAN, 1, 1;
+}
+
+external_method_call_cases! {
+    fixture_path_resolution_root_func_records_regex_unwrap_external_method_call_site:
+        "fixture_path_resolution", &["crate"], "root_func", "unwrap",
+        ExpectedMethodReceiver::PathCallResult { path: &["Regex", "new"] },
+        REGEX_UNWRAP_CALL_SPAN, 0, 0;
+    fixture_path_resolution_root_func_records_nodeid_uuid_external_method_call_site:
+        "fixture_path_resolution", &["crate"], "root_func", "uuid",
+        ExpectedMethodReceiver::PathCallResult { path: &["NodeId", "generate_synthetic"] },
+        NODEID_UUID_CALL_SPAN, 0, 0;
+    fixture_edge_cases_use_imports_records_literal_to_string_external_method_call_site:
+        "fixture_edge_cases", &["crate"], "use_imports", "to_string",
+        ExpectedMethodReceiver::Literal, EDGE_CASES_HELLO_TO_STRING_CALL_SPAN, 0, 0;
+    fixture_call_graph_call_imported_external_type_alias_initialized_method_records_external_method_call_site:
+        "fixture_call_graph", &["crate"], "call_imported_external_type_alias_initialized_method", "len",
+        ExpectedMethodReceiver::InitializedLocalBinding {
+            name: "value",
+            init_path: &["ImportedExternalVec", "new"],
+        },
+        IMPORTED_EXTERNAL_TYPE_ALIAS_INITIALIZED_METHOD_CALL_SPAN, 0, 0;
+    fixture_call_graph_call_literal_str_to_string_records_external_method_call_site:
+        "fixture_call_graph", &["crate"], "call_literal_str_to_string", "to_string",
+        ExpectedMethodReceiver::Literal, LITERAL_TO_STRING_CALL_SPAN, 0, 0;
+    fixture_call_graph_call_typed_vec_len_records_external_method_call_site:
+        "fixture_call_graph", &["crate"], "call_typed_vec_len_external", "len",
+        ExpectedMethodReceiver::TypedLocalBinding { name: "value", type_path: &["Vec"] },
+        TYPED_VEC_LEN_CALL_SPAN, 0, 0;
+    fixture_call_graph_call_external_param_vec_len_records_external_method_call_site:
+        "fixture_call_graph", &["crate"], "call_external_param_vec_len", "len",
+        ExpectedMethodReceiver::LocalBinding { name: "value" }, PARAM_VEC_LEN_CALL_SPAN, 0, 0;
+    fixture_call_graph_call_external_borrowed_param_vec_len_records_external_method_call_site:
+        "fixture_call_graph", &["crate"], "call_external_borrowed_param_vec_len", "len",
+        ExpectedMethodReceiver::LocalBinding { name: "value" }, BORROWED_PARAM_VEC_LEN_CALL_SPAN, 0, 0;
+    fixture_call_graph_call_iter_result_size_hint_records_method_result_receiver_call_site:
+        "fixture_call_graph", &["crate"], "call_iter_result_size_hint", "size_hint",
+        ExpectedMethodReceiver::MethodResultLocalBinding {
+            name: "iter",
+            method_name: "into_iter",
+            method_span: ITER_RESULT_INTO_ITER_CALL_SPAN,
+        },
+        ITER_RESULT_SIZE_HINT_CALL_SPAN, 0, 0;
+}
+
+method_call_site_cases! {
+    "fixture_nodes";
+    fixture_nodes_public_method_records_and_resolves_self_private_method_call_site:
+        simple_struct_inherent_method_args("public_method") => {
         let private_args = simple_struct_inherent_method_args("private_method");
         let private_info = private_args.generate_method_pid(&*PARSED_FIXTURE_CRATE_NODES)?;
         ExpectedCallSite::method(
@@ -1383,16 +1588,9 @@ paranoid_call_site_test!(
                 target: private_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_nodes_get_secret_len_records_self_field_len_external_method_call_site,
-    fixture: "fixture_nodes",
-    owner: method {
-        args: private_struct_inherent_method_args("get_secret_len")
-    },
-    expected: ExpectedCallSite::method(
+    };
+    fixture_nodes_get_secret_len_records_self_field_len_external_method_call_site:
+        private_struct_inherent_method_args("get_secret_len") => ExpectedCallSite::method(
         "len",
         ExpectedMethodReceiver::SelfField {
             field_path: &["secret"]
@@ -1402,16 +1600,9 @@ paranoid_call_site_test!(
         0,
         &[],
         ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_nodes_get_str_len_records_self_field_len_method_call_site,
-    fixture: "fixture_nodes",
-    owner: method {
-        args: generic_str_inherent_method_args("get_str_len")
-    },
-    expected: ExpectedCallSite::method(
+    );
+    fixture_nodes_get_str_len_records_self_field_len_method_call_site:
+        generic_str_inherent_method_args("get_str_len") => ExpectedCallSite::method(
         "len",
         ExpectedMethodReceiver::SelfField {
             field_path: &["value"]
@@ -1421,16 +1612,9 @@ paranoid_call_site_test!(
         0,
         &[],
         ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_nodes_generic_simple_trait_method_records_self_field_into_method_call_site,
-    fixture: "fixture_nodes",
-    owner: method {
-        args: generic_simple_trait_method_args("trait_method")
-    },
-    expected: ExpectedCallSite::method(
+    );
+    fixture_nodes_generic_simple_trait_method_records_self_field_into_method_call_site:
+        generic_simple_trait_method_args("trait_method") => ExpectedCallSite::method(
         "into",
         ExpectedMethodReceiver::SelfField {
             field_path: &["value"]
@@ -1440,68 +1624,13 @@ paranoid_call_site_test!(
         0,
         &[],
         ExpectedCallOutcome::External,
-    ),
-);
+    );
+}
 
-paranoid_call_site_test!(
-    fixture_nodes_use_imported_items_records_hashmap_new_path_call_site,
-    fixture: "fixture_nodes",
-    owner: function {
-        module_path: &["crate", "imports"],
-        name: "use_imported_items"
-    },
-    expected: ExpectedCallSite::path(
-        &["HashMap", "new"],
-        HASHMAP_NEW_CALL_SPAN,
-        0,
-        2,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_nodes_use_imported_items_records_fs_read_to_string_path_call_site,
-    fixture: "fixture_nodes",
-    owner: function {
-        module_path: &["crate", "imports"],
-        name: "use_imported_items"
-    },
-    expected: ExpectedCallSite::path(
-        &["fs", "read_to_string"],
-        FS_READ_TO_STRING_CALL_SPAN,
-        1,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_nodes_use_imported_items_records_pathbuf_new_path_call_site,
-    fixture: "fixture_nodes",
-    owner: function {
-        module_path: &["crate", "imports"],
-        name: "use_imported_items"
-    },
-    expected: ExpectedCallSite::path(
-        &["PathBuf", "new"],
-        PATHBUF_NEW_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_nodes_use_imported_items_records_enum_variant1_path_call_site,
-    fixture: "fixture_nodes",
-    owner: function {
-        module_path: &["crate", "imports"],
-        name: "use_imported_items"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_nodes", &["crate", "imports"];
+    fixture_nodes_use_imported_items_records_enum_variant1_path_call_site:
+        "use_imported_items" => {
         let target = fixture_nodes_enum_variant_id("EnumWithData", "Variant1");
         ExpectedCallSite::path(
             &["EnumWithData", "Variant1"],
@@ -1511,17 +1640,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedEnumVariantConstructorLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_nodes_use_imported_items_records_alias_checker_closure_binding_path_call_site,
-    fixture: "fixture_nodes",
-    owner: function {
-        module_path: &["crate", "imports"],
-        name: "use_imported_items"
-    },
-    expected: {
+    };
+    fixture_nodes_use_imported_items_records_alias_checker_closure_binding_path_call_site:
+        "use_imported_items" => {
         let (graph, _tree) = crate::common::build_tree_for_tests("fixture_nodes");
         let owner = crate::common::call_site_paranoid::function_owner_context(
             &graph,
@@ -1538,51 +1659,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedClosureLocalExact { target: closure },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_nodes_use_imported_items_records_duration_from_secs_path_call_site,
-    fixture: "fixture_nodes",
-    owner: function {
-        module_path: &["crate", "imports"],
-        name: "use_imported_items"
-    },
-    expected: ExpectedCallSite::path(
-        &["Duration", "from_secs"],
-        DURATION_FROM_SECS_CALL_SPAN,
-        1,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_nodes_use_imported_items_records_arc_new_path_call_site,
-    fixture: "fixture_nodes",
-    owner: function {
-        module_path: &["crate", "imports"],
-        name: "use_imported_items"
-    },
-    expected: ExpectedCallSite::path(
-        &["Arc", "new"],
-        ARC_NEW_CALL_SPAN,
-        1,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_nodes_use_imported_items_records_tuple_struct_path_call_site,
-    fixture: "fixture_nodes",
-    owner: function {
-        module_path: &["crate", "imports"],
-        name: "use_imported_items"
-    },
-    expected: {
+    };
+    fixture_nodes_use_imported_items_records_tuple_struct_path_call_site:
+        "use_imported_items" => {
         let target_args = fixture_nodes_struct_args("TupleStruct");
         let target_info = target_args.generate_pid(&*PARSED_FIXTURE_CRATE_NODES)?;
         let target = StructNodeId::try_from(target_info.test_pid())
@@ -1595,23 +1674,15 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedTupleStructConstructorLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_nodes_use_imported_items_records_documented_macro_call_site,
-    fixture: "fixture_nodes",
-    owner: function {
-        module_path: &["crate", "imports"],
-        name: "use_imported_items"
-    },
-    expected: ExpectedCallSite::macro_call(
+    };
+    fixture_nodes_use_imported_items_records_documented_macro_call_site:
+        "use_imported_items" => ExpectedCallSite::macro_call(
         "documented_macro",
         DOCUMENTED_MACRO_CALL_SPAN,
         &[],
         ExpectedCallOutcome::Unsupported,
-    ),
-);
+    );
+}
 
 paranoid_call_site_test!(
     fixture_nodes_use_all_const_static_records_println_macro_call_site,
@@ -1699,131 +1770,6 @@ paranoid_call_site_test!(
 );
 
 paranoid_call_site_test!(
-    fixture_path_resolution_root_func_records_std_path_new_external_path_call_site,
-    fixture: "fixture_path_resolution",
-    owner: function {
-        module_path: &["crate"],
-        name: "root_func"
-    },
-    expected: ExpectedCallSite::path(
-        &["std", "path", "Path", "new"],
-        STD_PATH_NEW_CALL_SPAN,
-        1,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_path_resolution_root_func_records_regex_new_external_path_call_site,
-    fixture: "fixture_path_resolution",
-    owner: function {
-        module_path: &["crate"],
-        name: "root_func"
-    },
-    expected: ExpectedCallSite::path(
-        &["Regex", "new"],
-        REGEX_NEW_CALL_SPAN,
-        1,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_path_resolution_root_func_records_regex_unwrap_external_method_call_site,
-    fixture: "fixture_path_resolution",
-    owner: function {
-        module_path: &["crate"],
-        name: "root_func"
-    },
-    expected: ExpectedCallSite::method(
-        "unwrap",
-        ExpectedMethodReceiver::PathCallResult {
-            path: &["Regex", "new"],
-        },
-        REGEX_UNWRAP_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_path_resolution_root_func_records_typeid_synthetic_external_path_call_site,
-    fixture: "fixture_path_resolution",
-    owner: function {
-        module_path: &["crate"],
-        name: "root_func"
-    },
-    expected: ExpectedCallSite::path(
-        &["TypeId", "Synthetic"],
-        TYPEID_SYNTHETIC_CALL_SPAN,
-        1,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_path_resolution_root_func_records_nodeid_generate_synthetic_external_path_call_site,
-    fixture: "fixture_path_resolution",
-    owner: function {
-        module_path: &["crate"],
-        name: "root_func"
-    },
-    expected: ExpectedCallSite::path(
-        &["NodeId", "generate_synthetic"],
-        NODEID_GENERATE_SYNTHETIC_CALL_SPAN,
-        7,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_path_resolution_root_func_records_uuid_nil_external_path_call_site,
-    fixture: "fixture_path_resolution",
-    owner: function {
-        module_path: &["crate"],
-        name: "root_func"
-    },
-    expected: ExpectedCallSite::path(
-        &["uuid", "Uuid", "nil"],
-        UUID_NIL_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_path_resolution_root_func_records_nodeid_uuid_external_method_call_site,
-    fixture: "fixture_path_resolution",
-    owner: function {
-        module_path: &["crate"],
-        name: "root_func"
-    },
-    expected: ExpectedCallSite::method(
-        "uuid",
-        ExpectedMethodReceiver::PathCallResult {
-            path: &["NodeId", "generate_synthetic"],
-        },
-        NODEID_UUID_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
     fixture_path_resolution_root_func_records_info_macro_call_site,
     fixture: "fixture_path_resolution",
     owner: function {
@@ -1907,14 +1853,10 @@ paranoid_call_site_test!(
     },
 );
 
-paranoid_call_site_test!(
-    fixture_impls_main_resolves_func_test_one_initialized_local_method_call_site,
-    fixture: "fixture_impls",
-    owner: function {
-        module_path: &["crate"],
-        name: "main"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_impls", &["crate"];
+    fixture_impls_main_resolves_func_test_one_initialized_local_method_call_site:
+        "main" => {
         let target_args = fixture_impls_root_method_args(
             "func_test_one",
             FIXTURE_IMPLS_FUNC_ONE_IMPL_SPAN,
@@ -1934,17 +1876,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_impls_main_resolves_func_test_two_initialized_local_method_call_site,
-    fixture: "fixture_impls",
-    owner: function {
-        module_path: &["crate"],
-        name: "main"
-    },
-    expected: {
+    };
+    fixture_impls_main_resolves_func_test_two_initialized_local_method_call_site:
+        "main" => {
         let target_args = fixture_impls_root_method_args(
             "func_test_two",
             FIXTURE_IMPLS_FUNC_TWO_IMPL_SPAN,
@@ -1964,17 +1898,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_impls_main_resolves_func_test_three_initialized_local_method_call_site,
-    fixture: "fixture_impls",
-    owner: function {
-        module_path: &["crate"],
-        name: "main"
-    },
-    expected: {
+    };
+    fixture_impls_main_resolves_func_test_three_initialized_local_method_call_site:
+        "main" => {
         let target_args = fixture_impls_nested_method_args("func_test_three");
         let target_info = target_args.generate_method_pid(&*PARSED_FIXTURE_CRATE_IMPLS)?;
         ExpectedCallSite::method(
@@ -1991,17 +1917,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_impls_main_resolves_func_test_four_associated_function_path_call_site,
-    fixture: "fixture_impls",
-    owner: function {
-        module_path: &["crate"],
-        name: "main"
-    },
-    expected: {
+    };
+    fixture_impls_main_resolves_func_test_four_associated_function_path_call_site:
+        "main" => {
         let target_args = fixture_impls_file_module_method_args("func_test_four");
         let target_info = target_args.generate_method_pid(&*PARSED_FIXTURE_CRATE_IMPLS)?;
         ExpectedCallSite::path(
@@ -2014,17 +1932,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_impls_main_resolves_func_test_five_initialized_local_method_call_site,
-    fixture: "fixture_impls",
-    owner: function {
-        module_path: &["crate"],
-        name: "main"
-    },
-    expected: {
+    };
+    fixture_impls_main_resolves_func_test_five_initialized_local_method_call_site:
+        "main" => {
         let target_args = fixture_impls_file_module_method_args("func_test_five");
         let target_info = target_args.generate_method_pid(&*PARSED_FIXTURE_CRATE_IMPLS)?;
         ExpectedCallSite::method(
@@ -2041,8 +1951,8 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
+    };
+}
 
 paranoid_call_site_test!(
     fixture_impls_main_records_println_macro_call_site,
@@ -2059,14 +1969,10 @@ paranoid_call_site_test!(
     ),
 );
 
-paranoid_call_site_test!(
-    fixture_edge_cases_use_imports_resolves_direct_imported_helper_method_call_site,
-    fixture: "fixture_edge_cases",
-    owner: function {
-        module_path: &["crate"],
-        name: "use_imports"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_edge_cases", &["crate"];
+    fixture_edge_cases_use_imports_resolves_direct_imported_helper_method_call_site:
+        "use_imports" => {
         let target_args = fixture_edge_cases_helper_method_args("help");
         let target_info = target_args.generate_method_pid(&*PARSED_FIXTURE_CRATE_EDGE_CASES)?;
         ExpectedCallSite::method(
@@ -2083,17 +1989,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_edge_cases_use_imports_resolves_reexported_helper_method_call_site,
-    fixture: "fixture_edge_cases",
-    owner: function {
-        module_path: &["crate"],
-        name: "use_imports"
-    },
-    expected: {
+    };
+    fixture_edge_cases_use_imports_resolves_reexported_helper_method_call_site:
+        "use_imports" => {
         let target_args = fixture_edge_cases_helper_method_args("help");
         let target_info = target_args.generate_method_pid(&*PARSED_FIXTURE_CRATE_EDGE_CASES)?;
         ExpectedCallSite::method(
@@ -2110,26 +2008,8 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_edge_cases_use_imports_records_literal_to_string_external_method_call_site,
-    fixture: "fixture_edge_cases",
-    owner: function {
-        module_path: &["crate"],
-        name: "use_imports"
-    },
-    expected: ExpectedCallSite::method(
-        "to_string",
-        ExpectedMethodReceiver::Literal,
-        EDGE_CASES_HELLO_TO_STRING_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
+    };
+}
 
 paranoid_call_site_test!(
     fixture_edge_cases_processor_trait_impl_records_format_macro_call_site,
@@ -2161,14 +2041,10 @@ paranoid_call_site_test!(
     ),
 );
 
-paranoid_call_site_test!(
-    fixture_edge_cases_test_visibility_resolves_internal_helper_path_call_site,
-    fixture: "fixture_edge_cases",
-    owner: function {
-        module_path: &["crate", "internal"],
-        name: "test_visibility"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_edge_cases", &["crate", "internal"];
+    fixture_edge_cases_test_visibility_resolves_internal_helper_path_call_site:
+        "test_visibility" => {
         let target_args =
             fixture_edge_cases_function_args(&["crate", "internal", "utils"], "internal_helper");
         let target_info = target_args.generate_pid(
@@ -2184,17 +2060,9 @@ paranoid_call_site_test!(
             &[EDGE_CASES_VISIBILITY_CFG],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_edge_cases_test_visibility_resolves_super_helper_path_call_site,
-    fixture: "fixture_edge_cases",
-    owner: function {
-        module_path: &["crate", "internal"],
-        name: "test_visibility"
-    },
-    expected: {
+    };
+    fixture_edge_cases_test_visibility_resolves_super_helper_path_call_site:
+        "test_visibility" => {
         let target_args =
             fixture_edge_cases_function_args(&["crate", "internal", "utils"], "super_helper");
         let target_info = target_args.generate_pid(
@@ -2210,17 +2078,9 @@ paranoid_call_site_test!(
             &[EDGE_CASES_VISIBILITY_CFG],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_edge_cases_test_visibility_resolves_restricted_func_path_call_site,
-    fixture: "fixture_edge_cases",
-    owner: function {
-        module_path: &["crate", "internal"],
-        name: "test_visibility"
-    },
-    expected: {
+    };
+    fixture_edge_cases_test_visibility_resolves_restricted_func_path_call_site:
+        "test_visibility" => {
         let target_args =
             fixture_edge_cases_function_args(&["crate", "internal", "restricted"], "restricted_func");
         let target_info = target_args.generate_pid(
@@ -2236,25 +2096,8 @@ paranoid_call_site_test!(
             &[EDGE_CASES_VISIBILITY_CFG],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_generics_generic_function_records_t_default_external_path_call_site,
-    fixture: "fixture_generics",
-    owner: function {
-        module_path: &["crate"],
-        name: "generic_function"
-    },
-    expected: ExpectedCallSite::path(
-        &["T", "default"],
-        GENERICS_T_DEFAULT_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
+    };
+}
 
 paranoid_call_site_test!(
     fixture_generics_trait_impl_process_records_format_macro_call_site,
@@ -2385,14 +2228,10 @@ paranoid_call_site_test!(
     },
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_crate_module_nested_target_resolves_crate_module_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_crate_module_nested_target"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_crate_module_nested_target_resolves_crate_module_path_call_site:
+        "call_crate_module_nested_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate", "local_mod"], "nested_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -2407,17 +2246,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_crate_file_module_target_resolves_file_module_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_crate_file_module_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_crate_file_module_target_resolves_file_module_path_call_site:
+        "call_crate_file_module_target" => {
         let target_args = fixture_call_graph_file_module_function_args("file_module_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -2431,17 +2262,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_self_module_nested_target_resolves_self_module_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_self_module_nested_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_self_module_nested_target_resolves_self_module_path_call_site:
+        "call_self_module_nested_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate", "local_mod"], "nested_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -2456,8 +2279,8 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
+    };
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_call_self_deep_path_target_resolves_deep_self_path_call_site,
@@ -2484,14 +2307,10 @@ paranoid_call_site_test!(
     },
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_crate_deep_path_target_resolves_deep_crate_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_crate_deep_path_target"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_crate_deep_path_target_resolves_deep_crate_path_call_site:
+        "call_crate_deep_path_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate", "deep_path_root", "branch", "leaf"], "deep_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -2506,17 +2325,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_self_root_deep_path_target_resolves_deep_self_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_self_deep_path_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_self_root_deep_path_target_resolves_deep_self_path_call_site:
+        "call_self_deep_path_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate", "deep_path_root", "branch", "leaf"], "deep_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -2531,25 +2342,8 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_external_default_bound_assoc_is_external_frontier,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_external_default_bound_assoc"
-    },
-    expected: ExpectedCallSite::path(
-        &["T", "default"],
-        EXTERNAL_DEFAULT_BOUND_ASSOC_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
+    };
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_call_super_local_target_resolves_super_path_call_site,
@@ -2575,14 +2369,10 @@ paranoid_call_site_test!(
     },
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_raw_identifier_function_resolves_raw_identifier_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_raw_identifier_function"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_raw_identifier_function_resolves_raw_identifier_path_call_site:
+        "call_raw_identifier_function" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "r#match");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -2596,17 +2386,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_raw_identifier_method_resolves_raw_identifier_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_raw_identifier_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_raw_identifier_method_resolves_raw_identifier_method_call_site:
+        "call_raw_identifier_method" => {
         let target_args = fixture_call_graph_raw_method_args("r#type");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -2624,17 +2406,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_method_turbofish_resolves_generic_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_method_turbofish"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_method_turbofish_resolves_generic_method_call_site:
+        "call_method_turbofish" => {
         let target_args = fixture_call_graph_generic_method_args("generic_instance");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -2652,25 +2426,8 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_prelude_drop_value_records_external_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_prelude_drop_value"
-    },
-    expected: ExpectedCallSite::path(
-        &["drop"],
-        PRELUDE_DROP_CALL_SPAN,
-        1,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
+    };
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_call_local_drop_shadow_resolves_local_function_path_call_site,
@@ -2973,14 +2730,10 @@ paranoid_call_site_test!(
     ),
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_expr_macro_generated_path_call_resolves_generated_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_expr_macro_generated_path_call"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_expr_macro_generated_path_call_resolves_generated_path_call_site:
+        "call_expr_macro_generated_path_call" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -2994,17 +2747,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_borrowed_typed_local_instance_method_resolves_borrowed_typed_local_binding_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_borrowed_typed_local_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_borrowed_typed_local_instance_method_resolves_borrowed_typed_local_binding_method_call_site:
+        "call_borrowed_typed_local_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3022,17 +2767,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_borrowed_initialized_local_instance_method_resolves_borrowed_initialized_local_binding_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_borrowed_initialized_local_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_borrowed_initialized_local_instance_method_resolves_borrowed_initialized_local_binding_method_call_site:
+        "call_borrowed_initialized_local_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3050,17 +2787,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_dereferenced_local_instance_method_resolves_dereferenced_initialized_local_binding_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_dereferenced_local_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_dereferenced_local_instance_method_resolves_dereferenced_initialized_local_binding_method_call_site:
+        "call_dereferenced_local_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3078,17 +2807,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_dereferenced_param_instance_method_resolves_dereferenced_param_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_dereferenced_param_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_dereferenced_param_instance_method_resolves_dereferenced_param_method_call_site:
+        "call_dereferenced_param_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3103,17 +2824,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_borrowed_param_instance_method_resolves_borrowed_param_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_borrowed_param_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_borrowed_param_instance_method_resolves_borrowed_param_method_call_site:
+        "call_borrowed_param_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3128,17 +2841,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_borrowed_value_param_instance_method_resolves_borrowed_value_param_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_borrowed_value_param_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_borrowed_value_param_instance_method_resolves_borrowed_value_param_method_call_site:
+        "call_borrowed_value_param_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3153,8 +2858,8 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
+    };
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_call_borrowed_value_param_method_result_instance_method_resolves_returned_type_method_call_site,
@@ -3183,14 +2888,10 @@ paranoid_call_site_test!(
     },
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_referenced_local_instance_method_resolves_referenced_local_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_referenced_local_instance_method"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_referenced_local_instance_method_resolves_referenced_local_method_call_site:
+        "call_referenced_local_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3208,17 +2909,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_typed_reference_local_instance_method_resolves_typed_reference_local_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_typed_reference_local_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_typed_reference_local_instance_method_resolves_typed_reference_local_method_call_site:
+        "call_typed_reference_local_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3236,17 +2929,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_typed_double_reference_local_instance_method_resolves_typed_reference_local_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_typed_double_reference_local_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_typed_double_reference_local_instance_method_resolves_typed_reference_local_method_call_site:
+        "call_typed_double_reference_local_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3264,80 +2949,8 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_prelude_string_new_records_external_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_prelude_string_new"
-    },
-    expected: ExpectedCallSite::path(
-        &["String", "new"],
-        PRELUDE_STRING_NEW_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_prelude_vec_new_records_external_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_prelude_vec_new"
-    },
-    expected: ExpectedCallSite::path(
-        &["Vec", "new"],
-        PRELUDE_VEC_NEW_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_imported_external_type_alias_constructor_records_external_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_imported_external_type_alias_constructor"
-    },
-    expected: ExpectedCallSite::path(
-        &["ImportedExternalVec", "new"],
-        IMPORTED_EXTERNAL_TYPE_ALIAS_CONSTRUCTOR_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_imported_external_type_alias_initialized_method_records_external_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_imported_external_type_alias_initialized_method"
-    },
-    expected: ExpectedCallSite::method(
-        "len",
-        ExpectedMethodReceiver::InitializedLocalBinding {
-            name: "value",
-            init_path: &["ImportedExternalVec", "new"],
-        },
-        IMPORTED_EXTERNAL_TYPE_ALIAS_INITIALIZED_METHOD_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
+    };
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_call_path_result_instance_method_resolves_returned_type_method_call_site,
@@ -3422,14 +3035,10 @@ paranoid_call_site_test!(
     },
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_tuple_field_instance_method_resolves_field_type_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_tuple_field_instance_method"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_tuple_field_instance_method_resolves_field_type_method_call_site:
+        "call_tuple_field_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3448,17 +3057,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_param_field_instance_method_resolves_field_type_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_param_field_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_param_field_instance_method_resolves_field_type_method_call_site:
+        "call_param_field_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3476,17 +3077,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_match_arm_initialized_receiver_method_resolves_guard_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_match_arm_initialized_receiver_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_match_arm_initialized_receiver_method_resolves_guard_call_site:
+        "call_match_arm_initialized_receiver_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3504,17 +3097,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_match_arm_initialized_receiver_method_resolves_body_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_match_arm_initialized_receiver_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_match_arm_initialized_receiver_method_resolves_body_call_site:
+        "call_match_arm_initialized_receiver_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3532,17 +3117,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_match_struct_pattern_initialized_receiver_method_resolves_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_match_struct_pattern_initialized_receiver_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_match_struct_pattern_initialized_receiver_method_resolves_call_site:
+        "call_match_struct_pattern_initialized_receiver_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3560,8 +3137,8 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
+    };
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_call_tuple_field_function_resolves_constructed_field_dynamic_call_site,
@@ -3661,14 +3238,10 @@ paranoid_call_site_test!(
     },
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_try_path_result_instance_method_resolves_result_ok_type_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_try_result_instance_method"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_try_path_result_instance_method_resolves_result_ok_type_method_call_site:
+        "call_try_result_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3685,17 +3258,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_try_method_result_instance_method_resolves_result_ok_type_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_try_method_result_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_try_method_result_instance_method_resolves_result_ok_type_method_call_site:
+        "call_try_method_result_instance_method" => {
         let target_args = fixture_call_graph_try_method_result_method_args("try_instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3712,35 +3277,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_literal_str_to_string_records_external_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_literal_str_to_string"
-    },
-    expected: ExpectedCallSite::method(
-        "to_string",
-        ExpectedMethodReceiver::Literal,
-        LITERAL_TO_STRING_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_if_expression_receiver_method_resolves_branch_receiver_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_if_expression_receiver_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_if_expression_receiver_method_resolves_branch_receiver_method_call_site:
+        "call_if_expression_receiver_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3757,17 +3296,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_match_expression_receiver_method_resolves_branch_receiver_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_match_expression_receiver_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_match_expression_receiver_method_resolves_branch_receiver_method_call_site:
+        "call_match_expression_receiver_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3784,17 +3315,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_if_initialized_local_instance_method_resolves_initialized_receiver_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_if_initialized_local_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_if_initialized_local_instance_method_resolves_initialized_receiver_method_call_site:
+        "call_if_initialized_local_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3812,17 +3335,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_match_initialized_local_instance_method_resolves_initialized_receiver_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_match_initialized_local_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_match_initialized_local_instance_method_resolves_initialized_receiver_method_call_site:
+        "call_match_initialized_local_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -3840,87 +3355,8 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_typed_vec_len_records_external_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_typed_vec_len_external"
-    },
-    expected: ExpectedCallSite::method(
-        "len",
-        ExpectedMethodReceiver::TypedLocalBinding {
-            name: "value",
-            type_path: &["Vec"],
-        },
-        TYPED_VEC_LEN_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_external_param_vec_len_records_external_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_external_param_vec_len"
-    },
-    expected: ExpectedCallSite::method(
-        "len",
-        ExpectedMethodReceiver::LocalBinding { name: "value" },
-        PARAM_VEC_LEN_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_external_borrowed_param_vec_len_records_external_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_external_borrowed_param_vec_len"
-    },
-    expected: ExpectedCallSite::method(
-        "len",
-        ExpectedMethodReceiver::LocalBinding { name: "value" },
-        BORROWED_PARAM_VEC_LEN_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_iter_result_size_hint_records_method_result_receiver_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_iter_result_size_hint"
-    },
-    expected: ExpectedCallSite::method(
-        "size_hint",
-        ExpectedMethodReceiver::MethodResultLocalBinding {
-            name: "iter",
-            method_name: "into_iter",
-            method_span: ITER_RESULT_INTO_ITER_CALL_SPAN,
-        },
-        ITER_RESULT_SIZE_HINT_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
+    };
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_call_shadowed_typed_vec_len_resolves_local_method_call_site,
@@ -3950,14 +3386,10 @@ paranoid_call_site_test!(
     },
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_unqualified_local_target_resolves_local_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_unqualified_local_target"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_unqualified_local_target_resolves_local_path_call_site:
+        "call_unqualified_local_target" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -3971,17 +3403,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_returned_function_resolves_inner_make_fn_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_returned_function"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_returned_function_resolves_inner_make_fn_path_call_site:
+        "call_returned_function" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "make_fn");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -3995,17 +3419,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_returned_function_resolves_outer_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_returned_function"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_returned_function_resolves_outer_dynamic_call_site:
+        "call_returned_function" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -4018,17 +3434,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_returned_forwarded_function_pointer_param_resolves_inner_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_returned_forwarded_function_pointer_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_returned_forwarded_function_pointer_param_resolves_inner_helper_call:
+        "call_returned_forwarded_function_pointer_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "return_forwarded_function_pointer");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -4043,17 +3451,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_returned_forwarded_function_pointer_param_resolves_outer_dynamic_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_returned_forwarded_function_pointer_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_returned_forwarded_function_pointer_param_resolves_outer_dynamic_call:
+        "call_returned_forwarded_function_pointer_param_with_local_target" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -4066,17 +3466,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_returned_conflicting_function_pointer_param_with_local_target_resolves_inner_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_returned_conflicting_forwarded_function_pointer_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_returned_conflicting_function_pointer_param_with_local_target_resolves_inner_helper_call:
+        "call_returned_conflicting_forwarded_function_pointer_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "return_conflicting_forwarded_function_pointer");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -4091,17 +3483,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_returned_conflicting_function_pointer_param_with_local_target_preserves_dynamic_candidates,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_returned_conflicting_forwarded_function_pointer_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_returned_conflicting_function_pointer_param_with_local_target_preserves_dynamic_candidates:
+        "call_returned_conflicting_forwarded_function_pointer_param_with_local_target" => {
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let local_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let other_args = fixture_call_graph_function_args(&["crate"], "other_target");
@@ -4118,17 +3502,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::AmbiguousDynamicFunctionCandidates { first, second },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_returned_conflicting_function_pointer_param_with_other_target_resolves_inner_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_returned_conflicting_forwarded_function_pointer_param_with_other_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_returned_conflicting_function_pointer_param_with_other_target_resolves_inner_helper_call:
+        "call_returned_conflicting_forwarded_function_pointer_param_with_other_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "return_conflicting_forwarded_function_pointer");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -4143,17 +3519,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_returned_conflicting_function_pointer_param_with_other_target_preserves_dynamic_candidates,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_returned_conflicting_forwarded_function_pointer_param_with_other_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_returned_conflicting_function_pointer_param_with_other_target_preserves_dynamic_candidates:
+        "call_returned_conflicting_forwarded_function_pointer_param_with_other_target" => {
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let local_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let other_args = fixture_call_graph_function_args(&["crate"], "other_target");
@@ -4170,17 +3538,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::AmbiguousDynamicFunctionCandidates { first, second },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_returned_closure_resolves_inner_make_closure_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_returned_closure"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_returned_closure_resolves_inner_make_closure_path_call_site:
+        "call_returned_closure" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "make_closure");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -4194,17 +3554,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_returned_closure_resolves_outer_dynamic_closure_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_returned_closure"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_returned_closure_resolves_outer_dynamic_closure_call_site:
+        "call_returned_closure" => {
         let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
         let owner = crate::common::call_site_paranoid::function_owner_context(
             &graph,
@@ -4220,17 +3572,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { target: closure },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_returned_bound_closure_resolves_inner_make_bound_closure_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_returned_bound_closure"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_returned_bound_closure_resolves_inner_make_bound_closure_path_call_site:
+        "call_returned_bound_closure" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "make_bound_closure");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -4244,17 +3588,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_returned_bound_closure_resolves_outer_dynamic_closure_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_returned_bound_closure"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_returned_bound_closure_resolves_outer_dynamic_closure_call_site:
+        "call_returned_bound_closure" => {
         let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
         let owner = crate::common::call_site_paranoid::function_owner_context(
             &graph,
@@ -4270,17 +3606,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { target: closure },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_returned_alias_bound_closure_resolves_inner_make_alias_bound_closure_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_returned_alias_bound_closure"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_returned_alias_bound_closure_resolves_inner_make_alias_bound_closure_path_call_site:
+        "call_returned_alias_bound_closure" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "make_alias_bound_closure");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -4294,17 +3622,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_returned_alias_bound_closure_resolves_outer_dynamic_closure_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_returned_alias_bound_closure"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_returned_alias_bound_closure_resolves_outer_dynamic_closure_call_site:
+        "call_returned_alias_bound_closure" => {
         let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
         let owner = crate::common::call_site_paranoid::function_owner_context(
             &graph,
@@ -4323,17 +3643,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { target: closure },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_forwarded_returned_closure_resolves_producer_maker_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "make_forwarded_returned_closure"
-    },
-    expected: {
+    };
+    fixture_call_graph_forwarded_returned_closure_resolves_producer_maker_path_call_site:
+        "make_forwarded_returned_closure" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "make_target_closure");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -4347,17 +3659,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_forwarded_returned_closure_resolves_inner_producer_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_forwarded_returned_closure"
-    },
-    expected: {
+    };
+    fixture_call_graph_forwarded_returned_closure_resolves_inner_producer_path_call_site:
+        "call_forwarded_returned_closure" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "make_forwarded_returned_closure");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -4372,17 +3676,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_forwarded_returned_closure_resolves_outer_dynamic_closure_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_forwarded_returned_closure"
-    },
-    expected: {
+    };
+    fixture_call_graph_forwarded_returned_closure_resolves_outer_dynamic_closure_call_site:
+        "call_forwarded_returned_closure" => {
         let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
         let owner = crate::common::call_site_paranoid::function_owner_context(
             &graph,
@@ -4398,17 +3694,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { target: closure },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_returned_async_closure_without_await_resolves_inner_maker_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_returned_async_closure_without_await"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_returned_async_closure_without_await_resolves_inner_maker_path_call_site:
+        "call_returned_async_closure_without_await" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "make_returned_async_closure");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -4422,33 +3710,17 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_returned_async_closure_without_await_fails_closed_outer_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_returned_async_closure_without_await"
-    },
-    expected: ExpectedCallSite::dynamic_returned_path_call(
+    };
+    fixture_call_graph_call_returned_async_closure_without_await_fails_closed_outer_dynamic_call_site:
+        "call_returned_async_closure_without_await" => ExpectedCallSite::dynamic_returned_path_call(
         &["make_returned_async_closure"],
         RETURNED_ASYNC_CLOSURE_DYNAMIC_CALL_SPAN,
         0,
         &[],
         ExpectedCallOutcome::Unsupported,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_awaited_returned_async_closure_resolves_inner_maker_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_awaited_returned_async_closure"
-    },
-    expected: {
+    );
+    fixture_call_graph_call_awaited_returned_async_closure_resolves_inner_maker_path_call_site:
+        "call_awaited_returned_async_closure" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "make_returned_async_closure");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -4462,17 +3734,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_awaited_returned_async_closure_resolves_outer_dynamic_closure_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_awaited_returned_async_closure"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_awaited_returned_async_closure_resolves_outer_dynamic_closure_call_site:
+        "call_awaited_returned_async_closure" => {
         let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
         let owner = crate::common::call_site_paranoid::function_owner_context(
             &graph,
@@ -4488,17 +3752,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { target: closure },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_stored_returned_async_closure_resolves_inner_maker_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_stored_returned_async_closure"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_stored_returned_async_closure_resolves_inner_maker_path_call_site:
+        "call_stored_returned_async_closure" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "make_returned_async_closure");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -4512,17 +3768,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_stored_returned_async_closure_resolves_outer_dynamic_closure_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_stored_returned_async_closure"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_stored_returned_async_closure_resolves_outer_dynamic_closure_call_site:
+        "call_stored_returned_async_closure" => {
         let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
         let owner = crate::common::call_site_paranoid::function_owner_context(
             &graph,
@@ -4538,17 +3786,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { target: closure },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_chained_returned_function_resolves_inner_make_unary_fn_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_chained_returned_function"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_chained_returned_function_resolves_inner_make_unary_fn_path_call_site:
+        "call_chained_returned_function" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "make_unary_fn");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -4562,17 +3802,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_chained_returned_function_resolves_outer_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_chained_returned_function"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_chained_returned_function_resolves_outer_dynamic_call_site:
+        "call_chained_returned_function" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "unary_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -4585,17 +3817,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_unsafe_function_resolves_unsafe_target_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_unsafe_function"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_unsafe_function_resolves_unsafe_target_path_call_site:
+        "call_unsafe_function" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "unsafe_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -4609,8 +3833,8 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
+    };
+}
 
 #[test]
 fn fixture_call_graph_marks_calls_inside_unsafe_blocks() {
@@ -4749,14 +3973,10 @@ paranoid_call_site_test!(
     },
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_local_assoc_make_resolves_type_associated_function_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_local_assoc_make"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_local_assoc_make_resolves_type_associated_function_path_call_site:
+        "call_local_assoc_make" => {
         let target_args = fixture_call_graph_assoc_method_args("make");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -4769,17 +3989,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedAssociatedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_qualified_local_assoc_make_resolves_type_associated_function_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_qualified_local_assoc_make"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_qualified_local_assoc_make_resolves_type_associated_function_path_call_site:
+        "call_qualified_local_assoc_make" => {
         let target_args = fixture_call_graph_assoc_method_args("make");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -4792,8 +4004,8 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedAssociatedFunctionLocalExact { target },
         )
-    },
-);
+    };
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_call_super_qualified_nested_assoc_make_resolves_module_qualified_associated_function_path_call_site,
@@ -4818,14 +4030,10 @@ paranoid_call_site_test!(
     },
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_imported_type_assoc_make_resolves_imported_type_associated_function_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_imported_type_assoc_make"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_imported_type_assoc_make_resolves_imported_type_associated_function_path_call_site:
+        "call_imported_type_assoc_make" => {
         let target_args = fixture_call_graph_imported_assoc_method_args("make");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -4839,17 +4047,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_glob_imported_type_assoc_make_resolves_imported_type_associated_function_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_glob_imported_type_assoc_make"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_glob_imported_type_assoc_make_resolves_imported_type_associated_function_path_call_site:
+        "call_glob_imported_type_assoc_make" => {
         let target_args = fixture_call_graph_imported_assoc_method_args("make");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -4863,17 +4063,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_reexported_type_assoc_make_resolves_imported_type_associated_function_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_reexported_type_assoc_make"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_reexported_type_assoc_make_resolves_imported_type_associated_function_path_call_site:
+        "call_reexported_type_assoc_make" => {
         let target_args = fixture_call_graph_imported_assoc_method_args("make");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -4887,8 +4079,8 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
+    };
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_call_nested_glob_reexported_type_assoc_make_resolves_type_associated_function_path_call_site,
@@ -4962,14 +4154,10 @@ paranoid_call_site_test!(
     },
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_imported_alias_target_resolves_imported_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_imported_alias_target"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_imported_alias_target_resolves_imported_path_call_site:
+        "call_imported_alias_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate", "import_targets"], "imported_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -4984,17 +4172,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_glob_imported_target_resolves_glob_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_glob_imported_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_glob_imported_target_resolves_glob_path_call_site:
+        "call_glob_imported_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate", "import_targets"], "globbed_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -5009,17 +4189,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_reexported_target_resolves_reexport_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_reexported_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_reexported_target_resolves_reexport_path_call_site:
+        "call_reexported_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate", "import_targets"], "imported_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -5034,17 +4206,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_imported_module_target_resolves_module_alias_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_imported_module_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_imported_module_target_resolves_module_alias_path_call_site:
+        "call_imported_module_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate", "import_targets"], "globbed_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -5059,17 +4223,13 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
+    };
+}
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_grouped_imported_alias_target_resolves_imported_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate", "grouped_function_import_scope"],
-        name: "call_grouped_imported_alias_target"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate", "grouped_function_import_scope"];
+    fixture_call_graph_call_grouped_imported_alias_target_resolves_imported_path_call_site:
+        "call_grouped_imported_alias_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate", "import_targets"], "imported_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -5084,17 +4244,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_grouped_imported_globbed_alias_target_resolves_imported_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate", "grouped_function_import_scope"],
-        name: "call_grouped_imported_globbed_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_grouped_imported_globbed_alias_target_resolves_imported_path_call_site:
+        "call_grouped_imported_globbed_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate", "import_targets"], "globbed_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -5109,17 +4261,13 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
+    };
+}
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_param_instance_method_resolves_local_binding_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_param_instance_method"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_param_instance_method_resolves_local_binding_method_call_site:
+        "call_param_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -5134,17 +4282,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_param_alias_instance_method_resolves_aliased_local_binding_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_param_alias_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_param_alias_instance_method_resolves_aliased_local_binding_method_call_site:
+        "call_param_alias_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -5162,17 +4302,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_borrowed_param_alias_instance_method_resolves_aliased_local_binding_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_borrowed_param_alias_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_borrowed_param_alias_instance_method_resolves_aliased_local_binding_method_call_site:
+        "call_borrowed_param_alias_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -5190,17 +4322,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_typed_local_instance_method_resolves_typed_local_binding_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_typed_local_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_typed_local_instance_method_resolves_typed_local_binding_method_call_site:
+        "call_typed_local_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -5218,17 +4342,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_initialized_local_instance_method_resolves_initialized_local_binding_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_initialized_local_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_initialized_local_instance_method_resolves_initialized_local_binding_method_call_site:
+        "call_initialized_local_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -5246,17 +4362,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_initialized_local_alias_instance_method_resolves_initialized_local_binding_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_initialized_local_alias_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_initialized_local_alias_instance_method_resolves_initialized_local_binding_method_call_site:
+        "call_initialized_local_alias_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -5274,17 +4382,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_tuple_pattern_local_instance_method_resolves_tuple_pattern_binding_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_tuple_pattern_local_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_tuple_pattern_local_instance_method_resolves_tuple_pattern_binding_method_call_site:
+        "call_tuple_pattern_local_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -5302,17 +4402,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_typed_tuple_pattern_local_instance_method_resolves_initializer_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_typed_tuple_pattern_local_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_typed_tuple_pattern_local_instance_method_resolves_initializer_path_call_site:
+        "call_typed_tuple_pattern_local_instance_method" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "make_local_assoc_pair");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -5326,17 +4418,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_typed_tuple_pattern_local_instance_method_resolves_typed_tuple_binding_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_typed_tuple_pattern_local_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_typed_tuple_pattern_local_instance_method_resolves_typed_tuple_binding_method_call_site:
+        "call_typed_tuple_pattern_local_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -5354,17 +4438,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_tuple_return_pattern_local_instance_method_resolves_initializer_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_tuple_return_pattern_local_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_tuple_return_pattern_local_instance_method_resolves_initializer_path_call_site:
+        "call_tuple_return_pattern_local_instance_method" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "make_local_assoc_pair");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -5378,17 +4454,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_tuple_return_pattern_local_instance_method_resolves_return_tuple_binding_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_tuple_return_pattern_local_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_tuple_return_pattern_local_instance_method_resolves_return_tuple_binding_method_call_site:
+        "call_tuple_return_pattern_local_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -5407,17 +4475,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_method_tuple_return_pattern_local_instance_method_resolves_initializer_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_method_tuple_return_pattern_local_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_method_tuple_return_pattern_local_instance_method_resolves_initializer_method_call_site:
+        "call_method_tuple_return_pattern_local_instance_method" => {
         let target_args = fixture_call_graph_tuple_pair_method_args("tuple_pair");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -5435,17 +4495,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_method_tuple_return_pattern_local_instance_method_resolves_return_tuple_binding_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_method_tuple_return_pattern_local_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_method_tuple_return_pattern_local_instance_method_resolves_return_tuple_binding_method_call_site:
+        "call_method_tuple_return_pattern_local_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -5465,8 +4517,8 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
+    };
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_call_self_field_instance_method_resolves_self_field_method_call_site,
@@ -5536,8 +4588,10 @@ paranoid_call_site_test!(
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
         ExpectedCallSite::method(
             "instance_value",
-            ExpectedMethodReceiver::MethodCallResult {
+            ExpectedMethodReceiver::SelfFieldMethodResult {
                 method_name: "clone_assoc",
+                method_span: CLONE_ASSOC_SPAN,
+                field_path: &["value"],
             },
             SELF_FIELD_METHOD_RESULT_INSTANCE_CALL_SPAN,
             0,
@@ -5650,14 +4704,10 @@ paranoid_call_site_test!(
     },
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_param_trait_method_resolves_local_trait_impl_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_param_trait_method"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_param_trait_method_resolves_local_trait_impl_method_call_site:
+        "call_param_trait_method" => {
         let target_args = fixture_call_graph_trait_impl_method_args("trait_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -5672,17 +4722,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_typed_local_trait_method_resolves_local_trait_impl_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_typed_local_trait_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_typed_local_trait_method_resolves_local_trait_impl_method_call_site:
+        "call_typed_local_trait_method" => {
         let target_args = fixture_call_graph_trait_impl_method_args("trait_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -5700,17 +4742,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_initialized_local_trait_method_resolves_local_trait_impl_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_initialized_local_trait_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_initialized_local_trait_method_resolves_local_trait_impl_method_call_site:
+        "call_initialized_local_trait_method" => {
         let target_args = fixture_call_graph_trait_impl_method_args("trait_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -5728,17 +4762,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_parenthesized_initialized_local_trait_method_resolves_local_trait_impl_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_parenthesized_initialized_local_trait_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_parenthesized_initialized_local_trait_method_resolves_local_trait_impl_method_call_site:
+        "call_parenthesized_initialized_local_trait_method" => {
         let target_args = fixture_call_graph_trait_impl_method_args("trait_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -5756,17 +4782,13 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
+    };
+}
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_parenthesized_local_target_resolves_dynamic_function_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_parenthesized_local_target"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_parenthesized_local_target_resolves_dynamic_function_call_site:
+        "call_parenthesized_local_target" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -5779,17 +4801,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_function_pointer_cast_path_resolves_dynamic_function_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_function_pointer_cast_path"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_function_pointer_cast_path_resolves_dynamic_function_call_site:
+        "call_function_pointer_cast_path" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -5802,17 +4816,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_function_pointer_cast_binding_resolves_initialized_dynamic_function_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_function_pointer_cast_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_function_pointer_cast_binding_resolves_initialized_dynamic_function_call_site:
+        "call_function_pointer_cast_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -5826,17 +4832,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_dereferenced_function_pointer_binding_resolves_initialized_dynamic_function_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_dereferenced_function_pointer_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_dereferenced_function_pointer_binding_resolves_initialized_dynamic_function_call_site:
+        "call_dereferenced_function_pointer_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -5850,17 +4848,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_block_function_item_resolves_dynamic_function_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_block_function_item"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_block_function_item_resolves_dynamic_function_call_site:
+        "call_block_function_item" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -5873,17 +4863,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_if_same_function_item_resolves_dynamic_function_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_if_same_function_item"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_if_same_function_item_resolves_dynamic_function_call_site:
+        "call_if_same_function_item" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -5896,17 +4878,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_if_ambiguous_function_item_records_ambiguous_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_if_ambiguous_function_item"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_if_ambiguous_function_item_records_ambiguous_dynamic_call_site:
+        "call_if_ambiguous_function_item" => {
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let local_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let other_args = fixture_call_graph_function_args(&["crate"], "other_target");
@@ -5923,17 +4897,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::AmbiguousDynamicFunctionCandidates { first, second },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_match_same_function_item_resolves_dynamic_function_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_match_same_function_item"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_match_same_function_item_resolves_dynamic_function_call_site:
+        "call_match_same_function_item" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -5946,17 +4912,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_match_ambiguous_function_item_records_ambiguous_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_match_ambiguous_function_item"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_match_ambiguous_function_item_records_ambiguous_dynamic_call_site:
+        "call_match_ambiguous_function_item" => {
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let local_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let other_args = fixture_call_graph_function_args(&["crate"], "other_target");
@@ -5973,17 +4931,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::AmbiguousDynamicFunctionCandidates { first, second },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_match_guarded_function_item_resolves_dynamic_function_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_match_guarded_function_item"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_match_guarded_function_item_resolves_dynamic_function_call_site:
+        "call_match_guarded_function_item" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -5996,8 +4946,8 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
+    };
+}
 
 #[test]
 fn fixture_call_graph_call_if_closure_branch_preserves_mixed_dynamic_candidates()
@@ -7273,14 +6223,10 @@ paranoid_call_site_test!(
     },
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_method_as_associated_function_resolves_inherent_method_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_method_as_associated_function"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_method_as_associated_function_resolves_inherent_method_path_call_site:
+        "call_method_as_associated_function" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -7294,17 +6240,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_trait_method_as_path_resolves_trait_method_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_trait_method_as_path"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_trait_method_as_path_resolves_trait_method_path_call_site:
+        "call_trait_method_as_path" => {
         let target_args = fixture_call_graph_trait_method_path_args("handle");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -7318,17 +6256,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_inline_generic_bound_assoc_path_resolves_trait_bound_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_inline_generic_bound_assoc_path"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_inline_generic_bound_assoc_path_resolves_trait_bound_path_call_site:
+        "call_inline_generic_bound_assoc_path" => {
         let target_args = fixture_call_graph_generic_assoc_path_trait_args("make");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -7342,17 +6272,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_where_generic_bound_assoc_path_resolves_trait_bound_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_where_generic_bound_assoc_path"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_where_generic_bound_assoc_path_resolves_trait_bound_path_call_site:
+        "call_where_generic_bound_assoc_path" => {
         let target_args = fixture_call_graph_generic_assoc_path_trait_args("make");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -7366,17 +6288,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_shadowed_local_target_binding_records_closure_binding_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_shadowed_local_target_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_shadowed_local_target_binding_records_closure_binding_path_call_site:
+        "call_shadowed_local_target_binding" => {
         let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
         let owner = crate::common::call_site_paranoid::function_owner_context(
             &graph,
@@ -7394,17 +6308,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedClosureLocalExact { target: closure },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_local_function_item_binding_resolves_initialized_value_binding_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_local_function_item_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_local_function_item_binding_resolves_initialized_value_binding_path_call_site:
+        "call_local_function_item_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -7419,17 +6325,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_imported_function_item_binding_resolves_initialized_value_binding_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_imported_function_item_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_imported_function_item_binding_resolves_initialized_value_binding_path_call_site:
+        "call_imported_function_item_binding" => {
         let target_args = fixture_call_graph_function_args(
             &["crate", "import_targets"],
             "imported_target",
@@ -7447,17 +6345,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_typed_function_pointer_binding_resolves_initialized_value_binding_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_typed_function_pointer_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_typed_function_pointer_binding_resolves_initialized_value_binding_path_call_site:
+        "call_typed_function_pointer_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -7472,17 +6362,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_typed_function_pointer_alias_binding_resolves_initialized_value_binding_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_typed_function_pointer_alias_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_typed_function_pointer_alias_binding_resolves_initialized_value_binding_path_call_site:
+        "call_typed_function_pointer_alias_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -7497,17 +6379,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_parenthesized_typed_function_pointer_alias_binding_resolves_dynamic_function_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_parenthesized_typed_function_pointer_alias_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_parenthesized_typed_function_pointer_alias_binding_resolves_dynamic_function_call_site:
+        "call_parenthesized_typed_function_pointer_alias_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -7521,34 +6395,18 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_function_pointer_param_records_value_binding_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_function_pointer_param"
-    },
-    expected: ExpectedCallSite::path_value_binding(
+    };
+    fixture_call_graph_call_function_pointer_param_records_value_binding_path_call_site:
+        "call_function_pointer_param" => ExpectedCallSite::path_value_binding(
         &["f"],
         FUNCTION_POINTER_PARAM_CALL_SPAN,
         0,
         0,
         &[],
         ExpectedCallOutcome::Unsupported,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_function_pointer_param_resolves_single_caller_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_function_pointer_param"
-    },
-    expected: {
+    );
+    fixture_call_graph_call_single_function_pointer_param_resolves_single_caller_argument:
+        "call_single_function_pointer_param" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -7562,17 +6420,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_function_pointer_param_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_function_pointer_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_function_pointer_param_with_local_target_resolves_helper_call:
+        "call_single_function_pointer_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_single_function_pointer_param");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -7587,17 +6437,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_referenced_dyn_fn_param_resolves_single_caller_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_referenced_dyn_fn_param"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_referenced_dyn_fn_param_resolves_single_caller_argument:
+        "call_single_referenced_dyn_fn_param" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -7611,17 +6453,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_referenced_dyn_fn_param_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_referenced_dyn_fn_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_referenced_dyn_fn_param_with_local_target_resolves_helper_call:
+        "call_single_referenced_dyn_fn_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_single_referenced_dyn_fn_param");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -7636,17 +6470,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_boxed_dyn_fn_param_resolves_single_caller_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_boxed_dyn_fn_param"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_boxed_dyn_fn_param_resolves_single_caller_argument:
+        "call_single_boxed_dyn_fn_param" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -7660,17 +6486,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_boxed_dyn_fn_param_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_boxed_dyn_fn_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_boxed_dyn_fn_param_with_local_target_resolves_helper_call:
+        "call_single_boxed_dyn_fn_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_single_boxed_dyn_fn_param");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -7685,17 +6503,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_forwarded_boxed_dyn_fn_leaf_resolves_forwarded_private_parameter,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_forwarded_boxed_dyn_fn_leaf"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_forwarded_boxed_dyn_fn_leaf_resolves_forwarded_private_parameter:
+        "call_forwarded_boxed_dyn_fn_leaf" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -7709,17 +6519,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_two_hop_forwarded_boxed_dyn_fn_leaf_resolves_forwarded_private_parameter,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_two_hop_forwarded_boxed_dyn_fn_leaf"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_two_hop_forwarded_boxed_dyn_fn_leaf_resolves_forwarded_private_parameter:
+        "call_two_hop_forwarded_boxed_dyn_fn_leaf" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -7733,17 +6535,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_forwarded_conflicting_boxed_dyn_fn_leaf_preserves_forwarded_candidates,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_forwarded_conflicting_boxed_dyn_fn_leaf"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_forwarded_conflicting_boxed_dyn_fn_leaf_preserves_forwarded_candidates:
+        "call_forwarded_conflicting_boxed_dyn_fn_leaf" => {
         let first_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let second_args = fixture_call_graph_function_args(&["crate"], "other_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -7761,17 +6555,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::AmbiguousPathFunctionCandidates { first, second },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_multi_function_pointer_param_resolves_same_target_multi_caller_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_multi_function_pointer_param"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_multi_function_pointer_param_resolves_same_target_multi_caller_argument:
+        "call_multi_function_pointer_param" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -7785,17 +6571,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_multi_function_pointer_param_with_local_target_a_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_multi_function_pointer_param_with_local_target_a"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_multi_function_pointer_param_with_local_target_a_resolves_helper_call:
+        "call_multi_function_pointer_param_with_local_target_a" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_multi_function_pointer_param");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -7810,17 +6588,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_multi_function_pointer_param_with_local_target_b_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_multi_function_pointer_param_with_local_target_b"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_multi_function_pointer_param_with_local_target_b_resolves_helper_call:
+        "call_multi_function_pointer_param_with_local_target_b" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_multi_function_pointer_param");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -7835,17 +6605,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_multi_conflicting_function_pointer_param_preserves_path_candidates,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_multi_conflicting_function_pointer_param"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_multi_conflicting_function_pointer_param_preserves_path_candidates:
+        "call_multi_conflicting_function_pointer_param" => {
         let first_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let second_args = fixture_call_graph_function_args(&["crate"], "other_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -7863,17 +6625,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::AmbiguousPathFunctionCandidates { first, second },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_multi_conflicting_function_pointer_param_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_multi_conflicting_function_pointer_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_multi_conflicting_function_pointer_param_with_local_target_resolves_helper_call:
+        "call_multi_conflicting_function_pointer_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_multi_conflicting_function_pointer_param");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -7888,17 +6642,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_multi_conflicting_function_pointer_param_with_other_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_multi_conflicting_function_pointer_param_with_other_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_multi_conflicting_function_pointer_param_with_other_target_resolves_helper_call:
+        "call_multi_conflicting_function_pointer_param_with_other_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_multi_conflicting_function_pointer_param");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -7913,17 +6659,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_multi_generic_fn_once_param_resolves_same_target_multi_caller_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_multi_generic_fn_once_param"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_multi_generic_fn_once_param_resolves_same_target_multi_caller_argument:
+        "call_multi_generic_fn_once_param" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -7937,17 +6675,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_multi_generic_fn_once_param_with_local_target_a_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_multi_generic_fn_once_param_with_local_target_a"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_multi_generic_fn_once_param_with_local_target_a_resolves_helper_call:
+        "call_multi_generic_fn_once_param_with_local_target_a" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_multi_generic_fn_once_param");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -7962,17 +6692,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_multi_generic_fn_once_param_with_local_target_b_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_multi_generic_fn_once_param_with_local_target_b"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_multi_generic_fn_once_param_with_local_target_b_resolves_helper_call:
+        "call_multi_generic_fn_once_param_with_local_target_b" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_multi_generic_fn_once_param");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -7987,17 +6709,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_multi_conflicting_generic_fn_once_param_preserves_path_candidates,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_multi_conflicting_generic_fn_once_param"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_multi_conflicting_generic_fn_once_param_preserves_path_candidates:
+        "call_multi_conflicting_generic_fn_once_param" => {
         let first_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let second_args = fixture_call_graph_function_args(&["crate"], "other_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8015,17 +6729,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::AmbiguousPathFunctionCandidates { first, second },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_multi_conflicting_generic_fn_once_param_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_multi_conflicting_generic_fn_once_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_multi_conflicting_generic_fn_once_param_with_local_target_resolves_helper_call:
+        "call_multi_conflicting_generic_fn_once_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_multi_conflicting_generic_fn_once_param");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8040,17 +6746,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_multi_conflicting_generic_fn_once_param_with_other_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_multi_conflicting_generic_fn_once_param_with_other_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_multi_conflicting_generic_fn_once_param_with_other_target_resolves_helper_call:
+        "call_multi_conflicting_generic_fn_once_param_with_other_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_multi_conflicting_generic_fn_once_param");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8065,17 +6763,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_forwarded_function_pointer_leaf_resolves_forwarded_private_parameter,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_forwarded_function_pointer_leaf"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_forwarded_function_pointer_leaf_resolves_forwarded_private_parameter:
+        "call_forwarded_function_pointer_leaf" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -8089,17 +6779,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_forwarded_function_pointer_wrapper_resolves_leaf_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_forwarded_function_pointer_wrapper"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_forwarded_function_pointer_wrapper_resolves_leaf_call:
+        "call_forwarded_function_pointer_wrapper" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_forwarded_function_pointer_leaf");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8114,17 +6796,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_forwarded_function_pointer_param_with_local_target_resolves_wrapper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_forwarded_function_pointer_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_forwarded_function_pointer_param_with_local_target_resolves_wrapper_call:
+        "call_forwarded_function_pointer_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_forwarded_function_pointer_wrapper");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8139,17 +6813,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_forwarded_conflicting_function_pointer_leaf_preserves_forwarded_candidates,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_forwarded_conflicting_function_pointer_leaf"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_forwarded_conflicting_function_pointer_leaf_preserves_forwarded_candidates:
+        "call_forwarded_conflicting_function_pointer_leaf" => {
         let first_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let second_args = fixture_call_graph_function_args(&["crate"], "other_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8167,17 +6833,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::AmbiguousPathFunctionCandidates { first, second },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_forwarded_conflicting_function_pointer_wrapper_resolves_leaf_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_forwarded_conflicting_function_pointer_wrapper"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_forwarded_conflicting_function_pointer_wrapper_resolves_leaf_call:
+        "call_forwarded_conflicting_function_pointer_wrapper" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_forwarded_conflicting_function_pointer_leaf");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8192,17 +6850,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_forwarded_conflicting_function_pointer_param_with_local_target_resolves_wrapper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_forwarded_conflicting_function_pointer_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_forwarded_conflicting_function_pointer_param_with_local_target_resolves_wrapper_call:
+        "call_forwarded_conflicting_function_pointer_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_forwarded_conflicting_function_pointer_wrapper");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8217,17 +6867,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_forwarded_conflicting_function_pointer_param_with_other_target_resolves_wrapper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_forwarded_conflicting_function_pointer_param_with_other_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_forwarded_conflicting_function_pointer_param_with_other_target_resolves_wrapper_call:
+        "call_forwarded_conflicting_function_pointer_param_with_other_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_forwarded_conflicting_function_pointer_wrapper");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8242,17 +6884,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_two_hop_forwarded_function_pointer_leaf_resolves_forwarded_private_parameter,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_two_hop_forwarded_function_pointer_leaf"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_two_hop_forwarded_function_pointer_leaf_resolves_forwarded_private_parameter:
+        "call_two_hop_forwarded_function_pointer_leaf" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -8266,17 +6900,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_two_hop_forwarded_function_pointer_middle_resolves_leaf_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_two_hop_forwarded_function_pointer_middle"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_two_hop_forwarded_function_pointer_middle_resolves_leaf_call:
+        "call_two_hop_forwarded_function_pointer_middle" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_two_hop_forwarded_function_pointer_leaf");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8291,17 +6917,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_two_hop_forwarded_function_pointer_wrapper_resolves_middle_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_two_hop_forwarded_function_pointer_wrapper"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_two_hop_forwarded_function_pointer_wrapper_resolves_middle_call:
+        "call_two_hop_forwarded_function_pointer_wrapper" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_two_hop_forwarded_function_pointer_middle");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8316,17 +6934,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_two_hop_forwarded_function_pointer_param_with_local_target_resolves_wrapper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_two_hop_forwarded_function_pointer_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_two_hop_forwarded_function_pointer_param_with_local_target_resolves_wrapper_call:
+        "call_two_hop_forwarded_function_pointer_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_two_hop_forwarded_function_pointer_wrapper");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8341,17 +6951,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_two_hop_forwarded_conflicting_function_pointer_leaf_preserves_forwarded_candidates,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_two_hop_forwarded_conflicting_function_pointer_leaf"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_two_hop_forwarded_conflicting_function_pointer_leaf_preserves_forwarded_candidates:
+        "call_two_hop_forwarded_conflicting_function_pointer_leaf" => {
         let first_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let second_args = fixture_call_graph_function_args(&["crate"], "other_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8369,17 +6971,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::AmbiguousPathFunctionCandidates { first, second },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_two_hop_forwarded_conflicting_function_pointer_middle_resolves_leaf_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_two_hop_forwarded_conflicting_function_pointer_middle"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_two_hop_forwarded_conflicting_function_pointer_middle_resolves_leaf_call:
+        "call_two_hop_forwarded_conflicting_function_pointer_middle" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_two_hop_forwarded_conflicting_function_pointer_leaf");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8394,17 +6988,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_two_hop_forwarded_conflicting_function_pointer_wrapper_resolves_middle_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_two_hop_forwarded_conflicting_function_pointer_wrapper"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_two_hop_forwarded_conflicting_function_pointer_wrapper_resolves_middle_call:
+        "call_two_hop_forwarded_conflicting_function_pointer_wrapper" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_two_hop_forwarded_conflicting_function_pointer_middle");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8419,17 +7005,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_two_hop_forwarded_conflicting_function_pointer_param_with_local_target_resolves_wrapper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_two_hop_forwarded_conflicting_function_pointer_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_two_hop_forwarded_conflicting_function_pointer_param_with_local_target_resolves_wrapper_call:
+        "call_two_hop_forwarded_conflicting_function_pointer_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_two_hop_forwarded_conflicting_function_pointer_wrapper");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8444,17 +7022,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_two_hop_forwarded_conflicting_function_pointer_param_with_other_target_resolves_wrapper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_two_hop_forwarded_conflicting_function_pointer_param_with_other_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_two_hop_forwarded_conflicting_function_pointer_param_with_other_target_resolves_wrapper_call:
+        "call_two_hop_forwarded_conflicting_function_pointer_param_with_other_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_two_hop_forwarded_conflicting_function_pointer_wrapper");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8469,17 +7039,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_two_hop_forwarded_named_field_leaf_resolves_forwarded_private_parameter,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_two_hop_forwarded_named_field_leaf"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_two_hop_forwarded_named_field_leaf_resolves_forwarded_private_parameter:
+        "call_two_hop_forwarded_named_field_leaf" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -8492,17 +7054,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_two_hop_forwarded_named_field_middle_resolves_leaf_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_two_hop_forwarded_named_field_middle"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_two_hop_forwarded_named_field_middle_resolves_leaf_call:
+        "call_two_hop_forwarded_named_field_middle" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_two_hop_forwarded_named_field_leaf");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8517,17 +7071,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_two_hop_forwarded_named_field_wrapper_resolves_middle_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_two_hop_forwarded_named_field_wrapper"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_two_hop_forwarded_named_field_wrapper_resolves_middle_call:
+        "call_two_hop_forwarded_named_field_wrapper" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_two_hop_forwarded_named_field_middle");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8542,17 +7088,13 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
+    };
+}
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_two_hop_forwarded_named_field_param_with_local_target_resolves_wrapper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_two_hop_forwarded_named_field_param_with_local_target"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_two_hop_forwarded_named_field_param_with_local_target_resolves_wrapper_call:
+        "call_two_hop_forwarded_named_field_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_two_hop_forwarded_named_field_wrapper");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8567,17 +7109,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_two_hop_forwarded_conflicting_named_field_leaf_preserves_forwarded_candidates,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_two_hop_forwarded_conflicting_named_field_leaf"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_two_hop_forwarded_conflicting_named_field_leaf_preserves_forwarded_candidates:
+        "call_two_hop_forwarded_conflicting_named_field_leaf" => {
         let first_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let second_args = fixture_call_graph_function_args(&["crate"], "other_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8594,17 +7128,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::AmbiguousDynamicFunctionCandidates { first, second },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_two_hop_forwarded_conflicting_named_field_middle_resolves_leaf_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_two_hop_forwarded_conflicting_named_field_middle"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_two_hop_forwarded_conflicting_named_field_middle_resolves_leaf_call:
+        "call_two_hop_forwarded_conflicting_named_field_middle" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_two_hop_forwarded_conflicting_named_field_leaf");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8619,17 +7145,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_two_hop_forwarded_conflicting_named_field_wrapper_resolves_middle_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_two_hop_forwarded_conflicting_named_field_wrapper"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_two_hop_forwarded_conflicting_named_field_wrapper_resolves_middle_call:
+        "call_two_hop_forwarded_conflicting_named_field_wrapper" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_two_hop_forwarded_conflicting_named_field_middle");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8644,17 +7162,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_two_hop_forwarded_conflicting_named_field_param_with_local_target_resolves_wrapper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_two_hop_forwarded_conflicting_named_field_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_two_hop_forwarded_conflicting_named_field_param_with_local_target_resolves_wrapper_call:
+        "call_two_hop_forwarded_conflicting_named_field_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_two_hop_forwarded_conflicting_named_field_wrapper");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8669,17 +7179,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_two_hop_forwarded_conflicting_named_field_param_with_other_target_resolves_wrapper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_two_hop_forwarded_conflicting_named_field_param_with_other_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_two_hop_forwarded_conflicting_named_field_param_with_other_target_resolves_wrapper_call:
+        "call_two_hop_forwarded_conflicting_named_field_param_with_other_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_two_hop_forwarded_conflicting_named_field_wrapper");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8694,17 +7196,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_forwarded_named_field_leaf_resolves_forwarded_private_parameter,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_forwarded_named_field_leaf"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_forwarded_named_field_leaf_resolves_forwarded_private_parameter:
+        "call_forwarded_named_field_leaf" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -8717,17 +7211,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_forwarded_named_field_wrapper_resolves_leaf_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_forwarded_named_field_wrapper"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_forwarded_named_field_wrapper_resolves_leaf_call:
+        "call_forwarded_named_field_wrapper" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "call_forwarded_named_field_leaf");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -8741,17 +7227,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_forwarded_named_field_param_with_local_target_resolves_wrapper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_forwarded_named_field_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_forwarded_named_field_param_with_local_target_resolves_wrapper_call:
+        "call_forwarded_named_field_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_forwarded_named_field_wrapper");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8766,17 +7244,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_forwarded_conflicting_named_field_leaf_preserves_forwarded_candidates,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_forwarded_conflicting_named_field_leaf"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_forwarded_conflicting_named_field_leaf_preserves_forwarded_candidates:
+        "call_forwarded_conflicting_named_field_leaf" => {
         let first_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let second_args = fixture_call_graph_function_args(&["crate"], "other_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8793,17 +7263,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::AmbiguousDynamicFunctionCandidates { first, second },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_forwarded_conflicting_named_field_wrapper_resolves_leaf_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_forwarded_conflicting_named_field_wrapper"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_forwarded_conflicting_named_field_wrapper_resolves_leaf_call:
+        "call_forwarded_conflicting_named_field_wrapper" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_forwarded_conflicting_named_field_leaf");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8818,17 +7280,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_forwarded_conflicting_named_field_param_with_local_target_resolves_wrapper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_forwarded_conflicting_named_field_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_forwarded_conflicting_named_field_param_with_local_target_resolves_wrapper_call:
+        "call_forwarded_conflicting_named_field_param_with_local_target" => {
         let target_args = fixture_call_graph_function_args(
             &["crate"],
             "call_forwarded_conflicting_named_field_wrapper",
@@ -8845,17 +7299,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_forwarded_conflicting_named_field_param_with_other_target_resolves_wrapper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_forwarded_conflicting_named_field_param_with_other_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_forwarded_conflicting_named_field_param_with_other_target_resolves_wrapper_call:
+        "call_forwarded_conflicting_named_field_param_with_other_target" => {
         let target_args = fixture_call_graph_function_args(
             &["crate"],
             "call_forwarded_conflicting_named_field_wrapper",
@@ -8872,17 +7318,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_aliased_function_pointer_param_resolves_single_caller_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_aliased_function_pointer_param"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_aliased_function_pointer_param_resolves_single_caller_argument:
+        "call_single_aliased_function_pointer_param" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -8897,17 +7335,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_aliased_function_pointer_param_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_aliased_function_pointer_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_aliased_function_pointer_param_with_local_target_resolves_helper_call:
+        "call_single_aliased_function_pointer_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_single_aliased_function_pointer_param");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8922,17 +7352,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_generic_fn_once_param_resolves_single_caller_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_generic_fn_once_param"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_generic_fn_once_param_resolves_single_caller_argument:
+        "call_single_generic_fn_once_param" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -8946,17 +7368,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_generic_fn_once_param_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_generic_fn_once_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_generic_fn_once_param_with_local_target_resolves_helper_call:
+        "call_single_generic_fn_once_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_single_generic_fn_once_param");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -8971,17 +7385,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_parenthesized_generic_fn_once_param_resolves_single_caller_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_parenthesized_generic_fn_once_param"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_parenthesized_generic_fn_once_param_resolves_single_caller_argument:
+        "call_single_parenthesized_generic_fn_once_param" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -8994,17 +7400,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_parenthesized_generic_fn_once_param_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_parenthesized_generic_fn_once_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_parenthesized_generic_fn_once_param_with_local_target_resolves_helper_call:
+        "call_single_parenthesized_generic_fn_once_param_with_local_target" => {
         let target_args = fixture_call_graph_function_args(
             &["crate"],
             "call_single_parenthesized_generic_fn_once_param",
@@ -9021,17 +7419,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_parenthesized_function_pointer_param_resolves_single_caller_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_parenthesized_function_pointer_param"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_parenthesized_function_pointer_param_resolves_single_caller_argument:
+        "call_single_parenthesized_function_pointer_param" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -9044,17 +7434,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_parenthesized_function_pointer_param_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_parenthesized_function_pointer_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_parenthesized_function_pointer_param_with_local_target_resolves_helper_call:
+        "call_single_parenthesized_function_pointer_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_single_parenthesized_function_pointer_param");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -9069,17 +7451,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_parenthesized_aliased_function_pointer_param_resolves_single_caller_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_parenthesized_aliased_function_pointer_param"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_parenthesized_aliased_function_pointer_param_resolves_single_caller_argument:
+        "call_single_parenthesized_aliased_function_pointer_param" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -9093,17 +7467,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_parenthesized_aliased_function_pointer_param_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_parenthesized_aliased_function_pointer_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_parenthesized_aliased_function_pointer_param_with_local_target_resolves_helper_call:
+        "call_single_parenthesized_aliased_function_pointer_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_single_parenthesized_aliased_function_pointer_param");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -9118,17 +7484,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_if_function_pointer_param_branch_resolves_single_caller_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_if_function_pointer_param_branch"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_if_function_pointer_param_branch_resolves_single_caller_argument:
+        "call_single_if_function_pointer_param_branch" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -9141,17 +7499,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_if_function_pointer_param_branch_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_if_function_pointer_param_branch_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_if_function_pointer_param_branch_with_local_target_resolves_helper_call:
+        "call_single_if_function_pointer_param_branch_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_single_if_function_pointer_param_branch");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -9166,17 +7516,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_match_function_pointer_param_arm_resolves_single_caller_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_match_function_pointer_param_arm"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_match_function_pointer_param_arm_resolves_single_caller_argument:
+        "call_single_match_function_pointer_param_arm" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -9189,17 +7531,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_match_function_pointer_param_arm_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_match_function_pointer_param_arm_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_match_function_pointer_param_arm_with_local_target_resolves_helper_call:
+        "call_single_match_function_pointer_param_arm_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_single_match_function_pointer_param_arm");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -9214,17 +7548,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_function_pointer_param_cast_resolves_single_caller_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_function_pointer_param_cast"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_function_pointer_param_cast_resolves_single_caller_argument:
+        "call_single_function_pointer_param_cast" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -9237,17 +7563,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_function_pointer_param_cast_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_function_pointer_param_cast_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_function_pointer_param_cast_with_local_target_resolves_helper_call:
+        "call_single_function_pointer_param_cast_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_single_function_pointer_param_cast");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -9262,17 +7580,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_named_field_function_param_resolves_single_caller_field_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_named_field_function_param"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_named_field_function_param_resolves_single_caller_field_argument:
+        "call_single_named_field_function_param" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -9285,17 +7595,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_named_field_function_param_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_named_field_function_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_named_field_function_param_with_local_target_resolves_helper_call:
+        "call_single_named_field_function_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_single_named_field_function_param");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -9310,17 +7612,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_aliased_named_field_function_param_resolves_single_caller_field_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_aliased_named_field_function_param"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_aliased_named_field_function_param_resolves_single_caller_field_argument:
+        "call_single_aliased_named_field_function_param" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -9333,17 +7627,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_aliased_named_field_function_param_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_aliased_named_field_function_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_aliased_named_field_function_param_with_local_target_resolves_helper_call:
+        "call_single_aliased_named_field_function_param_with_local_target" => {
         let target_args = fixture_call_graph_function_args(
             &["crate"],
             "call_single_aliased_named_field_function_param",
@@ -9360,17 +7646,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_multi_named_field_function_param_resolves_same_target_multi_caller_field_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_multi_named_field_function_param"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_multi_named_field_function_param_resolves_same_target_multi_caller_field_argument:
+        "call_multi_named_field_function_param" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -9383,17 +7661,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_multi_named_field_function_param_with_local_target_a_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_multi_named_field_function_param_with_local_target_a"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_multi_named_field_function_param_with_local_target_a_resolves_helper_call:
+        "call_multi_named_field_function_param_with_local_target_a" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_multi_named_field_function_param");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -9408,17 +7678,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_multi_named_field_function_param_with_local_target_b_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_multi_named_field_function_param_with_local_target_b"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_multi_named_field_function_param_with_local_target_b_resolves_helper_call:
+        "call_multi_named_field_function_param_with_local_target_b" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_multi_named_field_function_param");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -9433,17 +7695,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_multi_conflicting_named_field_function_param_preserves_dynamic_candidates,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_multi_conflicting_named_field_function_param"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_multi_conflicting_named_field_function_param_preserves_dynamic_candidates:
+        "call_multi_conflicting_named_field_function_param" => {
         let first_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let second_args = fixture_call_graph_function_args(&["crate"], "other_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -9460,17 +7714,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::AmbiguousDynamicFunctionCandidates { first, second },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_multi_conflicting_named_field_function_param_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_multi_conflicting_named_field_function_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_multi_conflicting_named_field_function_param_with_local_target_resolves_helper_call:
+        "call_multi_conflicting_named_field_function_param_with_local_target" => {
         let target_args = fixture_call_graph_function_args(
             &["crate"],
             "call_multi_conflicting_named_field_function_param",
@@ -9487,17 +7733,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_multi_conflicting_named_field_function_param_with_other_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_multi_conflicting_named_field_function_param_with_other_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_multi_conflicting_named_field_function_param_with_other_target_resolves_helper_call:
+        "call_multi_conflicting_named_field_function_param_with_other_target" => {
         let target_args = fixture_call_graph_function_args(
             &["crate"],
             "call_multi_conflicting_named_field_function_param",
@@ -9514,17 +7752,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_indexed_field_function_param_resolves_single_caller_field_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_indexed_field_function_param"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_indexed_field_function_param_resolves_single_caller_field_argument:
+        "call_single_indexed_field_function_param" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -9537,17 +7767,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_indexed_field_function_param_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_indexed_field_function_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_indexed_field_function_param_with_local_target_resolves_helper_call:
+        "call_single_indexed_field_function_param_with_local_target" => {
         let target_args =
             fixture_call_graph_function_args(&["crate"], "call_single_indexed_field_function_param");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -9562,17 +7784,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_indexed_tuple_field_function_param_resolves_single_caller_field_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_indexed_tuple_field_function_param"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_indexed_tuple_field_function_param_resolves_single_caller_field_argument:
+        "call_single_indexed_tuple_field_function_param" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -9585,17 +7799,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_indexed_tuple_field_function_param_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_indexed_tuple_field_function_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_indexed_tuple_field_function_param_with_local_target_resolves_helper_call:
+        "call_single_indexed_tuple_field_function_param_with_local_target" => {
         let target_args = fixture_call_graph_function_args(
             &["crate"],
             "call_single_indexed_tuple_field_function_param",
@@ -9612,17 +7818,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_indexed_function_pointer_param_resolves_single_caller_array_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_indexed_function_pointer_param"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_indexed_function_pointer_param_resolves_single_caller_array_argument:
+        "call_single_indexed_function_pointer_param" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -9635,17 +7833,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_indexed_function_pointer_param_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_indexed_function_pointer_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_indexed_function_pointer_param_with_local_target_resolves_helper_call:
+        "call_single_indexed_function_pointer_param_with_local_target" => {
         let target_args = fixture_call_graph_function_args(
             &["crate"],
             "call_single_indexed_function_pointer_param",
@@ -9662,33 +7852,17 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_parenthesized_function_pointer_param_records_dynamic_local_binding_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_parenthesized_function_pointer_param"
-    },
-    expected: ExpectedCallSite::dynamic_local_binding(
+    };
+    fixture_call_graph_call_parenthesized_function_pointer_param_records_dynamic_local_binding_call_site:
+        "call_parenthesized_function_pointer_param" => ExpectedCallSite::dynamic_local_binding(
         &["f"],
         PARENTHESIZED_FUNCTION_POINTER_PARAM_DYNAMIC_CALL_SPAN,
         0,
         &[],
         ExpectedCallOutcome::Unsupported,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_parenthesized_referenced_dyn_fn_param_resolves_single_caller_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_parenthesized_referenced_dyn_fn_param"
-    },
-    expected: {
+    );
+    fixture_call_graph_call_single_parenthesized_referenced_dyn_fn_param_resolves_single_caller_argument:
+        "call_single_parenthesized_referenced_dyn_fn_param" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -9701,17 +7875,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_parenthesized_referenced_dyn_fn_param_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_parenthesized_referenced_dyn_fn_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_parenthesized_referenced_dyn_fn_param_with_local_target_resolves_helper_call:
+        "call_single_parenthesized_referenced_dyn_fn_param_with_local_target" => {
         let target_args = fixture_call_graph_function_args(
             &["crate"],
             "call_single_parenthesized_referenced_dyn_fn_param",
@@ -9728,17 +7894,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_parenthesized_boxed_dyn_fn_param_resolves_single_caller_argument,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_parenthesized_boxed_dyn_fn_param"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_parenthesized_boxed_dyn_fn_param_resolves_single_caller_argument:
+        "call_single_parenthesized_boxed_dyn_fn_param" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -9751,17 +7909,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_single_parenthesized_boxed_dyn_fn_param_with_local_target_resolves_helper_call,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_single_parenthesized_boxed_dyn_fn_param_with_local_target"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_single_parenthesized_boxed_dyn_fn_param_with_local_target_resolves_helper_call:
+        "call_single_parenthesized_boxed_dyn_fn_param_with_local_target" => {
         let target_args = fixture_call_graph_function_args(
             &["crate"],
             "call_single_parenthesized_boxed_dyn_fn_param",
@@ -9778,24 +7928,16 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_function_pointer_param_cast_records_cast_local_binding_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_function_pointer_param_cast"
-    },
-    expected: ExpectedCallSite::dynamic_fn_pointer_cast_local_binding(
+    };
+    fixture_call_graph_call_function_pointer_param_cast_records_cast_local_binding_dynamic_call_site:
+        "call_function_pointer_param_cast" => ExpectedCallSite::dynamic_fn_pointer_cast_local_binding(
         &["f"],
         FUNCTION_POINTER_PARAM_CAST_DYNAMIC_CALL_SPAN,
         0,
         &[],
         ExpectedCallOutcome::Unsupported,
-    ),
-);
+    );
+}
 
 #[test]
 fn fixture_call_graph_call_closure_binding_cast_resolves_dynamic_closure_call_site()
@@ -9855,30 +7997,18 @@ fn fixture_call_graph_call_dereferenced_closure_binding_resolves_dynamic_closure
     Ok(())
 }
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_field_function_param_records_dynamic_field_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_field_function_param"
-    },
-    expected: ExpectedCallSite::dynamic_field_local_binding(
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_field_function_param_records_dynamic_field_call_site:
+        "call_field_function_param" => ExpectedCallSite::dynamic_field_local_binding(
         &["holder", "callback"],
         FIELD_FUNCTION_PARAM_DYNAMIC_CALL_SPAN,
         0,
         &[],
         ExpectedCallOutcome::Unsupported,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_named_field_function_binding_resolves_initialized_field_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_named_field_function_binding"
-    },
-    expected: {
+    );
+    fixture_call_graph_call_named_field_function_binding_resolves_initialized_field_dynamic_call_site:
+        "call_named_field_function_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -9892,17 +8022,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_aliased_named_field_function_binding_resolves_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_aliased_named_field_function_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_aliased_named_field_function_binding_resolves_dynamic_call_site:
+        "call_aliased_named_field_function_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -9916,33 +8038,17 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_indexed_field_function_param_fails_closed_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_indexed_field_function_param"
-    },
-    expected: ExpectedCallSite::dynamic_field_local_binding(
+    };
+    fixture_call_graph_call_indexed_field_function_param_fails_closed_dynamic_call_site:
+        "call_indexed_field_function_param" => ExpectedCallSite::dynamic_field_local_binding(
         &["holder", "callbacks", "0"],
         INDEXED_FIELD_FUNCTION_PARAM_DYNAMIC_CALL_SPAN,
         0,
         &[],
         ExpectedCallOutcome::Unsupported,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_indexed_named_field_function_binding_resolves_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_indexed_named_field_function_binding"
-    },
-    expected: {
+    );
+    fixture_call_graph_call_indexed_named_field_function_binding_resolves_dynamic_call_site:
+        "call_indexed_named_field_function_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -9956,17 +8062,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_indexed_named_field_array_alias_binding_resolves_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_indexed_named_field_array_alias_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_indexed_named_field_array_alias_binding_resolves_dynamic_call_site:
+        "call_indexed_named_field_array_alias_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -9980,17 +8078,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_aliased_indexed_named_field_function_binding_resolves_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_aliased_indexed_named_field_function_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_aliased_indexed_named_field_function_binding_resolves_dynamic_call_site:
+        "call_aliased_indexed_named_field_function_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -10004,33 +8094,17 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_indexed_tuple_field_function_param_fails_closed_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_indexed_tuple_field_function_param"
-    },
-    expected: ExpectedCallSite::dynamic_field_local_binding(
+    };
+    fixture_call_graph_call_indexed_tuple_field_function_param_fails_closed_dynamic_call_site:
+        "call_indexed_tuple_field_function_param" => ExpectedCallSite::dynamic_field_local_binding(
         &["holder", "0", "0"],
         INDEXED_TUPLE_FIELD_FUNCTION_PARAM_DYNAMIC_CALL_SPAN,
         0,
         &[],
         ExpectedCallOutcome::Unsupported,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_indexed_tuple_field_function_binding_resolves_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_indexed_tuple_field_function_binding"
-    },
-    expected: {
+    );
+    fixture_call_graph_call_indexed_tuple_field_function_binding_resolves_dynamic_call_site:
+        "call_indexed_tuple_field_function_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -10044,17 +8118,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_indexed_tuple_field_array_alias_binding_resolves_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_indexed_tuple_field_array_alias_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_indexed_tuple_field_array_alias_binding_resolves_dynamic_call_site:
+        "call_indexed_tuple_field_array_alias_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -10068,17 +8134,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_aliased_indexed_tuple_field_function_binding_resolves_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_aliased_indexed_tuple_field_function_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_aliased_indexed_tuple_field_function_binding_resolves_dynamic_call_site:
+        "call_aliased_indexed_tuple_field_function_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -10092,33 +8150,17 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_indexed_function_pointer_fails_closed_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_indexed_function_pointer"
-    },
-    expected: ExpectedCallSite::dynamic_field_local_binding(
+    };
+    fixture_call_graph_call_indexed_function_pointer_fails_closed_dynamic_call_site:
+        "call_indexed_function_pointer" => ExpectedCallSite::dynamic_field_local_binding(
         &["funcs", "0"],
         INDEXED_FUNCTION_POINTER_DYNAMIC_CALL_SPAN,
         0,
         &[],
         ExpectedCallOutcome::Unsupported,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_indexed_initialized_function_array_resolves_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_indexed_initialized_function_array"
-    },
-    expected: {
+    );
+    fixture_call_graph_call_indexed_initialized_function_array_resolves_dynamic_call_site:
+        "call_indexed_initialized_function_array" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -10132,17 +8174,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_typed_indexed_initialized_function_array_resolves_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_typed_indexed_initialized_function_array"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_typed_indexed_initialized_function_array_resolves_dynamic_call_site:
+        "call_typed_indexed_initialized_function_array" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -10156,17 +8190,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_aliased_indexed_initialized_function_array_resolves_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_aliased_indexed_initialized_function_array"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_aliased_indexed_initialized_function_array_resolves_dynamic_call_site:
+        "call_aliased_indexed_initialized_function_array" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -10180,51 +8206,18 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_generic_fn_once_value_binding_records_value_binding_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_generic_fn_once_value_binding"
-    },
-    expected: ExpectedCallSite::path_value_binding(
+    };
+    fixture_call_graph_call_generic_fn_once_value_binding_records_value_binding_path_call_site:
+        "call_generic_fn_once_value_binding" => ExpectedCallSite::path_value_binding(
         &["generic_f"],
         GENERIC_FN_ONCE_VALUE_BINDING_CALL_SPAN,
         0,
         0,
         &[],
         ExpectedCallOutcome::Unsupported,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_boxed_dyn_fn_value_binding_records_box_new_external_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_boxed_dyn_fn_value_binding"
-    },
-    expected: ExpectedCallSite::path(
-        &["Box", "new"],
-        BOXED_DYN_FN_BOX_NEW_CALL_SPAN,
-        1,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_boxed_dyn_fn_value_binding_resolves_initialized_value_binding_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_boxed_dyn_fn_value_binding"
-    },
-    expected: {
+    );
+    fixture_call_graph_call_boxed_dyn_fn_value_binding_resolves_initialized_value_binding_path_call_site:
+        "call_boxed_dyn_fn_value_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -10239,50 +8232,17 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_parenthesized_generic_fn_once_value_binding_fails_closed_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_parenthesized_generic_fn_once_value_binding"
-    },
-    expected: ExpectedCallSite::dynamic_local_binding(
+    };
+    fixture_call_graph_call_parenthesized_generic_fn_once_value_binding_fails_closed_dynamic_call_site:
+        "call_parenthesized_generic_fn_once_value_binding" => ExpectedCallSite::dynamic_local_binding(
         &["generic_f"],
         PARENTHESIZED_GENERIC_FN_ONCE_DYNAMIC_CALL_SPAN,
         0,
         &[],
         ExpectedCallOutcome::Unsupported,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_parenthesized_boxed_dyn_fn_value_binding_records_box_new_external_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_parenthesized_boxed_dyn_fn_value_binding"
-    },
-    expected: ExpectedCallSite::path(
-        &["Box", "new"],
-        PARENTHESIZED_BOXED_DYN_FN_BOX_NEW_CALL_SPAN,
-        1,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_parenthesized_boxed_dyn_fn_value_binding_resolves_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_parenthesized_boxed_dyn_fn_value_binding"
-    },
-    expected: {
+    );
+    fixture_call_graph_call_parenthesized_boxed_dyn_fn_value_binding_resolves_dynamic_call_site:
+        "call_parenthesized_boxed_dyn_fn_value_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -10296,34 +8256,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_dereferenced_boxed_dyn_fn_value_binding_records_box_new_external_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_dereferenced_boxed_dyn_fn_value_binding"
-    },
-    expected: ExpectedCallSite::path(
-        &["Box", "new"],
-        DEREFERENCED_BOXED_DYN_FN_BOX_NEW_CALL_SPAN,
-        1,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_dereferenced_boxed_dyn_fn_value_binding_resolves_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_dereferenced_boxed_dyn_fn_value_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_dereferenced_boxed_dyn_fn_value_binding_resolves_dynamic_call_site:
+        "call_dereferenced_boxed_dyn_fn_value_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -10337,17 +8272,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_parenthesized_referenced_dyn_fn_value_binding_resolves_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_parenthesized_referenced_dyn_fn_value_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_parenthesized_referenced_dyn_fn_value_binding_resolves_dynamic_call_site:
+        "call_parenthesized_referenced_dyn_fn_value_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -10361,17 +8288,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_parenthesized_mut_referenced_dyn_fnmut_value_binding_resolves_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_parenthesized_mut_referenced_dyn_fnmut_value_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_parenthesized_mut_referenced_dyn_fnmut_value_binding_resolves_dynamic_call_site:
+        "call_parenthesized_mut_referenced_dyn_fnmut_value_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -10385,25 +8304,8 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_extern_c_function_records_external_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_extern_c_function"
-    },
-    expected: ExpectedCallSite::path(
-        &["abs"],
-        EXTERN_C_ABS_CALL_SPAN,
-        1,
-        0,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
+    };
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_assert_eq_macro_call_records_test_body_macro_call_site,
@@ -10462,14 +8364,10 @@ paranoid_call_site_test!(
     ),
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_inherent_over_trait_method_resolves_inherent_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_inherent_over_trait_method"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_inherent_over_trait_method_resolves_inherent_method_call_site:
+        "call_inherent_over_trait_method" => {
         let target_args = fixture_call_graph_inherent_precedence_method_args("priority");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -10487,17 +8385,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_inline_generic_bound_method_resolves_trait_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_inline_generic_bound_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_inline_generic_bound_method_resolves_trait_method_call_site:
+        "call_inline_generic_bound_method" => {
         let target_args = fixture_call_graph_generic_bound_trait_args("bound_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -10512,17 +8402,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_where_generic_bound_method_resolves_trait_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_where_generic_bound_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_where_generic_bound_method_resolves_trait_method_call_site:
+        "call_where_generic_bound_method" => {
         let target_args = fixture_call_graph_generic_bound_trait_args("bound_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -10537,17 +8419,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_trait_object_method_resolves_trait_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_trait_object_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_trait_object_method_resolves_trait_method_call_site:
+        "call_trait_object_method" => {
         let target_args = fixture_call_graph_generic_bound_trait_args("bound_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -10562,17 +8436,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_local_trait_object_binding_method_resolves_trait_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_local_trait_object_binding_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_local_trait_object_binding_method_resolves_trait_method_call_site:
+        "call_local_trait_object_binding_method" => {
         let target_args = fixture_call_graph_generic_bound_trait_args("bound_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -10590,17 +8456,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_concrete_trait_object_binding_method_resolves_impl_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_concrete_trait_object_binding_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_concrete_trait_object_binding_method_resolves_impl_method_call_site:
+        "call_concrete_trait_object_binding_method" => {
         let target_args = fixture_call_graph_trait_impl_method_args("trait_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -10618,17 +8476,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_aliased_concrete_trait_object_binding_method_resolves_impl_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_aliased_concrete_trait_object_binding_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_aliased_concrete_trait_object_binding_method_resolves_impl_method_call_site:
+        "call_aliased_concrete_trait_object_binding_method" => {
         let target_args = fixture_call_graph_trait_impl_method_args("trait_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -10646,17 +8496,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_reference_alias_trait_object_binding_method_resolves_impl_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_reference_alias_trait_object_binding_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_reference_alias_trait_object_binding_method_resolves_impl_method_call_site:
+        "call_reference_alias_trait_object_binding_method" => {
         let target_args = fixture_call_graph_trait_impl_method_args("trait_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -10674,17 +8516,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_reference_chain_trait_object_binding_method_resolves_impl_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_reference_chain_trait_object_binding_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_reference_chain_trait_object_binding_method_resolves_impl_method_call_site:
+        "call_reference_chain_trait_object_binding_method" => {
         let target_args = fixture_call_graph_trait_impl_method_args("trait_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -10702,17 +8536,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_borrowed_concrete_trait_object_binding_method_resolves_impl_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_borrowed_concrete_trait_object_binding_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_borrowed_concrete_trait_object_binding_method_resolves_impl_method_call_site:
+        "call_borrowed_concrete_trait_object_binding_method" => {
         let target_args = fixture_call_graph_trait_impl_method_args("trait_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -10730,8 +8556,8 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
+    };
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_trait_default_method_body_resolves_local_target_path_call_site,
@@ -10804,14 +8630,10 @@ paranoid_call_site_test!(
     },
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_parenthesized_function_item_binding_resolves_dynamic_function_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_parenthesized_function_item_binding"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_parenthesized_function_item_binding_resolves_dynamic_function_call_site:
+        "call_parenthesized_function_item_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -10825,17 +8647,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_aliased_function_item_binding_resolves_initialized_value_binding_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_aliased_function_item_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_aliased_function_item_binding_resolves_initialized_value_binding_path_call_site:
+        "call_aliased_function_item_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -10850,17 +8664,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_parenthesized_aliased_function_item_binding_resolves_dynamic_function_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_parenthesized_aliased_function_item_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_parenthesized_aliased_function_item_binding_resolves_dynamic_function_call_site:
+        "call_parenthesized_aliased_function_item_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -10874,17 +8680,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_block_initialized_function_item_binding_resolves_initialized_value_binding_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_block_initialized_function_item_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_block_initialized_function_item_binding_resolves_initialized_value_binding_path_call_site:
+        "call_block_initialized_function_item_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -10899,17 +8697,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_parenthesized_block_initialized_function_item_binding_resolves_dynamic_function_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_parenthesized_block_initialized_function_item_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_parenthesized_block_initialized_function_item_binding_resolves_dynamic_function_call_site:
+        "call_parenthesized_block_initialized_function_item_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -10923,17 +8713,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_if_initialized_function_item_binding_resolves_initialized_value_binding_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_if_initialized_function_item_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_if_initialized_function_item_binding_resolves_initialized_value_binding_path_call_site:
+        "call_if_initialized_function_item_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -10948,17 +8730,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_parenthesized_match_initialized_function_item_binding_resolves_dynamic_function_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_parenthesized_match_initialized_function_item_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_parenthesized_match_initialized_function_item_binding_resolves_dynamic_function_call_site:
+        "call_parenthesized_match_initialized_function_item_binding" => {
         let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_pid(&parsed_graphs)?;
@@ -10972,17 +8746,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_if_ambiguous_initialized_function_item_binding_preserves_path_candidates_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_if_ambiguous_initialized_function_item_binding"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_if_ambiguous_initialized_function_item_binding_preserves_path_candidates_call_site:
+        "call_if_ambiguous_initialized_function_item_binding" => {
         let first_args = fixture_call_graph_function_args(&["crate"], "local_target");
         let second_args = fixture_call_graph_function_args(&["crate"], "other_target");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -11001,17 +8767,9 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::AmbiguousPathFunctionCandidates { first, second },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_impl_trait_method_resolves_trait_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_impl_trait_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_impl_trait_method_resolves_trait_method_call_site:
+        "call_impl_trait_method" => {
         let target_args = fixture_call_graph_generic_bound_trait_args("bound_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -11026,8 +8784,8 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
+    };
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_call_direct_imported_trait_method_resolves_visible_trait_impl_method_call_site,
@@ -11172,14 +8930,10 @@ paranoid_call_site_test!(
     },
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_constrained_generic_self_trait_method_resolves_exact_generic_arg_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_constrained_generic_self_trait_method"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_constrained_generic_self_trait_method_resolves_exact_generic_arg_call_site:
+        "call_constrained_generic_self_trait_method" => {
         let target_args = fixture_call_graph_constrained_generic_self_impl_method_args(
             "constrained_generic_self_value",
         );
@@ -11196,17 +8950,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_blanket_trait_method_resolves_blanket_impl_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_blanket_trait_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_blanket_trait_method_resolves_blanket_impl_method_call_site:
+        "call_blanket_trait_method" => {
         let target_args = fixture_call_graph_blanket_trait_impl_method_args("blanket_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -11221,17 +8967,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_inline_bound_blanket_trait_method_resolves_constrained_blanket_impl_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_inline_bound_blanket_trait_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_inline_bound_blanket_trait_method_resolves_constrained_blanket_impl_call_site:
+        "call_inline_bound_blanket_trait_method" => {
         let target_args = fixture_call_graph_inline_blanket_impl_method_args("inline_bound_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -11246,17 +8984,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_where_bound_blanket_trait_method_resolves_constrained_blanket_impl_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_where_bound_blanket_trait_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_where_bound_blanket_trait_method_resolves_constrained_blanket_impl_call_site:
+        "call_where_bound_blanket_trait_method" => {
         let target_args = fixture_call_graph_where_blanket_impl_method_args("where_bound_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -11271,17 +9001,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_transitive_bound_blanket_trait_method_resolves_constrained_blanket_impl_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_transitive_bound_blanket_trait_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_transitive_bound_blanket_trait_method_resolves_constrained_blanket_impl_call_site:
+        "call_transitive_bound_blanket_trait_method" => {
         let target_args =
             fixture_call_graph_transitive_blanket_impl_method_args("transitive_bound_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
@@ -11297,8 +9019,8 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
+    };
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_trait_default_method_body_resolves_same_trait_assoc_function_path_call_site,
@@ -11323,14 +9045,10 @@ paranoid_call_site_test!(
     },
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_type_alias_assoc_make_resolves_aliased_type_associated_function_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_type_alias_assoc_make"
-    },
-    expected: {
+function_call_site_cases! {
+    "fixture_call_graph", &["crate"];
+    fixture_call_graph_call_type_alias_assoc_make_resolves_aliased_type_associated_function_path_call_site:
+        "call_type_alias_assoc_make" => {
         let target_args = fixture_call_graph_assoc_method_args("make");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -11344,17 +9062,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_type_alias_chain_assoc_make_resolves_aliased_type_associated_function_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_type_alias_chain_assoc_make"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_type_alias_chain_assoc_make_resolves_aliased_type_associated_function_path_call_site:
+        "call_type_alias_chain_assoc_make" => {
         let target_args = fixture_call_graph_assoc_method_args("make");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -11368,17 +9078,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_type_alias_chain_instance_method_resolves_aliased_type_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_type_alias_chain_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_type_alias_chain_instance_method_resolves_aliased_type_method_call_site:
+        "call_type_alias_chain_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -11396,17 +9098,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_imported_type_alias_assoc_make_resolves_aliased_type_associated_function_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_imported_type_alias_assoc_make"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_imported_type_alias_assoc_make_resolves_aliased_type_associated_function_path_call_site:
+        "call_imported_type_alias_assoc_make" => {
         let target_args = fixture_call_graph_assoc_method_args("make");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -11420,17 +9114,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_imported_type_alias_instance_method_resolves_aliased_type_method_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_imported_type_alias_instance_method"
-    },
-    expected: {
+    };
+    fixture_call_graph_call_imported_type_alias_instance_method_resolves_aliased_type_method_call_site:
+        "call_imported_type_alias_instance_method" => {
         let target_args = fixture_call_graph_instance_method_args("instance_value");
         let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
         let target_info = target_args.generate_method_pid(&parsed_graphs)?;
@@ -11448,17 +9134,9 @@ paranoid_call_site_test!(
                 target: target_info.test_method_id(),
             },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_alias_enum_case_resolves_constructor_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_type_alias_enum_variant_constructor"
-    },
-    expected: {
+    };
+    fixture_call_graph_alias_enum_case_resolves_constructor_call_site:
+        "call_type_alias_enum_variant_constructor" => {
         let target = fixture_call_graph_enum_variant_id("AliasConstructorEnum", "Case");
         ExpectedCallSite::path(
             &["AliasConstructorType", "Case"],
@@ -11468,25 +9146,8 @@ paranoid_call_site_test!(
             &[],
             ExpectedCallOutcome::ResolvedEnumVariantConstructorLocalExact { target },
         )
-    },
-);
-
-paranoid_call_site_test!(
-    fixture_call_graph_call_qualified_dyn_any_downcast_mut_projects_external_path_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_qualified_dyn_any_downcast_mut"
-    },
-    expected: ExpectedCallSite::path(
-        &["std", "any", "Any", "downcast_mut"],
-        QUALIFIED_DYN_ANY_DOWNCAST_MUT_CALL_SPAN,
-        1,
-        1,
-        &[],
-        ExpectedCallOutcome::External,
-    ),
-);
+    };
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_call_single_result_callback_resolves_method_callback_function_call_site,

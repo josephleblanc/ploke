@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use cozo::{DataValue, UuidWrapper};
+use ploke_core::rag_types::CallReachEffectInfo;
 use ploke_db::multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE};
 use ploke_db::{
     CallReceiver, CallRelationKind as DbCallRelationKind,
@@ -115,108 +116,236 @@ fn owner_effect_policy(
     })
 }
 
+type ExpectedPaths<'a> = &'a [(&'a [&'a str], usize)];
+type IncomingCase<'a> = (Uuid, CallTargetKind, usize, ExpectedPaths<'a>, &'a str);
+
+// Source-oracle ledger:
+// - incoming rows: Body::{empty,new}, parse_attrs, Json::from_bytes,
+//   BoxedIntoRoute, Handler::call, MappedLocalTime::Single, and naive_utc;
+// - outgoing rows: generated rejection methods, generated MethodRouter
+//   chaining, both turbofish shapes, and the awaited-result frontier.
+// Detailed source locations remain in the shared real-corpus oracle matrix:
+// docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md.
 #[tokio::test]
-async fn call_context_exact_reads_axum_body_empty_incoming_callers() -> Result<(), Error> {
+async fn call_context_exact_reads_axum_incoming_matrix() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;
-
-    let target = method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?;
-
-    let callers = db.callers_for_target(target)?;
-    assert_eq!(
-        callers.len(),
-        23,
-        "current axum fixture should resolve exactly the twenty-three Body::empty callers: {callers:#?}"
-    );
-
-    let context = rag.exact_call_context(target)?;
-    let incoming = context
-        .iter()
-        .filter(|call| {
-            call.kind == CallSiteKind::Path
-                && call
-                    .targets
-                    .iter()
-                    .any(|candidate| candidate.target_id == target)
-        })
-        .collect::<Vec<_>>();
-
-    // Matrix: `Body::empty` re-exported constructor row.
-    // Source chain:
-    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
-    //   axum-core/src/body.rs:52 defines `Body::empty`.
-    //   axum-core/src/body.rs:110 and :116 call `Self::empty()`.
-    //   axum-core/src/response/into_response.rs response conversion rows call
-    //   `Body::empty()`.
-    //   axum-core/src/ext_traits/request.rs request helper rows call
-    //   `Body::empty()`.
-    //   axum/src/{extract/query.rs,extract/raw_form.rs,form.rs,serve/mod.rs}
-    //   call `Body::empty()` through direct parsed-workspace imports.
-    //   axum routing and middleware tests call `Body::empty()` through local
-    //   re-export imports and inherited `super::*` imports, including the
-    //   route.rs closure body, routing/tests/merge.rs, and
-    //   routing/tests/mod.rs local handler rows.
-    // Expected traversal for the current fixture: the RAG exact call-context
-    // path preserves the same twenty-three incoming caller-site edges exposed by
-    // `Database::callers_for_target`.
-    assert_eq!(
-        incoming.len(),
-        23,
-        "RAG exact call context should expose all current Body::empty incoming edges: {context:#?}"
-    );
-
-    let expected_site_ids = callers
-        .iter()
-        .map(|caller| caller.site.id)
-        .collect::<BTreeSet<_>>();
-    let incoming_site_ids = incoming
-        .iter()
-        .map(|call| call.site_id)
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        incoming_site_ids, expected_site_ids,
-        "RAG call context should preserve the DB caller site identities"
-    );
-
-    let mut path_counts = BTreeMap::<Vec<String>, usize>::new();
-    for call in incoming {
-        assert_eq!(call.status, CallStatusKind::Resolved);
-        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-        assert_eq!(call.targets.len(), 1);
-        assert_eq!(call.targets[0].target_id, target);
-        assert_eq!(call.targets[0].relation, CallTargetKind::AssociatedFunction);
-        let CallCalleeInfo::Path { path } = &call.callee else {
-            panic!("Body::empty incoming caller should be a path call: {call:#?}");
-        };
-        *path_counts.entry(path.clone()).or_default() += 1;
+    let cases: &[IncomingCase<'_>] = &[
+        (
+            method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?,
+            CallTargetKind::AssociatedFunction,
+            23,
+            &[(&["Body", "empty"], 21), (&["Self", "empty"], 2)],
+            "Body::empty",
+        ),
+        (
+            function_id_by_name_in_module(&db, &["crate", "attr_parsing"], "parse_attrs")?,
+            CallTargetKind::Function,
+            11,
+            &[
+                (&["crate", "attr_parsing", "parse_attrs"], 1),
+                (&["parse_attrs"], 10),
+            ],
+            "parse_attrs",
+        ),
+        (
+            method_id_by_name_and_body_substring(
+                &db,
+                "from_bytes",
+                "serde_json::Deserializer::from_slice(bytes)",
+            )?,
+            CallTargetKind::AssociatedFunction,
+            2,
+            &[(&["Self", "from_bytes"], 2)],
+            "Json::from_bytes",
+        ),
+        (
+            struct_id_by_name(&db, "BoxedIntoRoute")?,
+            CallTargetKind::TupleStructConstructor,
+            3,
+            &[(&["BoxedIntoRoute"], 1), (&["Self"], 2)],
+            "BoxedIntoRoute",
+        ),
+        (
+            method_id_by_trait_name(&db, "Handler", "call")?,
+            CallTargetKind::AssociatedFunction,
+            1,
+            &[(&["Handler", "call"], 1)],
+            "Handler::call",
+        ),
+    ];
+    for (target, relation, count, paths, label) in cases {
+        assert_path_incoming(&db, &rag, *target, relation, *count, paths, label)?;
     }
-    assert_eq!(
-        path_counts,
-        BTreeMap::from([
-            (path(&["Body", "empty"]), 21),
-            (path(&["Self", "empty"]), 2),
-        ]),
-        "RAG call context should preserve literal Body::empty and trait-impl Self::empty path shapes"
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn call_context_exact_reads_axum_body_new_generated_from_callers() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
 
     let target = method_id_by_file(&db, "new", "try_downcast(body)", "axum-core/src/body.rs")?;
     let generated = axum_body_from_impl_generated_callers(&db, target)?;
     let callers = db.callers_for_target(target)?;
     assert!(
         callers.len() >= generated.len(),
-        "Body::new target-centered callers should include the generated body_from_impl! subset: {callers:#?}"
+        "Body::new callers should include the generated subset: {callers:#?}"
     );
+    let context = rag.exact_call_context(target)?;
+    let incoming = path_target_calls(&context, target);
+    assert_incoming_ids(
+        &incoming,
+        callers
+            .iter()
+            .map(|caller| (caller.site.owner_id, caller.site.id))
+            .collect(),
+        "Body::new",
+    );
+    assert_eq!(generated.len(), 7, "generated Body::from caller count");
+    for expected in generated {
+        let call = incoming
+            .iter()
+            .copied()
+            .find(|call| call.owner_id == expected.owner && call.site_id == expected.site)
+            .unwrap_or_else(|| {
+                panic!("missing generated Body::from caller {expected:#?}: {context:#?}")
+            });
+        assert_resolved_target(
+            call,
+            target,
+            &CallTargetKind::AssociatedFunction,
+            "Body::from",
+        );
+        assert_eq!(
+            call.callee,
+            CallCalleeInfo::Path {
+                path: path(&["Self", "new"]),
+            },
+            "generated Body::from callee"
+        );
+    }
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn call_context_exact_reads_chrono_incoming_matrix() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_chrono_call_graph_rag()?;
+
+    let target = variant_id_by_enum_and_variant_names(&db, "LocalResult", "Single")?;
+    assert_path_incoming(
+        &db,
+        &rag,
+        target,
+        &CallTargetKind::EnumVariantConstructor,
+        12,
+        &[(&["MappedLocalTime", "Single"], 12)],
+        "MappedLocalTime::Single",
+    )?;
+
+    let target = method_id_by_name_and_body_substring(&db, "naive_utc", "self.datetime")?;
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(callers.len(), 7, "naive_utc DB callers: {callers:#?}");
     let context = rag.exact_call_context(target)?;
     let incoming = context
+        .iter()
+        .filter(|call| {
+            call.kind == CallSiteKind::Method
+                && call
+                    .targets
+                    .iter()
+                    .any(|candidate| candidate.target_id == target)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(incoming.len(), 7, "naive_utc incoming rows: {context:#?}");
+    assert_incoming_ids(
+        &incoming,
+        callers
+            .iter()
+            .map(|caller| (caller.site.owner_id, caller.site.id))
+            .collect(),
+        "naive_utc",
+    );
+
+    let mut receiver_counts = BTreeMap::<CallReceiverInfo, usize>::new();
+    for call in incoming {
+        assert_resolved_target(call, target, &CallTargetKind::Method, "naive_utc");
+        let CallCalleeInfo::Method {
+            name: method_name,
+            receiver: Some(receiver),
+        } = &call.callee
+        else {
+            panic!("naive_utc incoming caller should be a method call: {call:#?}");
+        };
+        assert_eq!(method_name, "naive_utc");
+        *receiver_counts.entry(receiver.clone()).or_default() += 1;
+    }
+    assert_eq!(
+        receiver_counts,
+        BTreeMap::from([
+            (
+                CallReceiverInfo::TryMethodCallResult {
+                    method_name: "ok_or".to_string(),
+                },
+                2,
+            ),
+            (
+                CallReceiverInfo::InitializedLocalBinding {
+                    name: "now".to_string(),
+                    init_path: path(&["Local", "now"]),
+                },
+                2,
+            ),
+            (
+                CallReceiverInfo::PathCallResult {
+                    path: path(&["DateTime", "from_timestamp_nanos"]),
+                },
+                1,
+            ),
+            (CallReceiverInfo::SelfValue, 2),
+        ]),
+        "RAG call context should preserve all DateTime::naive_utc receiver shapes"
+    );
+
+    Ok(())
+}
+
+fn assert_path_incoming(
+    db: &Database,
+    rag: &RagService,
+    target: Uuid,
+    relation: &CallTargetKind,
+    count: usize,
+    expected: ExpectedPaths<'_>,
+    label: &str,
+) -> Result<(), Error> {
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(callers.len(), count, "{label} DB callers: {callers:#?}");
+    let context = rag.exact_call_context(target)?;
+    let incoming = path_target_calls(&context, target);
+    assert_eq!(incoming.len(), count, "{label} RAG callers: {context:#?}");
+    assert_incoming_ids(
+        &incoming,
+        callers
+            .iter()
+            .map(|caller| (caller.site.owner_id, caller.site.id))
+            .collect(),
+        label,
+    );
+
+    let mut actual = BTreeMap::<Vec<String>, usize>::new();
+    for call in incoming {
+        assert_resolved_target(call, target, relation, label);
+        let CallCalleeInfo::Path { path } = &call.callee else {
+            panic!("{label} incoming caller should be a path: {call:#?}");
+        };
+        *actual.entry(path.clone()).or_default() += 1;
+    }
+    let expected = expected
+        .iter()
+        .map(|(parts, count)| (path(parts), *count))
+        .collect();
+    assert_eq!(actual, expected, "{label} callee path counts");
+    Ok(())
+}
+
+fn path_target_calls(context: &[CallContextInfo], target: Uuid) -> Vec<&CallContextInfo> {
+    context
         .iter()
         .filter(|call| {
             call.kind == CallSiteKind::Path
@@ -225,63 +354,94 @@ async fn call_context_exact_reads_axum_body_new_generated_from_callers() -> Resu
                     .iter()
                     .any(|candidate| candidate.target_id == target)
         })
-        .collect::<Vec<_>>();
+        .collect()
+}
 
-    let expected_site_ids = callers
+fn assert_incoming_ids(calls: &[&CallContextInfo], expected: BTreeSet<(Uuid, Uuid)>, label: &str) {
+    let actual = calls
         .iter()
-        .map(|caller| caller.site.id)
+        .map(|call| (call.owner_id, call.site_id))
         .collect::<BTreeSet<_>>();
-    let incoming_site_ids = incoming
-        .iter()
-        .map(|call| call.site_id)
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        incoming_site_ids, expected_site_ids,
-        "RAG call context should preserve every DB Body::new caller site identity"
-    );
+    assert_eq!(actual, expected, "{label} caller owner/site identities");
+}
 
-    // Matrix: generated `body_from_impl!` conversion impls.
-    // Source chain:
-    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
-    //   crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix.rs
-    //   axum-core/src/body.rs:46 defines `Body::new`.
-    //   axum-core/src/body.rs:120-126 defines `body_from_impl!`.
-    //   axum-core/src/body.rs:129-138 invokes it for seven concrete buffer
-    //   types. Each generated `impl From<T> for Body` contains
-    //   `Self::new(http_body_util::Full::from(buf))`.
-    // Expected traversal: RAG exact call context includes all target-centered
-    // `Body::new` callers and preserves the seven generated `Body::from`
-    // caller-site rows as resolved associated-function edges.
+fn assert_resolved_target(
+    call: &CallContextInfo,
+    target: Uuid,
+    relation: &CallTargetKind,
+    label: &str,
+) {
+    assert_eq!(call.status, CallStatusKind::Resolved, "{label} status");
     assert_eq!(
-        generated.len(),
-        7,
-        "body_from_impl! should generate seven Body::from -> Body::new caller sites"
+        call.resolution,
+        Some(CallResolutionKind::LocalExact),
+        "{label} resolution"
     );
-    for expected in generated {
-        let call = incoming
-            .iter()
-            .copied()
-            .find(|call| call.owner_id == expected.owner && call.site_id == expected.site)
-            .unwrap_or_else(|| {
-                panic!("RAG context should include generated Body::from caller {expected:#?}: {context:#?}")
-            });
-        assert_eq!(call.status, CallStatusKind::Resolved);
-        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-        assert_eq!(call.targets.len(), 1);
-        assert_eq!(call.targets[0].target_id, target);
-        assert_eq!(call.targets[0].relation, CallTargetKind::AssociatedFunction);
-        let CallCalleeInfo::Path { path: callee_path } = &call.callee else {
-            panic!("generated Body::from caller should be a path call: {call:#?}");
-        };
-        assert_eq!(callee_path, &path(&["Self", "new"]));
+    assert_eq!(call.targets.len(), 1, "{label} target count");
+    assert_eq!(call.targets[0].target_id, target, "{label} target");
+    assert_eq!(&call.targets[0].relation, relation, "{label} relation");
+}
+
+#[derive(Clone, Copy)]
+enum ContextQuery {
+    Exact,
+    Collected,
+}
+
+struct ExpectedTarget {
+    id: Uuid,
+    relation: Option<CallTargetKind>,
+}
+
+struct OutgoingCase {
+    label: String,
+    owner: Uuid,
+    site: Option<Uuid>,
+    query: ContextQuery,
+    select_target: bool,
+    kind: CallSiteKind,
+    callee: CallCalleeInfo,
+    status: CallStatusKind,
+    resolution: Option<Option<CallResolutionKind>>,
+    target: Option<ExpectedTarget>,
+    arg_count: Option<u32>,
+    generic_count: Option<u32>,
+    match_count: Option<usize>,
+}
+
+fn resolved_method_case(
+    label: String,
+    owner: Uuid,
+    site: Option<Uuid>,
+    name: &str,
+    receiver: CallReceiverInfo,
+    target: Uuid,
+) -> OutgoingCase {
+    OutgoingCase {
+        label,
+        owner,
+        site,
+        query: ContextQuery::Collected,
+        select_target: false,
+        kind: CallSiteKind::Method,
+        callee: CallCalleeInfo::Method {
+            name: name.to_string(),
+            receiver: Some(receiver),
+        },
+        status: CallStatusKind::Resolved,
+        resolution: Some(Some(CallResolutionKind::LocalExact)),
+        target: Some(ExpectedTarget {
+            id: target,
+            relation: Some(CallTargetKind::Method),
+        }),
+        arg_count: None,
+        generic_count: None,
+        match_count: None,
     }
-
-    Ok(())
 }
 
 #[tokio::test]
-async fn call_context_collection_reads_axum_generated_rejection_self_methods() -> Result<(), Error>
-{
+async fn call_context_reads_axum_outgoing_matrix() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;
 
@@ -290,507 +450,312 @@ async fn call_context_collection_reads_axum_generated_rejection_self_methods() -
         "into_response",
         "rejection_type=MissingExtension",
     )?;
-    let expected = missing_extension_self_methods(&db, owner)?;
-
-    let context_map = rag.collect_call_context(&[(owner, 1.0)])?;
-    let context = context_map.get(&owner).unwrap_or_else(|| {
-        panic!("RAG should collect outgoing context for generated MissingExtension::into_response")
-    });
-
-    // Matrix: bounded generated `define_rejection!` impl methods.
-    // Source chain:
-    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
-    //   crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix.rs
-    //   axum-core/src/macros.rs:30-115 defines `__define_rejection!`.
-    //   axum/src/extract/rejection.rs:42-48 invokes it for
-    //   `MissingExtension(Error)`.
-    // Expected traversal: RAG outgoing call context for generated
-    // `IntoResponse::into_response` preserves the two DB-proven one-hop
-    // method edges from `self.status()` and `self.body_text()` to generated
-    // inherent methods on the same rejection type.
-    for expected in expected {
-        let call = context
-            .iter()
-            .find(|call| call.site_id == expected.site)
-            .unwrap_or_else(|| {
-                panic!("RAG should include generated self-call {expected:#?}: {context:#?}")
-            });
-        assert_eq!(call.owner_id, owner);
-        assert_eq!(call.kind, CallSiteKind::Method);
-        assert_eq!(call.status, CallStatusKind::Resolved);
-        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-        assert_eq!(
-            call.targets.len(),
-            1,
-            "generated rejection self-call should expose one target: {call:#?}"
-        );
-        assert_eq!(call.targets[0].target_id, expected.target);
-        assert_eq!(call.targets[0].relation, CallTargetKind::Method);
-        assert_eq!(
-            call.callee,
-            CallCalleeInfo::Method {
-                name: expected.method.to_string(),
-                receiver: Some(CallReceiverInfo::SelfValue),
-            }
-        );
+    for row in missing_extension_self_methods(&db, owner)? {
+        assert_outgoing_case(
+            &rag,
+            &resolved_method_case(
+                format!("generated MissingExtension self.{}", row.method),
+                owner,
+                Some(row.site),
+                row.method,
+                CallReceiverInfo::SelfValue,
+                row.target,
+            ),
+        )?;
     }
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn call_context_collection_reads_axum_composite_rejection_delegate() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
 
     let owner = method_id_by_name_and_body_substring(
         &db,
         "into_response",
         "Self::FailedToDeserializeQueryString(inner)=>inner.into_response()",
     )?;
-    let expected = query_rejection_delegate_method(&db, owner)?;
-
-    let context_map = rag.collect_call_context(&[(owner, 1.0)])?;
-    let context = context_map.get(&owner).unwrap_or_else(|| {
-        panic!("RAG should collect outgoing context for generated QueryRejection::into_response")
-    });
-
-    // Matrix: bounded generated `composite_rejection!` enum delegation.
-    // Source chain:
-    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
-    //   crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix.rs
-    //   axum-core/src/macros.rs:154-180 defines `__composite_rejection!`.
-    //   axum/src/extract/rejection.rs:92-100 invokes it for
-    //   `QueryRejection { FailedToDeserializeQueryString }`.
-    //   axum/src/extract/rejection.rs:84-90 invokes `define_rejection!`
-    //   for `FailedToDeserializeQueryString`.
-    // Expected traversal: RAG outgoing call context for generated
-    // `IntoResponse::into_response` preserves the one-hop method edge from
-    // `inner.into_response()` to the generated `FailedToDeserializeQueryString`
-    // `IntoResponse` method, with the enum-variant receiver proof intact.
-    let call = context
-        .iter()
-        .find(|call| call.site_id == expected.site)
-        .unwrap_or_else(|| {
-            panic!("RAG should include generated composite delegate {expected:#?}: {context:#?}")
-        });
-    assert_eq!(call.owner_id, owner);
-    assert_eq!(call.kind, CallSiteKind::Method);
-    assert_eq!(call.status, CallStatusKind::Resolved);
-    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(
-        call.targets.len(),
-        1,
-        "generated composite delegate should expose one target: {call:#?}"
-    );
-    assert_eq!(call.targets[0].target_id, expected.target);
-    assert_eq!(call.targets[0].relation, CallTargetKind::Method);
-    assert_eq!(
-        call.callee,
-        CallCalleeInfo::Method {
-            name: expected.method.to_string(),
-            receiver: Some(CallReceiverInfo::EnumVariantBinding {
+    let row = query_rejection_delegate_method(&db, owner)?;
+    assert_outgoing_case(
+        &rag,
+        &resolved_method_case(
+            "generated QueryRejection delegate".to_string(),
+            owner,
+            Some(row.site),
+            row.method,
+            CallReceiverInfo::EnumVariantBinding {
                 name: "inner".to_string(),
                 enum_path: path(&["Self"]),
                 variant_name: "FailedToDeserializeQueryString".to_string(),
                 field_index: 0,
-            }),
-        }
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn call_context_exact_reads_axum_parse_attrs_incoming_callers() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
-
-    let target = function_id_by_name_in_module(&db, &["crate", "attr_parsing"], "parse_attrs")?;
-
-    let callers = db.callers_for_target(target)?;
-    assert_eq!(
-        callers.len(),
-        11,
-        "current axum fixture should resolve the eleven parse_attrs caller sites: {callers:#?}"
-    );
-
-    let context = rag.exact_call_context(target)?;
-    let incoming = context
-        .iter()
-        .filter(|call| {
-            call.kind == CallSiteKind::Path
-                && call
-                    .targets
-                    .iter()
-                    .any(|candidate| candidate.target_id == target)
-        })
-        .collect::<Vec<_>>();
-
-    // Matrix: `parse_attrs` path/import row.
-    // Source chain:
-    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
-    //   axum-macros/src/attr_parsing.rs:59 defines `parse_attrs`.
-    //   axum-macros/src/typed_path.rs:23 calls
-    //   `crate::attr_parsing::parse_attrs(...)`.
-    //   from_ref.rs:30 and from_request/mod.rs:{112,196,471,598,727,892,908,
-    //   1029,1039} call imported `parse_attrs(...)`, including three
-    //   closure-owned executable rows.
-    // Expected traversal: RAG exact call context preserves the same eleven
-    // incoming caller-site edges exposed by `Database::callers_for_target`.
-    assert_eq!(
-        incoming.len(),
-        11,
-        "RAG exact call context should expose all current parse_attrs incoming edges: {context:#?}"
-    );
-
-    let expected_site_ids = callers
-        .iter()
-        .map(|caller| caller.site.id)
-        .collect::<BTreeSet<_>>();
-    let incoming_site_ids = incoming
-        .iter()
-        .map(|call| call.site_id)
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        incoming_site_ids, expected_site_ids,
-        "RAG call context should preserve the DB parse_attrs caller site identities"
-    );
-
-    let mut path_counts = BTreeMap::<Vec<String>, usize>::new();
-    for call in incoming {
-        assert_eq!(call.status, CallStatusKind::Resolved);
-        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-        assert_eq!(call.targets.len(), 1);
-        assert_eq!(call.targets[0].target_id, target);
-        assert_eq!(call.targets[0].relation, CallTargetKind::Function);
-        let CallCalleeInfo::Path { path } = &call.callee else {
-            panic!("parse_attrs incoming caller should be a path call: {call:#?}");
-        };
-        *path_counts.entry(path.clone()).or_default() += 1;
-    }
-    assert_eq!(
-        path_counts,
-        BTreeMap::from([
-            (path(&["crate", "attr_parsing", "parse_attrs"]), 1),
-            (path(&["parse_attrs"]), 10),
-        ]),
-        "RAG call context should preserve explicit and imported parse_attrs path shapes"
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn call_context_exact_reads_axum_json_from_bytes_incoming_callers() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
-
-    let target = method_id_by_name_and_body_substring(
-        &db,
-        "from_bytes",
-        "serde_json::Deserializer::from_slice(bytes)",
+            },
+            row.target,
+        ),
     )?;
 
-    let callers = db.callers_for_target(target)?;
-    assert_eq!(
-        callers.len(),
-        2,
-        "current axum fixture should resolve the two Json::from_bytes caller sites: {callers:#?}"
-    );
-
-    let context = rag.exact_call_context(target)?;
-    let incoming = context
-        .iter()
-        .filter(|call| {
-            call.kind == CallSiteKind::Path
-                && call
-                    .targets
-                    .iter()
-                    .any(|candidate| candidate.target_id == target)
-        })
-        .collect::<Vec<_>>();
-
-    // Matrix: `Json::from_bytes` inherent method row.
-    // Source chain:
-    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
-    //   axum/src/json.rs:164 defines `Json::from_bytes`.
-    //   axum/src/json.rs:112 and :128 call `Self::from_bytes(&bytes)`.
-    // Expected traversal: RAG exact call context preserves both one-hop
-    // `Self::from_bytes` associated-function edges exposed by
-    // `Database::callers_for_target`.
-    assert_eq!(
-        incoming.len(),
-        2,
-        "RAG exact call context should expose both Json::from_bytes incoming edges: {context:#?}"
-    );
-
-    let expected_site_ids = callers
-        .iter()
-        .map(|caller| caller.site.id)
-        .collect::<BTreeSet<_>>();
-    let incoming_site_ids = incoming
-        .iter()
-        .map(|call| call.site_id)
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        incoming_site_ids, expected_site_ids,
-        "RAG call context should preserve the DB Json::from_bytes caller site identities"
-    );
-
-    let mut path_counts = BTreeMap::<Vec<String>, usize>::new();
-    for call in incoming {
-        assert_eq!(call.status, CallStatusKind::Resolved);
-        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-        assert_eq!(call.targets.len(), 1);
-        assert_eq!(call.targets[0].target_id, target);
-        assert_eq!(call.targets[0].relation, CallTargetKind::AssociatedFunction);
-        let CallCalleeInfo::Path { path } = &call.callee else {
-            panic!("Json::from_bytes incoming caller should be a path call: {call:#?}");
-        };
-        *path_counts.entry(path.clone()).or_default() += 1;
-    }
-    assert_eq!(
-        path_counts,
-        BTreeMap::from([(path(&["Self", "from_bytes"]), 2)]),
-        "RAG call context should preserve the trait-impl Self::from_bytes path shape"
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn call_context_exact_reads_axum_boxed_into_route_constructor_callers() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
-
-    let target = struct_id_by_name(&db, "BoxedIntoRoute")?;
-
-    let callers = db.callers_for_target(target)?;
-    assert_eq!(
-        callers.len(),
-        3,
-        "current axum fixture should resolve the three BoxedIntoRoute constructor callers: {callers:#?}"
-    );
-
-    let context = rag.exact_call_context(target)?;
-    let incoming = context
-        .iter()
-        .filter(|call| {
-            call.kind == CallSiteKind::Path
-                && call
-                    .targets
-                    .iter()
-                    .any(|candidate| candidate.target_id == target)
-        })
-        .collect::<Vec<_>>();
-
-    // Matrix: `BoxedIntoRoute` tuple-struct constructor row.
-    // Source chain:
-    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
-    //   axum/src/boxed.rs:12 defines `BoxedIntoRoute<S, E>(...)`.
-    //   axum/src/boxed.rs:23,38,51 call `Self(...)`,
-    //   `BoxedIntoRoute(...)`, and `Self(...)`.
-    // Expected traversal: RAG exact call context preserves the same one-hop
-    // constructor edges exposed by `Database::callers_for_target`.
-    assert_eq!(
-        incoming.len(),
-        3,
-        "RAG exact call context should expose the current BoxedIntoRoute constructor edge: {context:#?}"
-    );
-
-    let expected_site_ids = callers
-        .iter()
-        .map(|caller| caller.site.id)
-        .collect::<BTreeSet<_>>();
-    let incoming_site_ids = incoming
-        .iter()
-        .map(|call| call.site_id)
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        incoming_site_ids, expected_site_ids,
-        "RAG call context should preserve the DB BoxedIntoRoute caller site identities"
-    );
-
-    let mut path_counts = BTreeMap::<Vec<String>, usize>::new();
-    for call in incoming {
-        assert_eq!(call.status, CallStatusKind::Resolved);
-        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-        assert_eq!(call.targets.len(), 1);
-        assert_eq!(call.targets[0].target_id, target);
-        assert_eq!(
-            call.targets[0].relation,
-            CallTargetKind::TupleStructConstructor
+    for (owner, target, method) in [
+        (
+            method_id_by_file(
+                &db,
+                "post",
+                "self.on(MethodFilter::",
+                "axum/src/routing/method_routing.rs",
+            )?,
+            method_id_by_file(
+                &db,
+                "on",
+                "self.on_endpoint(filter, &MethodEndpoint::BoxedHandler",
+                "axum/src/routing/method_routing.rs",
+            )?,
+            "on",
+        ),
+        (
+            method_id_by_file(
+                &db,
+                "post_service",
+                "self.on_service(MethodFilter::",
+                "axum/src/routing/method_routing.rs",
+            )?,
+            method_id_by_file(
+                &db,
+                "on_service",
+                "self.on_endpoint(filter, &MethodEndpoint::Route",
+                "axum/src/routing/method_routing.rs",
+            )?,
+            "on_service",
+        ),
+    ] {
+        let mut case = resolved_method_case(
+            format!("generated chained {method} edge"),
+            owner,
+            None,
+            method,
+            CallReceiverInfo::SelfValue,
+            target,
         );
-        let CallCalleeInfo::Path { path } = &call.callee else {
-            panic!("BoxedIntoRoute incoming caller should be a path call: {call:#?}");
-        };
-        *path_counts.entry(path.clone()).or_default() += 1;
+        case.query = ContextQuery::Exact;
+        case.select_target = true;
+        case.arg_count = Some(2);
+        assert_outgoing_case(&rag, &case)?;
     }
-    assert_eq!(
-        path_counts,
-        BTreeMap::from([(path(&["BoxedIntoRoute"]), 1), (path(&["Self"]), 2)]),
-        "RAG call context should preserve explicit and Self constructor path shapes"
+
+    let owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "attr_parsing"],
+        "parse_parenthesized_attribute",
+    )?;
+    assert_outgoing_case(
+        &rag,
+        &OutgoingCase {
+            label: "std::any::type_name::<K>".to_string(),
+            owner,
+            site: None,
+            query: ContextQuery::Collected,
+            select_target: false,
+            kind: CallSiteKind::Path,
+            callee: CallCalleeInfo::Path {
+                path: path(&["std", "any", "type_name"]),
+            },
+            status: CallStatusKind::External,
+            resolution: None,
+            target: None,
+            arg_count: None,
+            generic_count: Some(1),
+            match_count: None,
+        },
+    )?;
+
+    let owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "ext_traits", "request_parts", "tests"],
+        "extract_with_state",
+    )?;
+    let target =
+        method_id_by_name_and_body_substring(&db, "extract_with_state", "E::from_request_parts")?;
+    let site = assert_outgoing_case(
+        &rag,
+        &OutgoingCase {
+            label: "request_parts extract_with_state turbofish".to_string(),
+            owner,
+            site: None,
+            query: ContextQuery::Collected,
+            select_target: false,
+            kind: CallSiteKind::Method,
+            callee: CallCalleeInfo::Method {
+                name: "extract_with_state".to_string(),
+                receiver: Some(CallReceiverInfo::TupleMethodReturn {
+                    name: "parts".to_string(),
+                    method_name: "into_parts".to_string(),
+                    method_span: (4640, 4669),
+                    index: 0,
+                }),
+            },
+            status: CallStatusKind::Resolved,
+            resolution: Some(Some(CallResolutionKind::LocalExact)),
+            target: Some(ExpectedTarget {
+                id: target,
+                relation: None,
+            }),
+            arg_count: None,
+            generic_count: Some(2),
+            match_count: Some(1),
+        },
+    )?;
+    let reach = rag
+        .exact_call_reach_for_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 2,
+                max_paths: 128,
+            },
+        )?
+        .expect("call context enabled");
+    assert!(
+        reach
+            .unsupported_frontier_calls
+            .iter()
+            .all(|frontier| frontier.site_id != site),
+        "resolved turbofish row must leave the unsupported frontier: {reach:#?}"
+    );
+    let path = reach
+        .paths
+        .iter()
+        .find(|path| {
+            path.edges
+                .iter()
+                .any(|edge| edge.call_site_id == site && edge.callee_id == target)
+        })
+        .unwrap_or_else(|| panic!("resolved turbofish edge missing: {reach:#?}"));
+    assert!(
+        path.edges
+            .iter()
+            .any(|edge| edge.call_site_id == site && edge.callee_id == target),
+        "resolved turbofish path must retain the exact edge: {path:#?}"
+    );
+
+    let owner = method_id_by_name_and_body_substring(
+        &db,
+        "accept",
+        "self.sem.clone().acquire_owned().await.unwrap()",
+    )?;
+    let site = assert_outgoing_case(
+        &rag,
+        &OutgoingCase {
+            label: "ConnLimiter::accept awaited unwrap".to_string(),
+            owner,
+            site: None,
+            query: ContextQuery::Collected,
+            select_target: false,
+            kind: CallSiteKind::Method,
+            callee: CallCalleeInfo::Method {
+                name: "unwrap".to_string(),
+                receiver: Some(CallReceiverInfo::AwaitMethodCallResult {
+                    method_name: "acquire_owned".to_string(),
+                }),
+            },
+            status: CallStatusKind::External,
+            resolution: Some(None),
+            target: None,
+            arg_count: None,
+            generic_count: None,
+            match_count: Some(1),
+        },
+    )?;
+    let reach = rag
+        .exact_call_reach_for_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 2,
+                max_paths: 128,
+            },
+        )?
+        .expect("call context enabled");
+    let frontier = reach
+        .external_frontier_calls
+        .iter()
+        .find(|frontier| frontier.site_id == site)
+        .unwrap_or_else(|| panic!("awaited unwrap external frontier missing: {reach:#?}"));
+    assert_eq!(frontier.owner_id, owner);
+    assert_eq!(frontier.status, CallStatusKind::External);
+    assert!(
+        frontier.targets.is_empty(),
+        "awaited unwrap frontier must remain targetless: {frontier:#?}"
     );
 
     Ok(())
 }
 
-#[tokio::test]
-async fn call_context_exact_reads_chrono_alias_constructor_callers() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_chrono_call_graph_rag()?;
-
-    let target = variant_id_by_enum_and_variant_names(&db, "LocalResult", "Single")?;
-    let callers = db.callers_for_target(target)?;
-    assert_eq!(
-        callers.len(),
-        12,
-        "current chrono fixture should resolve all MappedLocalTime::Single alias constructor callers: {callers:#?}"
-    );
-
-    let context = rag.exact_call_context(target)?;
-    let expected_callee = CallCalleeInfo::Path {
-        path: path(&["MappedLocalTime", "Single"]),
+fn assert_outgoing_case(rag: &RagService, case: &OutgoingCase) -> Result<Uuid, Error> {
+    let context = match case.query {
+        ContextQuery::Exact => rag.exact_call_context(case.owner)?,
+        ContextQuery::Collected => {
+            let contexts = rag.collect_call_context(&[(case.owner, 1.0)])?;
+            contexts
+                .get(&case.owner)
+                .unwrap_or_else(|| panic!("{} should receive outgoing context", case.label))
+                .clone()
+        }
     };
-    let incoming = context
+    let matching = context
         .iter()
         .filter(|call| {
-            call.kind == CallSiteKind::Path
-                && call.callee == expected_callee
-                && call
-                    .targets
-                    .iter()
-                    .any(|candidate| candidate.target_id == target)
+            call.kind == case.kind
+                && call.callee == case.callee
+                && case.site.is_none_or(|site| call.site_id == site)
+                && (!case.select_target
+                    || case.target.as_ref().is_some_and(|target| {
+                        call.targets
+                            .iter()
+                            .any(|candidate| candidate.target_id == target.id)
+                    }))
         })
         .collect::<Vec<_>>();
-
-    // Matrix: chrono `MappedLocalTime::Single` alias constructor row.
-    // Source chain:
-    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
-    //   chrono/src/offset/mod.rs:77 aliases
-    //   `MappedLocalTime<T> = LocalResult<T>`.
-    //   chrono/src/offset/mod.rs:81-83 defines `LocalResult::Single(T)`.
-    //   chrono/src/offset/mod.rs:{143,156,468,502,535},
-    //   offset/{fixed.rs:135,138,utc.rs:122,125,local/unix.rs:159}, and
-    //   datetime/tests.rs:{75,79} call `MappedLocalTime::Single(...)`.
-    // Expected traversal: RAG exact call context preserves every resolved
-    // alias constructor caller-site identity exposed by
-    // `Database::callers_for_target`.
-    assert_eq!(
-        incoming.len(),
-        12,
-        "RAG exact call context should expose all chrono alias constructor edges: {context:#?}"
-    );
-
-    let expected_site_ids = callers
-        .iter()
-        .map(|caller| caller.site.id)
-        .collect::<BTreeSet<_>>();
-    let incoming_site_ids = incoming
-        .iter()
-        .map(|call| call.site_id)
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        incoming_site_ids, expected_site_ids,
-        "RAG call context should preserve the DB chrono alias constructor site identities"
-    );
-
-    for call in incoming {
-        assert_eq!(call.status, CallStatusKind::Resolved);
-        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-        assert_eq!(call.targets.len(), 1);
-        assert_eq!(call.targets[0].target_id, target);
+    if let Some(count) = case.match_count {
         assert_eq!(
-            call.targets[0].relation,
-            CallTargetKind::EnumVariantConstructor
+            matching.len(),
+            count,
+            "{} matching row count: {context:#?}",
+            case.label
         );
     }
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn call_context_exact_reads_chrono_option_ok_or_try_receiver_callers() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_chrono_call_graph_rag()?;
-
-    let target = method_id_by_name_and_body_substring(&db, "naive_utc", "self.datetime")?;
-    let callers = db.callers_for_target(target)?;
-    assert_eq!(
-        callers.len(),
-        4,
-        "current chrono fixture should resolve the two parsed.rs DateTime...?.naive_utc callers plus two cfg(test) Local::now initialized-local callers: {callers:#?}"
-    );
-
-    let context = rag.exact_call_context(target)?;
-    let expected_callee = CallCalleeInfo::Method {
-        name: "naive_utc".to_string(),
-        receiver: Some(CallReceiverInfo::TryMethodCallResult {
-            method_name: "ok_or".to_string(),
-        }),
-    };
-    let incoming = context
-        .iter()
-        .filter(|call| {
-            call.kind == CallSiteKind::Method
-                && call.callee == expected_callee
-                && call
-                    .targets
-                    .iter()
-                    .any(|candidate| candidate.target_id == target)
-        })
-        .collect::<Vec<_>>();
-
-    // Matrix: chrono `DateTime...?.naive_utc()` try receiver row.
-    // Source chain:
-    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
-    //   chrono/src/datetime/mod.rs:563 defines `DateTime<Tz>::naive_utc`.
-    //   chrono/src/datetime/mod.rs:768,803 define the associated
-    //   `DateTime::from_timestamp*` constructors returning `Option<Self>`.
-    //   chrono/src/format/parsed.rs:836,953 call
-    //   `DateTime::from_timestamp*(...).ok_or(OUT_OF_RANGE)?.naive_utc()`.
-    // Expected traversal: RAG exact call context preserves both DB-resolved
-    // try-receiver caller-site identities and the method target relation. The
-    // target also has two cfg(test) initialized-local callers; those are
-    // asserted by the DB oracle and intentionally excluded from this
-    // try-receiver RAG row check.
-    assert_eq!(
-        incoming.len(),
-        2,
-        "RAG exact call context should expose both chrono naive_utc try-receiver edges: {context:#?}"
-    );
-
-    let expected_site_ids = callers
-        .iter()
-        .filter(|caller| {
-            caller.site.receiver.as_ref()
-                == Some(&CallReceiver::TryMethodCallResult {
-                    method_name: "ok_or".to_string(),
-                })
-        })
-        .map(|caller| caller.site.id)
-        .collect::<BTreeSet<_>>();
-    let incoming_site_ids = incoming
-        .iter()
-        .map(|call| call.site_id)
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        incoming_site_ids, expected_site_ids,
-        "RAG call context should preserve the DB chrono naive_utc caller site identities"
-    );
-
-    for call in incoming {
-        assert_eq!(call.status, CallStatusKind::Resolved);
-        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-        assert_eq!(call.targets.len(), 1);
-        assert_eq!(call.targets[0].target_id, target);
-        assert_eq!(call.targets[0].relation, CallTargetKind::Method);
+    let call = matching
+        .first()
+        .copied()
+        .unwrap_or_else(|| panic!("{} missing from outgoing context: {context:#?}", case.label));
+    assert_eq!(call.owner_id, case.owner, "{} owner", case.label);
+    assert_eq!(call.status, case.status, "{} status", case.label);
+    if let Some(resolution) = &case.resolution {
+        assert_eq!(&call.resolution, resolution, "{} resolution", case.label);
     }
-
-    Ok(())
+    match &case.target {
+        Some(target) => {
+            assert_eq!(call.targets.len(), 1, "{} target count", case.label);
+            assert_eq!(
+                call.targets[0].target_id, target.id,
+                "{} target",
+                case.label
+            );
+            if let Some(relation) = &target.relation {
+                assert_eq!(
+                    &call.targets[0].relation, relation,
+                    "{} relation",
+                    case.label
+                );
+            }
+        }
+        None => assert!(
+            call.targets.is_empty(),
+            "{} must remain targetless: {call:#?}",
+            case.label
+        ),
+    }
+    if let Some(count) = case.arg_count {
+        assert_eq!(call.arg_count, Some(count), "{} argument count", case.label);
+    }
+    if let Some(count) = case.generic_count {
+        assert_eq!(
+            call.generic_arg_count,
+            Some(count),
+            "{} generic argument count",
+            case.label
+        );
+    }
+    Ok(call.site_id)
 }
-
 #[tokio::test]
 async fn call_context_collection_reads_chrono_strftime_queue_slice_frontier() -> Result<(), Error> {
     init_tracing_once();
@@ -895,146 +860,6 @@ async fn call_context_collection_reads_chrono_strftime_queue_slice_frontier() ->
             .any(|reason| reason == "external_dependency_summary_missing"),
         "RAG external-summary need should preserve the missing-summary blocker: {need:#?}"
     );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn call_context_exact_reads_axum_handler_call_trait_method_caller() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
-
-    let target = method_id_by_trait_name(&db, "Handler", "call")?;
-    let callers = db.callers_for_target(target)?;
-    assert_eq!(
-        callers.len(),
-        1,
-        "current axum fixture should resolve the Handler::call trait-method caller: {callers:#?}"
-    );
-
-    let context = rag.exact_call_context(target)?;
-    let expected_callee = CallCalleeInfo::Path {
-        path: path(&["Handler", "call"]),
-    };
-    let incoming = context
-        .iter()
-        .filter(|call| {
-            call.kind == CallSiteKind::Path
-                && call.callee == expected_callee
-                && call
-                    .targets
-                    .iter()
-                    .any(|candidate| candidate.target_id == target)
-        })
-        .collect::<Vec<_>>();
-
-    // Matrix: `Handler::call` trait method path row.
-    // Source chain:
-    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
-    //   axum/src/handler/mod.rs:153 declares trait method `Handler::call`.
-    //   axum/src/handler/service.rs:148 binds `H: Handler<T, S>`.
-    //   axum/src/handler/service.rs:171 calls
-    //   `Handler::call(handler, req, self.state.clone())`.
-    // Expected traversal: RAG exact call context preserves the same one-hop
-    // trait-method binding edge exposed by `Database::callers_for_target`.
-    // Concrete runtime impl dispatch remains type-parameter dependent.
-    assert_eq!(
-        incoming.len(),
-        1,
-        "RAG exact call context should expose the current Handler::call trait-method edge: {context:#?}"
-    );
-
-    let call = incoming[0];
-    assert_eq!(call.owner_id, callers[0].site.owner_id);
-    assert_eq!(call.site_id, callers[0].site.id);
-    assert_eq!(call.status, CallStatusKind::Resolved);
-    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(call.targets.len(), 1);
-    assert_eq!(call.targets[0].target_id, target);
-    assert_eq!(call.targets[0].relation, CallTargetKind::AssociatedFunction);
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn call_context_exact_reads_axum_generated_chained_method_edges() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
-
-    // Matrix: generated chained `MethodRouter` methods.
-    // Source chain:
-    //   axum/src/routing/method_routing.rs:263-326 templates
-    //   `chained_handler_fn!`; invocation :648 generates `post`, whose body
-    //   calls `self.on(MethodFilter::POST, handler)`.
-    //   axum/src/routing/method_routing.rs:176-259 templates
-    //   `chained_service_fn!`; invocation :998 generates `post_service`,
-    //   whose body calls `self.on_service(MethodFilter::POST, svc)`.
-    // Expected traversal: RAG exact call context preserves representative
-    // generated impl-item macro method edges already proven by the DB matrix.
-    let cases = [
-        (
-            method_id_by_file(
-                &db,
-                "post",
-                "self.on(MethodFilter::",
-                "axum/src/routing/method_routing.rs",
-            )?,
-            method_id_by_file(
-                &db,
-                "on",
-                "self.on_endpoint(filter, &MethodEndpoint::BoxedHandler",
-                "axum/src/routing/method_routing.rs",
-            )?,
-            "on",
-        ),
-        (
-            method_id_by_file(
-                &db,
-                "post_service",
-                "self.on_service(MethodFilter::",
-                "axum/src/routing/method_routing.rs",
-            )?,
-            method_id_by_file(
-                &db,
-                "on_service",
-                "self.on_endpoint(filter, &MethodEndpoint::Route",
-                "axum/src/routing/method_routing.rs",
-            )?,
-            "on_service",
-        ),
-    ];
-
-    for (owner, target, method) in cases {
-        let context = rag.exact_call_context(owner)?;
-        let call = context
-            .iter()
-            .find(|call| {
-                call.kind == CallSiteKind::Method
-                    && call.callee
-                        == CallCalleeInfo::Method {
-                            name: method.to_string(),
-                            receiver: Some(CallReceiverInfo::SelfValue),
-                        }
-                    && call
-                        .targets
-                        .iter()
-                        .any(|candidate| candidate.target_id == target)
-            })
-            .unwrap_or_else(|| {
-                panic!("RAG should expose generated chained method edge {method}: {context:#?}")
-            });
-        assert_eq!(call.owner_id, owner);
-        assert_eq!(call.status, CallStatusKind::Resolved);
-        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-        assert_eq!(
-            call.targets.len(),
-            1,
-            "generated chained {method} edge should expose one target: {call:#?}"
-        );
-        assert_eq!(call.targets[0].target_id, target);
-        assert_eq!(call.targets[0].relation, CallTargetKind::Method);
-        assert_eq!(call.arg_count, Some(2));
-    }
 
     Ok(())
 }
@@ -2324,6 +2149,8 @@ async fn call_context_exact_reads_axum_router_clone_typed_local_callers() -> Res
     //     explicitly typed `Router` local.
     //   axum/src/boxed.rs:134 and axum/src/routing/mod.rs:673 call
     //     `self.router.clone()` from wrapper clone impls.
+    //   axum/src/routing/tests/merge.rs resolves thirteen clone calls from
+    //     locals initialized by Router method results.
     let target = method_id_by_file(
         &db,
         "clone",
@@ -2334,8 +2161,8 @@ async fn call_context_exact_reads_axum_router_clone_typed_local_callers() -> Res
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        13,
-        "current axum fixture should resolve the typed-local Router::clone caller sites: {callers:#?}"
+        26,
+        "current axum fixture should resolve all Router::clone caller sites: {callers:#?}"
     );
 
     let context = rag.exact_call_context(target)?;
@@ -2351,7 +2178,7 @@ async fn call_context_exact_reads_axum_router_clone_typed_local_callers() -> Res
         .collect::<Vec<_>>();
     assert_eq!(
         incoming.len(),
-        13,
+        26,
         "RAG exact call context should expose all current Router::clone incoming edges: {context:#?}"
     );
 
@@ -2370,11 +2197,7 @@ async fn call_context_exact_reads_axum_router_clone_typed_local_callers() -> Res
 
     let mut receiver_counts = BTreeMap::<String, usize>::new();
     for call in incoming {
-        assert_eq!(call.status, CallStatusKind::Resolved);
-        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-        assert_eq!(call.targets.len(), 1);
-        assert_eq!(call.targets[0].target_id, target);
-        assert_eq!(call.targets[0].relation, CallTargetKind::Method);
+        assert_resolved_target(call, target, &CallTargetKind::Method, "Router::clone");
         let CallCalleeInfo::Method {
             name: method_name,
             receiver,
@@ -2399,6 +2222,11 @@ async fn call_context_exact_reads_axum_router_clone_typed_local_callers() -> Res
                     .entry("self_field:router".to_string())
                     .or_default() += 1;
             }
+            Some(CallReceiverInfo::MethodResultLocalBinding { .. }) => {
+                *receiver_counts
+                    .entry("method_result".to_string())
+                    .or_default() += 1;
+            }
             _ => {
                 panic!("Router::clone caller should preserve a supported receiver: {call:#?}");
             }
@@ -2407,11 +2235,12 @@ async fn call_context_exact_reads_axum_router_clone_typed_local_callers() -> Res
     assert_eq!(
         receiver_counts,
         BTreeMap::from([
+            ("method_result".to_string(), 13),
             ("self_field:router".to_string(), 2),
             ("typed:app".to_string(), 1),
             ("typed:router".to_string(), 10),
         ]),
-        "RAG call context should preserve typed-local and self-field receiver buckets"
+        "RAG call context should preserve all Router::clone receiver buckets"
     );
 
     Ok(())
@@ -3191,1186 +3020,735 @@ async fn module_boundary_policy_exact_flags_axum_request_extract_boundary() -> R
     Ok(())
 }
 
-#[tokio::test]
-async fn call_effects_exact_reads_axum_task_spawn_seed() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
-
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Security/performance:
-    //   "Can this entrypoint reach a sensitive sink?"
-    //   "Which call chain reaches a task-spawn point?"
-    //
-    // Source-oracle chain:
-    //   axum/src/form.rs:262
-    //     `deserialize_error_status_codes` calls `TestClient::new(app)`.
-    //   axum/src/test_helpers/test_client.rs:36
-    //     `TestClient::new` calls `spawn_service(svc)`.
-    //   axum/src/test_helpers/test_client.rs:23
-    //     `spawn_service` calls `tokio::spawn(...)`.
-    // Expected contract: RAG exposes the DB reachable-effect query for the
-    // task-spawn sink, while the external `tokio::spawn` frontier remains
-    // targetless and does not become a local call graph edge.
-    let start = function_id_by_name_in_module(
-        &db,
-        &["crate", "form", "tests"],
-        "deserialize_error_status_codes",
-    )?;
-    let spawn_owner = function_id_by_name_in_module(
-        &db,
-        &["crate", "test_helpers", "test_client"],
-        "spawn_service",
-    )?;
-    let spawn_context = db.call_context_for_owner(spawn_owner)?;
-    let spawn_row = spawn_context
-        .iter()
-        .find(|row| {
-            row.site
-                .path
-                .as_ref()
-                .is_some_and(|call_path| call_path == &path(&["tokio", "spawn"]))
-        })
-        .unwrap_or_else(|| {
-            panic!("spawn_service should expose the tokio::spawn frontier: {spawn_context:#?}")
-        });
-    assert_eq!(spawn_row.status.status, DbCallStatusKind::External);
-    assert!(
-        spawn_row.targets.is_empty(),
-        "tokio::spawn should stay targetless in DB call context: {spawn_row:#?}"
-    );
-
-    let mut relation_params = BTreeMap::new();
-    relation_params.insert(
-        "site_id".to_string(),
-        DataValue::Uuid(UuidWrapper(spawn_row.site.id)),
-    );
-    let raw_relations = db.raw_query_params(
-        r#"?[target_id] :=
-            *call_relation { source_id: $site_id, target_id @ 'NOW' }"#,
-        relation_params,
-    )?;
-    assert!(
-        raw_relations.rows.is_empty(),
-        "tokio::spawn should remain an external frontier, not a local edge: {raw_relations:#?}"
-    );
-
-    db.upsert_proof_fact_values(&[spawn_effect_seed(
-        spawn_row.site.id,
-        "effect:axum-rag-test-client-task-spawn",
-    )])?;
-
-    let effects = rag
-        .exact_call_effects_reachable_from_owner(
-            start,
-            CallPathOptions {
-                max_depth: 3,
-                max_paths: 16,
-            },
-        )?
-        .expect("call context enabled");
-    let effect = effects
-        .iter()
-        .find(|effect| effect.effect_seed_id == "effect:axum-rag-test-client-task-spawn")
-        .unwrap_or_else(|| {
-            panic!("RAG should expose the axum tokio::spawn reachable effect: {effects:#?}")
-        });
-    assert_eq!(effect.effect_class, "async_task_spawn");
-    assert_eq!(effect.confidence.as_deref(), Some("source-oracle"));
-    assert_eq!(effect.blocker_if_unresolved, Some(false));
-    assert!(
-        effect.blocker_reasons.is_empty(),
-        "non-blocking effect seed should not add proof blockers: {effect:#?}"
-    );
-    assert_eq!(effect.call_site.site_id, spawn_row.site.id);
-    assert_eq!(effect.call_site.owner_id, spawn_owner);
-    assert_eq!(effect.call_site.status, CallStatusKind::External);
-    let effect_path = effect
-        .paths_to_owner
-        .iter()
-        .find(|path| path.start_id == start && path.end_id == spawn_owner && path.depth == 2)
-        .unwrap_or_else(|| {
-            panic!("RAG should expose the resolved path to the task-spawn owner: {effect:#?}")
-        });
-    assert_eq!(effect_path.edges.len(), 2);
-    assert_eq!(effect_path.edges[0].caller_id, start);
-    assert_eq!(effect_path.edges[1].callee_id, spawn_owner);
-    assert!(
-        matches!(
-            &effect.call_site.callee,
-            CallCalleeInfo::Path { path: call_path }
-                if call_path == &path(&["tokio", "spawn"])
-        ),
-        "RAG effect payload should preserve the original tokio::spawn callee path: {effect:#?}"
-    );
-    assert!(
-        effect.call_site.targets.is_empty(),
-        "reachable effect annotations must not fabricate RAG target rows: {effect:#?}"
-    );
-
-    Ok(())
+#[derive(Clone, Copy)]
+enum OracleOwner {
+    Function {
+        module: &'static [&'static str],
+        name: &'static str,
+    },
+    Method {
+        name: &'static str,
+        body: &'static str,
+    },
+    MethodFile {
+        name: &'static str,
+        body: &'static str,
+        file: &'static str,
+    },
 }
 
-#[tokio::test]
-async fn call_effects_exact_reads_admitted_external_summary_effect() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
-
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Security/performance:
-    //   "Which reviewed external frontiers are reachable from this owner?"
-    //   "Which trusted boundary effects are covered by an admitted summary?"
-    //
-    // Source oracle:
-    //   axum/src/response/sse.rs:445 defines `EventDataWriter::write_buf`.
-    //   axum/src/response/sse.rs:449 calls
-    //     `std::mem::replace(&mut self.data_written, true)`.
-    // Expected contract: RAG exposes the DB-derived summary effect after the
-    // admitted `std::mem::replace` summary is linked, while the callsite stays
-    // external, targetless, and edge-free.
-    let owner = method_id_by_name_and_body_substring(&db, "write_buf", "std::mem::replace")?;
-    let context = db.call_context_for_owner(owner)?;
-    let replace = context
-        .iter()
-        .find(|row| {
-            row.site
-                .path
-                .as_ref()
-                .is_some_and(|call_path| call_path == &path(&["std", "mem", "replace"]))
-        })
-        .unwrap_or_else(|| {
-            panic!("EventDataWriter::write_buf should expose std::mem::replace: {context:#?}")
-        });
-    assert_eq!(replace.status.status, DbCallStatusKind::External);
-    assert!(
-        replace.targets.is_empty(),
-        "std::mem::replace should stay targetless before summary admission: {replace:#?}"
-    );
-    let projected = db.project_call_proof_facts_for_owner(owner, "bd:corpus-axum-call-graph")?;
-    assert!(
-        projected >= 2,
-        "EventDataWriter::write_buf should project call_site and call_resolution proof rows: {projected}"
-    );
-
-    db.upsert_proof_fact_values(&ploke_test_utils::axum_std_mem_replace_summary_records(
-        replace.site.id,
-    ))?;
-
-    let summary_id = ploke_test_utils::AXUM_STD_MEM_REPLACE_SUMMARY_ID;
-    let effect_id = format!("summary-effect:{summary_id}:external_summary_boundary");
-    let db_effects = db.call_effects_reachable_from_owner(
-        owner,
-        CallPathOptions {
-            max_depth: 1,
-            max_paths: 16,
-        },
-    )?;
-    assert!(
-        db_effects
-            .iter()
-            .any(|effect| effect.effect_seed_id == effect_id),
-        "DB should expose the admitted std::mem::replace summary effect before RAG mapping: {db_effects:#?}"
-    );
-
-    let effects = rag
-        .exact_call_effects_reachable_from_owner(
-            owner,
-            CallPathOptions {
-                max_depth: 1,
-                max_paths: 16,
-            },
-        )?
-        .expect("call context enabled");
-    let effect = effects
-        .iter()
-        .find(|effect| effect.effect_seed_id == effect_id)
-        .unwrap_or_else(|| {
-            panic!("RAG should expose the admitted std::mem::replace summary effect: {effects:#?}")
-        });
-    assert_eq!(effect.effect_class, "external_summary_boundary");
-    assert_eq!(effect.confidence.as_deref(), Some("source-oracle-review"));
-    assert_eq!(effect.blocker_if_unresolved, Some(false));
-    assert_eq!(effect.call_site.site_id, replace.site.id);
-    assert_eq!(effect.call_site.owner_id, owner);
-    assert_eq!(effect.call_site.status, CallStatusKind::External);
-    assert!(
-        effect.paths_to_owner.is_empty(),
-        "direct external summary effect should not need an intermediate path: {effect:#?}"
-    );
-    assert!(
-        effect.blocker_reasons.is_empty(),
-        "admitted summary should discharge the missing-summary blocker in RAG: {effect:#?}"
-    );
-    assert!(
-        matches!(
-            &effect.call_site.callee,
-            CallCalleeInfo::Path { path: call_path }
-                if call_path == &path(&["std", "mem", "replace"])
-        ),
-        "RAG effect payload should preserve the original std::mem::replace path: {effect:#?}"
-    );
-    assert!(
-        effect.call_site.targets.is_empty(),
-        "summary-derived effects must not fabricate RAG target rows: {effect:#?}"
-    );
-
-    Ok(())
+#[derive(Clone, Copy)]
+enum OracleReceiver {
+    SelfField {
+        path: &'static [&'static str],
+    },
+    MethodResultField {
+        method: &'static str,
+        field: &'static [&'static str],
+    },
 }
 
-#[tokio::test]
-async fn call_effects_exact_reads_admitted_method_frontier_summary_effect() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
-
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Security/performance:
-    //   "Which reviewed external frontiers are reachable from this owner?"
-    //   "Which trusted boundary effects are covered by an admitted summary?"
-    //
-    // Source oracle:
-    //   axum-core/src/body.rs defines `impl http_body::Body for Body`.
-    //   Its `size_hint` method calls `self.0.size_hint()`, where `Body` stores
-    //   a `BoxBody` tuple field backed by the external http-body-util body.
-    // Expected contract: RAG exposes the DB-derived summary effect after the
-    // admitted `BoxBody::size_hint` summary is linked, while the callsite stays
-    // external, targetless, and edge-free.
-    let owner = method_id_by_name_and_body_substring(&db, "size_hint", "self.0.size_hint()")?;
-    let context = db.call_context_for_owner(owner)?;
-    let receiver = CallReceiver::SelfField {
-        path: vec!["0".to_string()],
-    };
-    let size_hint = context
-        .iter()
-        .find(|row| {
-            row.site.method.as_deref() == Some("size_hint")
-                && row.site.receiver.as_ref() == Some(&receiver)
-        })
-        .unwrap_or_else(|| {
-            panic!("Body::size_hint should expose self-field size_hint call: {context:#?}")
-        });
-    assert_eq!(size_hint.status.status, DbCallStatusKind::External);
-    assert!(
-        size_hint.targets.is_empty(),
-        "Body::size_hint should stay targetless before summary admission: {size_hint:#?}"
-    );
-    let projected = db.project_call_proof_facts_for_owner(owner, "bd:corpus-axum-call-graph")?;
-    assert!(
-        projected >= 2,
-        "Body::size_hint should project call_site and call_resolution proof rows: {projected}"
-    );
-
-    db.upsert_proof_fact_values(&ploke_test_utils::axum_body_size_hint_summary_records(
-        size_hint.site.id,
-    ))?;
-
-    let summary_id = ploke_test_utils::AXUM_BODY_SIZE_HINT_SUMMARY_ID;
-    let effect_id = format!("summary-effect:{summary_id}:external_summary_boundary");
-    let effects = rag
-        .exact_call_effects_reachable_from_owner(
-            owner,
-            CallPathOptions {
-                max_depth: 1,
-                max_paths: 16,
-            },
-        )?
-        .expect("call context enabled");
-    let effect = effects
-        .iter()
-        .find(|effect| effect.effect_seed_id == effect_id)
-        .unwrap_or_else(|| {
-            panic!("RAG should expose the admitted Body::size_hint summary effect: {effects:#?}")
-        });
-    assert_eq!(effect.effect_class, "external_summary_boundary");
-    assert_eq!(effect.confidence.as_deref(), Some("source-oracle-review"));
-    assert_eq!(effect.blocker_if_unresolved, Some(false));
-    assert_eq!(effect.call_site.site_id, size_hint.site.id);
-    assert_eq!(effect.call_site.owner_id, owner);
-    assert_eq!(effect.call_site.status, CallStatusKind::External);
-    assert!(
-        effect.paths_to_owner.is_empty(),
-        "direct method-frontier summary effect should not need an intermediate path: {effect:#?}"
-    );
-    assert!(
-        effect.blocker_reasons.is_empty(),
-        "admitted method-frontier summary should discharge the missing-summary blocker in RAG: {effect:#?}"
-    );
-    assert!(
-        matches!(
-            &effect.call_site.callee,
-            CallCalleeInfo::Method { name, receiver }
-                if name == "size_hint"
-                    && matches!(
-                        receiver,
-                        Some(CallReceiverInfo::SelfField { path })
-                            if path.iter().map(String::as_str).eq(["0"].into_iter())
-                    )
-        ),
-        "RAG effect payload should preserve the original Body::size_hint receiver: {effect:#?}"
-    );
-    assert!(
-        effect.call_site.targets.is_empty(),
-        "summary-derived method effects must not fabricate RAG target rows: {effect:#?}"
-    );
-
-    Ok(())
+#[derive(Clone, Copy)]
+enum OracleSite {
+    Path(&'static [&'static str]),
+    Method {
+        name: &'static str,
+        receiver: OracleReceiver,
+    },
 }
 
-#[tokio::test]
-async fn call_effects_exact_reads_admitted_route_oneshot_summary_effect() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
+#[derive(Clone, Copy)]
+enum OracleSummary {
+    RequestBuilder,
+    StdReplace,
+    JsonFromSlice,
+    BodySizeHint,
+    RouteOneshot,
+}
 
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Security/performance:
-    //   "Which reviewed external frontiers are reachable from this owner?"
-    //   "Which trusted boundary effects are covered by an admitted summary?"
-    //
-    // Source oracle:
-    //   axum/src/routing/route.rs:51 calls `self.0.clone().oneshot(req)`.
-    //   axum/src/routing/route.rs:57 calls `self.0.oneshot(req)`.
-    // Expected contract: RAG exposes the DB-derived summary effect after the
-    // admitted `Route::oneshot` summary is linked, while each callsite stays
-    // external, targetless, and edge-free.
-    enum RouteReceiver {
-        MethodResultField {
-            method_name: &'static str,
-            field_path: &'static [&'static str],
-        },
-        Exact {
-            db: CallReceiver,
-            rag: CallReceiverInfo,
-        },
+fn oracle_owner_id(db: &Database, owner: OracleOwner) -> Result<Uuid, Error> {
+    match owner {
+        OracleOwner::Function { module, name } => function_id_by_name_in_module(db, module, name),
+        OracleOwner::Method { name, body } => method_id_by_name_and_body_substring(db, name, body),
+        OracleOwner::MethodFile { name, body, file } => method_id_by_file(db, name, body, file),
     }
+}
 
-    let route_receiver_matches =
-        |actual: &Option<CallReceiverInfo>, expected: &RouteReceiver| match expected {
-            RouteReceiver::MethodResultField {
+fn db_receiver_matches(actual: Option<&CallReceiver>, expected: OracleReceiver) -> bool {
+    match (actual, expected) {
+        (
+            Some(CallReceiver::SelfField { path: actual }),
+            OracleReceiver::SelfField { path: expected },
+        ) => actual
+            .iter()
+            .map(String::as_str)
+            .eq(expected.iter().copied()),
+        (
+            Some(CallReceiver::MethodResultField {
                 method_name,
                 field_path,
-            } => matches!(
-                actual,
-                Some(CallReceiverInfo::MethodResultField {
-                    method_name: actual_method,
-                    field_path: actual_path,
-                    ..
-                }) if actual_method == method_name
-                    && actual_path.iter().map(String::as_str).eq(field_path.iter().copied())
-            ),
-            RouteReceiver::Exact { rag, .. } => actual.as_ref() == Some(rag),
-        };
-
-    let cases = [
-        (
-            "Route::oneshot_inner method-result-field receiver",
-            "oneshot_inner",
-            "self.0.clone().oneshot(req)",
-            RouteReceiver::MethodResultField {
-                method_name: "clone",
-                field_path: &["0"],
-            },
-        ),
-        (
-            "Route::oneshot_inner_owned tuple-field receiver",
-            "oneshot_inner_owned",
-            "self.0.oneshot(req)",
-            RouteReceiver::Exact {
-                db: CallReceiver::SelfField {
-                    path: vec!["0".to_string()],
-                },
-                rag: CallReceiverInfo::SelfField {
-                    path: vec!["0".to_string()],
-                },
-            },
-        ),
-    ];
-
-    for (label, method, body, route_receiver) in cases {
-        let owner = method_id_by_name_and_body_substring(&db, method, body)?;
-        let context = db.call_context_for_owner(owner)?;
-        let row = context
-            .iter()
-            .find(|row| {
-                row.site.method.as_deref() == Some("oneshot")
-                    && match &route_receiver {
-                        RouteReceiver::MethodResultField {
-                            method_name,
-                            field_path,
-                        } => matches!(
-                            row.site.receiver.as_ref(),
-                            Some(CallReceiver::MethodResultField {
-                                method_name: actual_method,
-                                field_path: actual_path,
-                                ..
-                            }) if actual_method == method_name
-                                && actual_path.iter().map(String::as_str).eq(field_path.iter().copied())
-                        ),
-                        RouteReceiver::Exact { db, .. } => row.site.receiver.as_ref() == Some(db),
-                    }
-            })
-            .unwrap_or_else(|| panic!("{label} should expose oneshot call: {context:#?}"));
-        assert_eq!(row.status.status, DbCallStatusKind::External);
-        assert!(
-            row.targets.is_empty(),
-            "{label} should stay targetless before summary admission: {row:#?}"
-        );
-        let projected =
-            db.project_call_proof_facts_for_owner(owner, "bd:corpus-axum-call-graph")?;
-        assert!(
-            projected >= 2,
-            "{label} should project call_site and call_resolution proof rows: {projected}"
-        );
-
-        db.upsert_proof_fact_values(&ploke_test_utils::axum_route_oneshot_summary_records(
-            row.site.id,
-        ))?;
-
-        let summary_id = ploke_test_utils::AXUM_ROUTE_ONESHOT_SUMMARY_ID;
-        let effect_id = format!("summary-effect:{summary_id}:external_summary_boundary");
-        let effects = rag
-            .exact_call_effects_reachable_from_owner(
-                owner,
-                CallPathOptions {
-                    max_depth: 1,
-                    max_paths: 16,
-                },
-            )?
-            .expect("call context enabled");
-        let effect = effects
-            .iter()
-            .find(|effect| {
-                effect.effect_seed_id == effect_id && effect.call_site.site_id == row.site.id
-            })
-            .unwrap_or_else(|| {
-                panic!("RAG should expose the admitted Route::oneshot summary effect for {label}: {effects:#?}")
-            });
-        assert_eq!(effect.effect_class, "external_summary_boundary");
-        assert_eq!(effect.confidence.as_deref(), Some("source-oracle-review"));
-        assert_eq!(effect.blocker_if_unresolved, Some(false));
-        assert_eq!(effect.call_site.owner_id, owner);
-        assert_eq!(effect.call_site.status, CallStatusKind::External);
-        assert!(
-            effect.paths_to_owner.is_empty(),
-            "direct Route::oneshot summary effect should not need an intermediate path for {label}: {effect:#?}"
-        );
-        assert!(
-            effect.blocker_reasons.is_empty(),
-            "admitted Route::oneshot summary should discharge the missing-summary blocker in RAG: {effect:#?}"
-        );
-        assert!(
-            matches!(
-                &effect.call_site.callee,
-                CallCalleeInfo::Method { name, receiver }
-                    if name == "oneshot" && route_receiver_matches(receiver, &route_receiver)
-            ),
-            "RAG effect payload should preserve the original Route::oneshot receiver for {label}: {effect:#?}"
-        );
-        assert!(
-            effect.call_site.targets.is_empty(),
-            "summary-derived Route::oneshot effects must not fabricate RAG target rows: {effect:#?}"
-        );
+                ..
+            }),
+            OracleReceiver::MethodResultField { method, field },
+        ) => {
+            method_name == method
+                && field_path
+                    .iter()
+                    .map(String::as_str)
+                    .eq(field.iter().copied())
+        }
+        _ => false,
     }
-
-    Ok(())
 }
 
-#[tokio::test]
-async fn call_effect_policy_violations_exact_reads_axum_task_spawn_sink() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
-
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Security/performance:
-    //   "Can this entrypoint reach a sensitive sink that is outside the
-    //   caller's reviewed effect policy?"
-    //
-    // Source-oracle chain:
-    //   axum/src/form.rs:262
-    //     `deserialize_error_status_codes` calls `TestClient::new(app)`.
-    //   axum/src/test_helpers/test_client.rs:36
-    //     `TestClient::new` calls `spawn_service(svc)`.
-    //   axum/src/test_helpers/test_client.rs:23
-    //     `spawn_service` calls `tokio::spawn(...)`.
-    // Expected contract: RAG exposes DB policy violations over existing
-    // reachable effect seeds only, preserving the external targetless
-    // `tokio::spawn` payload and the resolved path to the sink owner.
-    let start = function_id_by_name_in_module(
-        &db,
-        &["crate", "form", "tests"],
-        "deserialize_error_status_codes",
-    )?;
-    let spawn_owner = function_id_by_name_in_module(
-        &db,
-        &["crate", "test_helpers", "test_client"],
-        "spawn_service",
-    )?;
-    let spawn_context = db.call_context_for_owner(spawn_owner)?;
-    let spawn_row = spawn_context
-        .iter()
-        .find(|row| {
-            row.site
-                .path
-                .as_ref()
-                .is_some_and(|call_path| call_path == &path(&["tokio", "spawn"]))
-        })
-        .unwrap_or_else(|| {
-            panic!("spawn_service should expose the tokio::spawn frontier: {spawn_context:#?}")
-        });
-    assert_eq!(spawn_row.status.status, DbCallStatusKind::External);
-    assert!(
-        spawn_row.targets.is_empty(),
-        "tokio::spawn should stay targetless in DB call context: {spawn_row:#?}"
-    );
-
-    db.upsert_proof_fact_values(&[spawn_effect_seed(
-        spawn_row.site.id,
-        "effect:axum-rag-test-client-task-spawn-policy",
-    )])?;
-
-    let violations = rag
-        .exact_call_effect_policy_violations_for_owner(
-            start,
-            CallPathOptions {
-                max_depth: 3,
-                max_paths: 16,
-            },
-            &["ffi_boundary"],
-        )?
-        .expect("call context enabled");
-    let violation = violations
-        .iter()
-        .find(|violation| {
-            violation.effect.effect_seed_id == "effect:axum-rag-test-client-task-spawn-policy"
-        })
-        .unwrap_or_else(|| {
-            panic!("RAG should expose the axum async_task_spawn policy violation: {violations:#?}")
-        });
-    assert_eq!(violation.allowed_effects, vec!["ffi_boundary".to_string()]);
-    assert_eq!(violation.effect.effect_class, "async_task_spawn");
-    assert_eq!(violation.effect.call_site.site_id, spawn_row.site.id);
-    assert_eq!(violation.effect.call_site.owner_id, spawn_owner);
-    assert_eq!(violation.effect.call_site.status, CallStatusKind::External);
-    assert!(
-        violation
-            .effect
-            .paths_to_owner
+fn rag_receiver_matches(actual: Option<&CallReceiverInfo>, expected: OracleReceiver) -> bool {
+    match (actual, expected) {
+        (
+            Some(CallReceiverInfo::SelfField { path: actual }),
+            OracleReceiver::SelfField { path: expected },
+        ) => actual
             .iter()
-            .any(|path| path.start_id == start && path.end_id == spawn_owner && path.depth == 2),
-        "RAG policy violation should preserve the resolved path to spawn_service: {violation:#?}"
-    );
-    assert!(
-        violation.effect.call_site.targets.is_empty(),
-        "policy violations must not fabricate RAG target rows: {violation:#?}"
-    );
+            .map(String::as_str)
+            .eq(expected.iter().copied()),
+        (
+            Some(CallReceiverInfo::MethodResultField {
+                method_name,
+                field_path,
+                ..
+            }),
+            OracleReceiver::MethodResultField { method, field },
+        ) => {
+            method_name == method
+                && field_path
+                    .iter()
+                    .map(String::as_str)
+                    .eq(field.iter().copied())
+        }
+        _ => false,
+    }
+}
 
-    let allowed = rag
-        .exact_call_effect_policy_violations_for_owner(
-            start,
-            CallPathOptions {
-                max_depth: 3,
-                max_paths: 16,
+fn oracle_site_id(
+    db: &Database,
+    owner: Uuid,
+    site: OracleSite,
+    status: DbCallStatusKind,
+    label: &str,
+) -> Result<Uuid, Error> {
+    let context = db.call_context_for_owner(owner)?;
+    let row = context
+        .iter()
+        .find(|row| match site {
+            OracleSite::Path(expected) => row.site.path.as_ref().is_some_and(|actual| {
+                actual
+                    .iter()
+                    .map(String::as_str)
+                    .eq(expected.iter().copied())
+            }),
+            OracleSite::Method { name, receiver } => {
+                row.site.method.as_deref() == Some(name)
+                    && db_receiver_matches(row.site.receiver.as_ref(), receiver)
+            }
+        })
+        .unwrap_or_else(|| panic!("{label} should expose its oracle callsite: {context:#?}"));
+    assert_eq!(row.status.status, status, "{label} DB status: {row:#?}");
+    assert!(
+        row.targets.is_empty(),
+        "{label} should remain targetless in DB call context: {row:#?}"
+    );
+    Ok(row.site.id)
+}
+
+fn rag_site_matches(actual: &CallCalleeInfo, expected: OracleSite) -> bool {
+    match (actual, expected) {
+        (CallCalleeInfo::Path { path: actual }, OracleSite::Path(expected)) => actual
+            .iter()
+            .map(String::as_str)
+            .eq(expected.iter().copied()),
+        (
+            CallCalleeInfo::Method {
+                name: actual,
+                receiver: actual_receiver,
             },
-            &["async_task_spawn"],
-        )?
-        .expect("call context enabled");
-    assert!(
-        allowed.is_empty(),
-        "allowing async_task_spawn should clear the RAG policy violation: {allowed:#?}"
-    );
+            OracleSite::Method { name, receiver },
+        ) => actual == name && rag_receiver_matches(actual_receiver.as_ref(), receiver),
+        _ => false,
+    }
+}
 
+fn assert_rag_site(
+    actual: &CallContextInfo,
+    owner: Uuid,
+    site_id: Uuid,
+    status: CallStatusKind,
+    expected: OracleSite,
+    label: &str,
+) {
+    assert_eq!(actual.site_id, site_id, "{label} RAG site ID");
+    assert_eq!(actual.owner_id, owner, "{label} RAG owner ID");
+    assert_eq!(actual.status, status, "{label} RAG status");
+    assert!(
+        rag_site_matches(&actual.callee, expected),
+        "{label} should preserve its exact RAG callee payload: {actual:#?}"
+    );
+    assert!(
+        actual.targets.is_empty(),
+        "{label} must not fabricate RAG target rows: {actual:#?}"
+    );
+}
+
+fn oracle_summary_records(summary: OracleSummary, site: Uuid) -> Vec<serde_json::Value> {
+    match summary {
+        OracleSummary::RequestBuilder => {
+            ploke_test_utils::axum_request_builder_summary_records(site)
+        }
+        OracleSummary::StdReplace => ploke_test_utils::axum_std_mem_replace_summary_records(site),
+        OracleSummary::JsonFromSlice => {
+            ploke_test_utils::axum_serde_json_from_slice_summary_records(site)
+        }
+        OracleSummary::BodySizeHint => ploke_test_utils::axum_body_size_hint_summary_records(site),
+        OracleSummary::RouteOneshot => ploke_test_utils::axum_route_oneshot_summary_records(site),
+    }
+}
+
+fn oracle_summary_id(summary: OracleSummary) -> &'static str {
+    match summary {
+        OracleSummary::RequestBuilder => ploke_test_utils::AXUM_REQUEST_BUILDER_SUMMARY_ID,
+        OracleSummary::StdReplace => ploke_test_utils::AXUM_STD_MEM_REPLACE_SUMMARY_ID,
+        OracleSummary::JsonFromSlice => ploke_test_utils::AXUM_SERDE_JSON_FROM_SLICE_SUMMARY_ID,
+        OracleSummary::BodySizeHint => ploke_test_utils::AXUM_BODY_SIZE_HINT_SUMMARY_ID,
+        OracleSummary::RouteOneshot => ploke_test_utils::AXUM_ROUTE_ONESHOT_SUMMARY_ID,
+    }
+}
+
+fn assert_db_targetless(db: &Database, owner: Uuid, site: Uuid, label: &str) -> Result<(), Error> {
+    let context = db.call_context_for_owner(owner)?;
+    let row = context
+        .iter()
+        .find(|row| row.site.id == site)
+        .unwrap_or_else(|| panic!("{label} should remain visible after summary: {context:#?}"));
+    assert!(
+        row.targets.is_empty(),
+        "{label} summary must not fabricate a local edge: {row:#?}"
+    );
     Ok(())
 }
 
-#[tokio::test]
-async fn call_effect_guard_report_exact_classifies_axum_task_spawn_paths() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
+struct SpawnFixture {
+    db: Arc<Database>,
+    rag: RagService,
+    start: Uuid,
+    owner: Uuid,
+    site: Uuid,
+}
 
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Security analysis:
-    //   "Can this entrypoint reach a sensitive sink without passing through
-    //   the reviewed guard?"
-    //
-    // Source-oracle chain:
-    //   axum/src/form.rs:262
-    //     `deserialize_error_status_codes` calls `TestClient::new(app)`.
-    //   axum/src/test_helpers/test_client.rs:36
-    //     `TestClient::new` calls `spawn_service(svc)`.
-    //   axum/src/test_helpers/test_client.rs:23
-    //     `spawn_service` calls `tokio::spawn(...)`.
-    // Expected contract: RAG preserves the DB effect-guard classification over
-    // the resolved path to the owner that contains the targetless external
-    // effect callsite.
+fn setup_spawn_fixture() -> Result<SpawnFixture, Error> {
+    let (db, rag) = setup_axum_call_graph_rag()?;
     let start = function_id_by_name_in_module(
         &db,
         &["crate", "form", "tests"],
         "deserialize_error_status_codes",
     )?;
-    let guard = method_id_by_name_and_body_substring(&db, "new", "spawn_service(svc)")?;
-    let spawn_owner = function_id_by_name_in_module(
+    let owner = function_id_by_name_in_module(
         &db,
         &["crate", "test_helpers", "test_client"],
         "spawn_service",
     )?;
-    let spawn_context = db.call_context_for_owner(spawn_owner)?;
-    let spawn_row = spawn_context
+    let site = oracle_site_id(
+        &db,
+        owner,
+        OracleSite::Path(&["tokio", "spawn"]),
+        DbCallStatusKind::External,
+        "spawn_service::tokio::spawn",
+    )?;
+    Ok(SpawnFixture {
+        db,
+        rag,
+        start,
+        owner,
+        site,
+    })
+}
+
+fn assert_spawn_effect(
+    effect: &CallReachEffectInfo,
+    fixture: &SpawnFixture,
+    exact_edges: bool,
+    label: &str,
+) {
+    assert_eq!(effect.effect_class, "async_task_spawn", "{label}");
+    assert_rag_site(
+        &effect.call_site,
+        fixture.owner,
+        fixture.site,
+        CallStatusKind::External,
+        OracleSite::Path(&["tokio", "spawn"]),
+        label,
+    );
+    let path = effect
+        .paths_to_owner
         .iter()
-        .find(|row| {
-            row.site
-                .path
-                .as_ref()
-                .is_some_and(|call_path| call_path == &path(&["tokio", "spawn"]))
+        .find(|path| {
+            path.start_id == fixture.start && path.end_id == fixture.owner && path.depth == 2
         })
         .unwrap_or_else(|| {
-            panic!("spawn_service should expose the tokio::spawn frontier: {spawn_context:#?}")
+            panic!("{label} should preserve the path to spawn_service: {effect:#?}")
         });
-    assert_eq!(spawn_row.status.status, DbCallStatusKind::External);
+    if exact_edges {
+        assert_eq!(path.edges.len(), 2, "{label} path edges");
+        assert_eq!(path.edges[0].caller_id, fixture.start, "{label} path start");
+        assert_eq!(path.edges[1].callee_id, fixture.owner, "{label} path end");
+    }
+}
 
-    db.upsert_proof_fact_values(&[spawn_effect_seed(
-        spawn_row.site.id,
-        "effect:axum-rag-test-client-task-spawn-guard",
-    )])?;
+#[derive(Clone, Copy)]
+enum SpawnQuery {
+    Reachable,
+    Policy,
+    Guard,
+    StoredPolicy,
+}
 
+struct SpawnCase {
+    label: &'static str,
+    seed: &'static str,
+    query: SpawnQuery,
+}
+
+// Source-oracle chain retained locally for every row below:
+// axum/src/form.rs:262 -> axum/src/test_helpers/test_client.rs:36 ->
+// axum/src/test_helpers/test_client.rs:23 (`tokio::spawn`).
+#[tokio::test]
+async fn call_effects_exact_axum_spawn_matrix() -> Result<(), Error> {
+    init_tracing_once();
+    let cases = [
+        SpawnCase {
+            label: "reachable task-spawn effect",
+            seed: "effect:axum-rag-test-client-task-spawn",
+            query: SpawnQuery::Reachable,
+        },
+        SpawnCase {
+            label: "caller-supplied task-spawn policy",
+            seed: "effect:axum-rag-test-client-task-spawn-policy",
+            query: SpawnQuery::Policy,
+        },
+        SpawnCase {
+            label: "task-spawn guard report",
+            seed: "effect:axum-rag-test-client-task-spawn-guard",
+            query: SpawnQuery::Guard,
+        },
+        SpawnCase {
+            label: "stored task-spawn policy",
+            seed: "effect:axum-rag-test-client-task-spawn-stored-policy",
+            query: SpawnQuery::StoredPolicy,
+        },
+    ];
     let options = CallPathOptions {
         max_depth: 3,
         max_paths: 16,
     };
-    let report = rag
-        .exact_call_effect_guard_report_for_owner(start, guard, "async_task_spawn", options)?
-        .expect("call context enabled");
-    assert_eq!(report.owner.id, start);
-    assert_eq!(report.guard.id, guard);
-    assert_eq!(report.effect_class, "async_task_spawn");
-    assert!(
-        report.guarded,
-        "RAG effect guard report should classify TestClient::new as guarding the spawn sink: {report:#?}"
-    );
-    assert_eq!(report.effects.len(), 1);
-    assert!(
-        report.violations.is_empty(),
-        "RAG guarded report should have no violations: {report:#?}"
-    );
-    let effect = &report.effects[0];
-    assert_eq!(
-        effect.effect_seed_id,
-        "effect:axum-rag-test-client-task-spawn-guard"
-    );
-    assert_eq!(effect.call_site.site_id, spawn_row.site.id);
-    assert_eq!(effect.call_site.owner_id, spawn_owner);
-    assert_eq!(effect.call_site.status, CallStatusKind::External);
-    assert!(
-        effect
-            .paths_to_owner
-            .iter()
-            .any(|path| path.start_id == start && path.end_id == spawn_owner && path.depth == 2),
-        "RAG guarded effect should preserve the resolved path to spawn_service: {effect:#?}"
-    );
-    assert!(
-        effect.call_site.targets.is_empty(),
-        "RAG effect guard report must not fabricate target rows: {effect:#?}"
-    );
 
-    let unrelated = method_id_by_name_and_body_substring(&db, "new", "default_fallback: true")?;
-    let unguarded = rag
-        .exact_call_effect_guard_report_for_owner(start, unrelated, "async_task_spawn", options)?
-        .expect("call context enabled");
-    assert!(
-        !unguarded.guarded,
-        "RAG effect guard report should reject unrelated MethodRouter::new as a guard: {unguarded:#?}"
-    );
-    assert_eq!(unguarded.effects.len(), 1);
-    assert_eq!(
-        unguarded.violations.len(),
-        1,
-        "RAG unguarded report should return the reachable effect as a violation: {unguarded:#?}"
-    );
-    assert_eq!(unguarded.violations[0].call_site.site_id, spawn_row.site.id);
+    for case in cases {
+        let fixture = setup_spawn_fixture()?;
+        if matches!(case.query, SpawnQuery::Reachable) {
+            let mut params = BTreeMap::new();
+            params.insert(
+                "site_id".to_string(),
+                DataValue::Uuid(UuidWrapper(fixture.site)),
+            );
+            let relations = fixture.db.raw_query_params(
+                r#"?[target_id] :=
+                    *call_relation { source_id: $site_id, target_id @ 'NOW' }"#,
+                params,
+            )?;
+            assert!(
+                relations.rows.is_empty(),
+                "tokio::spawn must remain an external frontier: {relations:#?}"
+            );
+        }
+
+        let mut facts = vec![spawn_effect_seed(fixture.site, case.seed)];
+        if matches!(case.query, SpawnQuery::StoredPolicy) {
+            facts.push(owner_effect_policy(
+                fixture.start,
+                "effect-policy:axum-rag-test-client:stored-policy",
+                &["ffi_boundary"],
+            ));
+        }
+        fixture.db.upsert_proof_fact_values(&facts)?;
+
+        match case.query {
+            SpawnQuery::Reachable => {
+                let effects = fixture
+                    .rag
+                    .exact_call_effects_reachable_from_owner(fixture.start, options)?
+                    .expect("call context enabled");
+                let effect = effects
+                    .iter()
+                    .find(|effect| effect.effect_seed_id == case.seed)
+                    .unwrap_or_else(|| panic!("missing {}: {effects:#?}", case.label));
+                assert_eq!(effect.confidence.as_deref(), Some("source-oracle"));
+                assert_eq!(effect.blocker_if_unresolved, Some(false));
+                assert!(effect.blocker_reasons.is_empty(), "{effect:#?}");
+                assert_spawn_effect(effect, &fixture, true, case.label);
+            }
+            SpawnQuery::Policy => {
+                let violations = fixture
+                    .rag
+                    .exact_call_effect_policy_violations_for_owner(
+                        fixture.start,
+                        options,
+                        &["ffi_boundary"],
+                    )?
+                    .expect("call context enabled");
+                let violation = violations
+                    .iter()
+                    .find(|row| row.effect.effect_seed_id == case.seed)
+                    .unwrap_or_else(|| panic!("missing {}: {violations:#?}", case.label));
+                assert_eq!(violation.allowed_effects, vec!["ffi_boundary".to_string()]);
+                assert_spawn_effect(&violation.effect, &fixture, false, case.label);
+                let allowed = fixture
+                    .rag
+                    .exact_call_effect_policy_violations_for_owner(
+                        fixture.start,
+                        options,
+                        &["async_task_spawn"],
+                    )?
+                    .expect("call context enabled");
+                assert!(
+                    allowed.is_empty(),
+                    "allowed effect was rejected: {allowed:#?}"
+                );
+            }
+            SpawnQuery::Guard => {
+                let guard =
+                    method_id_by_name_and_body_substring(&fixture.db, "new", "spawn_service(svc)")?;
+                let report = fixture
+                    .rag
+                    .exact_call_effect_guard_report_for_owner(
+                        fixture.start,
+                        guard,
+                        "async_task_spawn",
+                        options,
+                    )?
+                    .expect("call context enabled");
+                assert_eq!(report.owner.id, fixture.start);
+                assert_eq!(report.guard.id, guard);
+                assert_eq!(report.effect_class, "async_task_spawn");
+                assert!(report.guarded, "{report:#?}");
+                assert_eq!(report.effects.len(), 1);
+                assert!(report.violations.is_empty(), "{report:#?}");
+                assert_eq!(report.effects[0].effect_seed_id, case.seed);
+                assert_spawn_effect(&report.effects[0], &fixture, false, case.label);
+
+                let unrelated = method_id_by_name_and_body_substring(
+                    &fixture.db,
+                    "new",
+                    "default_fallback: true",
+                )?;
+                let unguarded = fixture
+                    .rag
+                    .exact_call_effect_guard_report_for_owner(
+                        fixture.start,
+                        unrelated,
+                        "async_task_spawn",
+                        options,
+                    )?
+                    .expect("call context enabled");
+                assert!(!unguarded.guarded, "{unguarded:#?}");
+                assert_eq!(unguarded.effects.len(), 1);
+                assert_eq!(unguarded.violations.len(), 1);
+                assert_eq!(unguarded.violations[0].call_site.site_id, fixture.site);
+            }
+            SpawnQuery::StoredPolicy => {
+                let violations = fixture
+                    .rag
+                    .exact_call_effect_policy_violations_for_stored_owner_policy(
+                        fixture.start,
+                        options,
+                    )?
+                    .expect("call context enabled");
+                let violation = violations
+                    .iter()
+                    .find(|row| row.effect.effect_seed_id == case.seed)
+                    .unwrap_or_else(|| panic!("missing {}: {violations:#?}", case.label));
+                assert_eq!(violation.allowed_effects, vec!["ffi_boundary".to_string()]);
+                assert_spawn_effect(&violation.effect, &fixture, false, case.label);
+            }
+        }
+    }
 
     Ok(())
 }
 
+struct SummaryEffectCase {
+    label: &'static str,
+    owner: OracleOwner,
+    site: OracleSite,
+    summary: OracleSummary,
+    db_effect: bool,
+}
+
+// Source-oracle ledger:
+// - axum/src/response/sse.rs:445-449: `std::mem::replace`;
+// - axum-core/src/body.rs: `Body::size_hint` -> `self.0.size_hint()`;
+// - axum/src/routing/route.rs:51,57: both Route `oneshot` receiver shapes.
 #[tokio::test]
-async fn stored_effect_policy_exact_reads_axum_task_spawn_sink() -> Result<(), Error> {
+async fn call_effects_exact_axum_admitted_summary_matrix() -> Result<(), Error> {
     init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
-
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Security/performance:
-    //   "Can this entrypoint reach a sensitive sink that is outside its
-    //   admitted stored effect policy?"
-    //
-    // Source-oracle chain:
-    //   axum/src/form.rs:262
-    //     `deserialize_error_status_codes` calls `TestClient::new(app)`.
-    //   axum/src/test_helpers/test_client.rs:36
-    //     `TestClient::new` calls `spawn_service(svc)`.
-    //   axum/src/test_helpers/test_client.rs:23
-    //     `spawn_service` calls `tokio::spawn(...)`.
-    // Expected contract: RAG reads the admitted owner policy from proof facts
-    // through the DB helper and reports the disallowed `async_task_spawn`
-    // frontier while preserving the resolved path to the sink owner.
-    let start = function_id_by_name_in_module(
-        &db,
-        &["crate", "form", "tests"],
-        "deserialize_error_status_codes",
-    )?;
-    let spawn_owner = function_id_by_name_in_module(
-        &db,
-        &["crate", "test_helpers", "test_client"],
-        "spawn_service",
-    )?;
-    let spawn_context = db.call_context_for_owner(spawn_owner)?;
-    let spawn_row = spawn_context
-        .iter()
-        .find(|row| {
-            row.site
-                .path
-                .as_ref()
-                .is_some_and(|call_path| call_path == &path(&["tokio", "spawn"]))
-        })
-        .unwrap_or_else(|| {
-            panic!("spawn_service should expose the tokio::spawn frontier: {spawn_context:#?}")
-        });
-    assert_eq!(spawn_row.status.status, DbCallStatusKind::External);
-    assert!(
-        spawn_row.targets.is_empty(),
-        "tokio::spawn should stay targetless in DB call context: {spawn_row:#?}"
-    );
-
-    db.upsert_proof_fact_values(&[
-        spawn_effect_seed(
-            spawn_row.site.id,
-            "effect:axum-rag-test-client-task-spawn-stored-policy",
-        ),
-        owner_effect_policy(
-            start,
-            "effect-policy:axum-rag-test-client:stored-policy",
-            &["ffi_boundary"],
-        ),
-    ])?;
-
-    let violations = rag
-        .exact_call_effect_policy_violations_for_stored_owner_policy(
-            start,
-            CallPathOptions {
-                max_depth: 3,
-                max_paths: 16,
+    let cases = [
+        SummaryEffectCase {
+            label: "EventDataWriter::write_buf std::mem::replace",
+            owner: OracleOwner::Method {
+                name: "write_buf",
+                body: "std::mem::replace",
             },
-        )?
-        .expect("call context enabled");
-    let violation = violations
-        .iter()
-        .find(|violation| {
-            violation.effect.effect_seed_id
-                == "effect:axum-rag-test-client-task-spawn-stored-policy"
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "RAG should expose the stored-policy async_task_spawn violation: {violations:#?}"
-            )
-        });
-    assert_eq!(violation.allowed_effects, vec!["ffi_boundary".to_string()]);
-    assert_eq!(violation.effect.effect_class, "async_task_spawn");
-    assert_eq!(violation.effect.call_site.site_id, spawn_row.site.id);
-    assert_eq!(violation.effect.call_site.owner_id, spawn_owner);
-    assert_eq!(violation.effect.call_site.status, CallStatusKind::External);
-    assert!(
-        violation
-            .effect
-            .paths_to_owner
-            .iter()
-            .any(|path| path.start_id == start && path.end_id == spawn_owner && path.depth == 2),
-        "RAG stored-policy violation should preserve the resolved path to spawn_service: {violation:#?}"
-    );
-    assert!(
-        violation.effect.call_site.targets.is_empty(),
-        "stored policy violations must not fabricate RAG target rows: {violation:#?}"
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn external_summary_needs_exact_reads_axum_request_builder_queue() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
-    let domain_id = "bd:corpus-axum-call-graph";
-
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Security/performance:
-    //   "Which reachable external dependency frontiers still need an audited
-    //   summary before their effects can be trusted?"
-    //
-    // Source oracle:
-    //   axum/src/middleware/from_fn.rs:411 calls `Request::builder()`.
-    // Expected contract: RAG exposes the DB owner-scoped external-summary
-    // queue while the proof blocker is active, and the row disappears after
-    // an admitted summary is linked without adding a local call edge.
-    let owner =
-        function_id_by_name_in_module(&db, &["crate", "middleware", "from_fn", "tests"], "basic")?;
-    let context = db.call_context_for_owner(owner)?;
-    let builder = context
-        .iter()
-        .find(|row| {
-            row.site
-                .path
-                .as_ref()
-                .is_some_and(|call_path| call_path == &path(&["Request", "builder"]))
-        })
-        .unwrap_or_else(|| {
-            panic!("from_fn::tests::basic should expose Request::builder: {context:#?}")
-        });
-    assert_eq!(builder.status.status, DbCallStatusKind::External);
-    assert!(
-        builder.targets.is_empty(),
-        "Request::builder should stay targetless before summary admission: {builder:#?}"
-    );
-
-    let projected = db.project_call_proof_facts_for_owner(owner, domain_id)?;
-    assert!(
-        projected >= 2,
-        "owner proof projection should include call_site and call_resolution rows: {projected}"
-    );
-    let options = CallPathOptions {
-        max_depth: 3,
-        max_paths: 64,
-    };
-    let needs = rag
-        .exact_external_summary_needs_for_owner(owner, options)?
-        .expect("call context enabled");
-    let need = needs
-        .iter()
-        .find(|need| need.call_site.site_id == builder.site.id)
-        .unwrap_or_else(|| {
-            panic!("RAG should expose Request::builder as an external-summary need: {needs:#?}")
-        });
-    assert_eq!(need.call_site.owner_id, owner);
-    assert_eq!(need.call_site.status, CallStatusKind::External);
-    assert!(
-        need.paths_to_owner.is_empty(),
-        "direct owner frontier should not carry an intermediate path: {need:#?}"
-    );
-    assert!(
-        need.blocker_reasons
-            .iter()
-            .any(|reason| reason == "external_dependency_summary_missing"),
-        "RAG need should preserve the active missing-summary blocker: {need:#?}"
-    );
-    assert!(
-        matches!(
-            &need.call_site.callee,
-            CallCalleeInfo::Path { path: call_path } if call_path == &path(&["Request", "builder"])
-        ),
-        "RAG need should preserve the original Request::builder path: {need:#?}"
-    );
-
-    db.upsert_proof_fact_values(&ploke_test_utils::axum_request_builder_summary_records(
-        builder.site.id,
-    ))?;
-    let after = rag
-        .exact_external_summary_needs_for_owner(owner, options)?
-        .expect("call context enabled");
-    assert!(
-        after
-            .iter()
-            .all(|need| need.call_site.site_id != builder.site.id),
-        "admitted Request::builder summary should discharge this RAG need: {after:#?}"
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn external_summary_needs_exact_reads_axum_std_mem_replace_queue() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
-    let domain_id = "bd:corpus-axum-call-graph";
-
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Security/performance:
-    //   "Which reachable external dependency frontiers still need an audited
-    //   summary before their effects can be trusted?"
-    //
-    // Source oracle:
-    //   axum/src/response/sse.rs:449 calls
-    //   `std::mem::replace(&mut self.data_written, true)`.
-    // Expected contract: RAG exposes the owner-scoped external-summary queue
-    // for the std-root frontier while the proof blocker is active, and the row
-    // disappears after the admitted summary is linked without adding a local
-    // traversal edge.
-    let owner = method_id_by_name_and_body_substring(&db, "write_buf", "std::mem::replace")?;
-    let context = db.call_context_for_owner(owner)?;
-    let replace = context
-        .iter()
-        .find(|row| {
-            row.site
-                .path
-                .as_ref()
-                .is_some_and(|call_path| call_path == &path(&["std", "mem", "replace"]))
-        })
-        .unwrap_or_else(|| {
-            panic!("EventDataWriter::write_buf should expose std::mem::replace: {context:#?}")
-        });
-    assert_eq!(replace.status.status, DbCallStatusKind::External);
-    assert!(
-        replace.targets.is_empty(),
-        "std::mem::replace should stay targetless before summary admission: {replace:#?}"
-    );
-
-    let projected = db.project_call_proof_facts_for_owner(owner, domain_id)?;
-    assert!(
-        projected >= 2,
-        "owner proof projection should include call_site and call_resolution rows: {projected}"
-    );
-    let options = CallPathOptions {
-        max_depth: 3,
-        max_paths: 64,
-    };
-    let needs = rag
-        .exact_external_summary_needs_for_owner(owner, options)?
-        .expect("call context enabled");
-    let need = needs
-        .iter()
-        .find(|need| need.call_site.site_id == replace.site.id)
-        .unwrap_or_else(|| {
-            panic!("RAG should expose std::mem::replace as an external-summary need: {needs:#?}")
-        });
-    assert_eq!(need.call_site.owner_id, owner);
-    assert_eq!(need.call_site.status, CallStatusKind::External);
-    assert!(
-        need.paths_to_owner.is_empty(),
-        "direct owner frontier should not carry an intermediate path: {need:#?}"
-    );
-    assert!(
-        need.blocker_reasons
-            .iter()
-            .any(|reason| reason == "external_dependency_summary_missing"),
-        "RAG need should preserve the active missing-summary blocker: {need:#?}"
-    );
-    assert!(
-        matches!(
-            &need.call_site.callee,
-            CallCalleeInfo::Path { path: call_path }
-                if call_path == &path(&["std", "mem", "replace"])
-        ),
-        "RAG need should preserve the original std::mem::replace path: {need:#?}"
-    );
-
-    db.upsert_proof_fact_values(&ploke_test_utils::axum_std_mem_replace_summary_records(
-        replace.site.id,
-    ))?;
-    let after = rag
-        .exact_external_summary_needs_for_owner(owner, options)?
-        .expect("call context enabled");
-    assert!(
-        after
-            .iter()
-            .all(|need| need.call_site.site_id != replace.site.id),
-        "admitted std::mem::replace summary should discharge this RAG need: {after:#?}"
-    );
-    let context_after = db.call_context_for_owner(owner)?;
-    let replace_after = context_after
-        .iter()
-        .find(|row| row.site.id == replace.site.id)
-        .unwrap_or_else(|| {
-            panic!("std::mem::replace frontier row should remain visible: {context_after:#?}")
-        });
-    assert!(
-        replace_after.targets.is_empty(),
-        "summary admission must not fabricate a local std::mem::replace edge: {replace_after:#?}"
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn external_summary_needs_exact_reads_axum_feature_gated_json_queue() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
-    let domain_id = "bd:corpus-axum-call-graph";
-
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Security/performance:
-    //   "Which feature-gated external dependency frontiers still need an
-    //   audited summary before their effects can be trusted?"
-    //
-    // Source oracle:
-    //   axum/src/json.rs:164 defines `Json::from_bytes`.
-    //   axum/src/json.rs:184 calls
-    //     `serde_json::Deserializer::from_slice(bytes)`.
-    //   axum/src/lib.rs:488-489 gates the file module with
-    //     `#[cfg(feature = "json")] mod json;`.
-    // Expected contract: RAG exposes the owner-scoped external-summary queue
-    // for the feature-gated serde_json frontier while the proof blocker is
-    // active, and the row disappears after the admitted summary is linked
-    // without adding a local traversal edge.
-    let owner = method_id_by_file(
-        &db,
-        "from_bytes",
-        "serde_json::Deserializer::from_slice(bytes)",
-        "axum/src/json.rs",
-    )?;
-    let context = db.call_context_for_owner(owner)?;
-    let from_slice = context
-        .iter()
-        .find(|row| {
-            row.site.path.as_ref().is_some_and(|call_path| {
-                call_path == &path(&["serde_json", "Deserializer", "from_slice"])
-            })
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "Json::from_bytes should expose serde_json::Deserializer::from_slice: {context:#?}"
-            )
-        });
-    assert_eq!(from_slice.status.status, DbCallStatusKind::External);
-    assert!(
-        from_slice.targets.is_empty(),
-        "serde_json::Deserializer::from_slice should stay targetless before summary admission: {from_slice:#?}"
-    );
-
-    let projected = db.project_call_proof_facts_for_owner(owner, domain_id)?;
-    assert!(
-        projected >= 2,
-        "owner proof projection should include call_site and call_resolution rows: {projected}"
-    );
+            site: OracleSite::Path(&["std", "mem", "replace"]),
+            summary: OracleSummary::StdReplace,
+            db_effect: true,
+        },
+        SummaryEffectCase {
+            label: "Body::size_hint self-field call",
+            owner: OracleOwner::Method {
+                name: "size_hint",
+                body: "self.0.size_hint()",
+            },
+            site: OracleSite::Method {
+                name: "size_hint",
+                receiver: OracleReceiver::SelfField { path: &["0"] },
+            },
+            summary: OracleSummary::BodySizeHint,
+            db_effect: false,
+        },
+        SummaryEffectCase {
+            label: "Route::oneshot_inner method-result-field call",
+            owner: OracleOwner::Method {
+                name: "oneshot_inner",
+                body: "self.0.clone().oneshot(req)",
+            },
+            site: OracleSite::Method {
+                name: "oneshot",
+                receiver: OracleReceiver::MethodResultField {
+                    method: "clone",
+                    field: &["0"],
+                },
+            },
+            summary: OracleSummary::RouteOneshot,
+            db_effect: false,
+        },
+        SummaryEffectCase {
+            label: "Route::oneshot_inner_owned self-field call",
+            owner: OracleOwner::Method {
+                name: "oneshot_inner_owned",
+                body: "self.0.oneshot(req)",
+            },
+            site: OracleSite::Method {
+                name: "oneshot",
+                receiver: OracleReceiver::SelfField { path: &["0"] },
+            },
+            summary: OracleSummary::RouteOneshot,
+            db_effect: false,
+        },
+    ];
     let options = CallPathOptions {
         max_depth: 1,
         max_paths: 16,
     };
-    let needs = rag
-        .exact_external_summary_needs_for_owner(owner, options)?
-        .expect("call context enabled");
-    let need = needs
-        .iter()
-        .find(|need| need.call_site.site_id == from_slice.site.id)
-        .unwrap_or_else(|| {
-            panic!(
-                "RAG should expose serde_json::Deserializer::from_slice as an external-summary need: {needs:#?}"
-            )
-        });
-    assert_eq!(need.call_site.owner_id, owner);
-    assert_eq!(need.call_site.status, CallStatusKind::External);
-    assert!(
-        need.paths_to_owner.is_empty(),
-        "direct owner frontier should not carry an intermediate path: {need:#?}"
-    );
-    assert!(
-        need.blocker_reasons
-            .iter()
-            .any(|reason| reason == "external_dependency_summary_missing"),
-        "RAG need should preserve the active missing-summary blocker: {need:#?}"
-    );
-    assert!(
-        matches!(
-            &need.call_site.callee,
-            CallCalleeInfo::Path { path: call_path }
-                if call_path == &path(&["serde_json", "Deserializer", "from_slice"])
-        ),
-        "RAG need should preserve the original serde_json::Deserializer::from_slice path: {need:#?}"
-    );
 
-    db.upsert_proof_fact_values(
-        &ploke_test_utils::axum_serde_json_from_slice_summary_records(from_slice.site.id),
-    )?;
-    let after = rag
-        .exact_external_summary_needs_for_owner(owner, options)?
-        .expect("call context enabled");
-    assert!(
-        after
+    for case in cases {
+        let (db, rag) = setup_axum_call_graph_rag()?;
+        let owner = oracle_owner_id(&db, case.owner)?;
+        let site = oracle_site_id(
+            &db,
+            owner,
+            case.site,
+            DbCallStatusKind::External,
+            case.label,
+        )?;
+        let projected =
+            db.project_call_proof_facts_for_owner(owner, "bd:corpus-axum-call-graph")?;
+        assert!(projected >= 2, "{} projection: {projected}", case.label);
+        db.upsert_proof_fact_values(&oracle_summary_records(case.summary, site))?;
+
+        let summary = oracle_summary_id(case.summary);
+        let effect_id = format!("summary-effect:{summary}:external_summary_boundary");
+        if case.db_effect {
+            let effects = db.call_effects_reachable_from_owner(owner, options)?;
+            assert!(
+                effects
+                    .iter()
+                    .any(|effect| effect.effect_seed_id == effect_id),
+                "DB should expose {}: {effects:#?}",
+                case.label
+            );
+        }
+        let effects = rag
+            .exact_call_effects_reachable_from_owner(owner, options)?
+            .expect("call context enabled");
+        let effect = effects
             .iter()
-            .all(|need| need.call_site.site_id != from_slice.site.id),
-        "admitted serde_json::Deserializer::from_slice summary should discharge this RAG need: {after:#?}"
-    );
-    let context_after = db.call_context_for_owner(owner)?;
-    let from_slice_after = context_after
-        .iter()
-        .find(|row| row.site.id == from_slice.site.id)
-        .unwrap_or_else(|| {
-            panic!(
-                "serde_json::Deserializer::from_slice frontier row should remain visible: {context_after:#?}"
-            )
-        });
-    assert!(
-        from_slice_after.targets.is_empty(),
-        "summary admission must not fabricate a local serde_json::Deserializer::from_slice edge: {from_slice_after:#?}"
-    );
+            .find(|effect| effect.effect_seed_id == effect_id && effect.call_site.site_id == site)
+            .unwrap_or_else(|| panic!("missing {} summary effect: {effects:#?}", case.label));
+        assert_eq!(effect.effect_class, "external_summary_boundary");
+        assert_eq!(effect.confidence.as_deref(), Some("source-oracle-review"));
+        assert_eq!(effect.blocker_if_unresolved, Some(false));
+        assert!(effect.paths_to_owner.is_empty(), "{effect:#?}");
+        assert!(effect.blocker_reasons.is_empty(), "{effect:#?}");
+        assert_rag_site(
+            &effect.call_site,
+            owner,
+            site,
+            CallStatusKind::External,
+            case.site,
+            case.label,
+        );
+    }
 
     Ok(())
 }
 
+struct ExternalNeedCase {
+    label: &'static str,
+    owner: OracleOwner,
+    site: OracleSite,
+    summary: OracleSummary,
+    depth: u32,
+    paths: usize,
+    post_targetless: bool,
+}
+
+// Source-oracle ledger:
+// - axum/src/middleware/from_fn.rs:411: `Request::builder()`;
+// - axum/src/response/sse.rs:449: `std::mem::replace`;
+// - axum/src/json.rs:164,184 (feature `json`): serde_json `from_slice`.
 #[tokio::test]
-async fn runtime_dispatch_needs_exact_reads_axum_dyn_future_poll_queue() -> Result<(), Error> {
+async fn external_summary_needs_exact_axum_matrix() -> Result<(), Error> {
+    init_tracing_once();
+    let cases = [
+        ExternalNeedCase {
+            label: "from_fn::tests::basic Request::builder",
+            owner: OracleOwner::Function {
+                module: &["crate", "middleware", "from_fn", "tests"],
+                name: "basic",
+            },
+            site: OracleSite::Path(&["Request", "builder"]),
+            summary: OracleSummary::RequestBuilder,
+            depth: 3,
+            paths: 64,
+            post_targetless: false,
+        },
+        ExternalNeedCase {
+            label: "EventDataWriter::write_buf std::mem::replace",
+            owner: OracleOwner::Method {
+                name: "write_buf",
+                body: "std::mem::replace",
+            },
+            site: OracleSite::Path(&["std", "mem", "replace"]),
+            summary: OracleSummary::StdReplace,
+            depth: 3,
+            paths: 64,
+            post_targetless: true,
+        },
+        ExternalNeedCase {
+            label: "Json::from_bytes serde_json::Deserializer::from_slice",
+            owner: OracleOwner::MethodFile {
+                name: "from_bytes",
+                body: "serde_json::Deserializer::from_slice(bytes)",
+                file: "axum/src/json.rs",
+            },
+            site: OracleSite::Path(&["serde_json", "Deserializer", "from_slice"]),
+            summary: OracleSummary::JsonFromSlice,
+            depth: 1,
+            paths: 16,
+            post_targetless: true,
+        },
+    ];
+
+    for case in cases {
+        let (db, rag) = setup_axum_call_graph_rag()?;
+        let owner = oracle_owner_id(&db, case.owner)?;
+        let site = oracle_site_id(
+            &db,
+            owner,
+            case.site,
+            DbCallStatusKind::External,
+            case.label,
+        )?;
+        let projected =
+            db.project_call_proof_facts_for_owner(owner, "bd:corpus-axum-call-graph")?;
+        assert!(projected >= 2, "{} projection: {projected}", case.label);
+        let options = CallPathOptions {
+            max_depth: case.depth,
+            max_paths: case.paths,
+        };
+        let needs = rag
+            .exact_external_summary_needs_for_owner(owner, options)?
+            .expect("call context enabled");
+        let need = needs
+            .iter()
+            .find(|need| need.call_site.site_id == site)
+            .unwrap_or_else(|| panic!("missing {} summary need: {needs:#?}", case.label));
+        assert_rag_site(
+            &need.call_site,
+            owner,
+            site,
+            CallStatusKind::External,
+            case.site,
+            case.label,
+        );
+        assert!(need.paths_to_owner.is_empty(), "{need:#?}");
+        assert!(
+            need.blocker_reasons
+                .iter()
+                .any(|reason| reason == "external_dependency_summary_missing"),
+            "{need:#?}"
+        );
+
+        db.upsert_proof_fact_values(&oracle_summary_records(case.summary, site))?;
+        let after = rag
+            .exact_external_summary_needs_for_owner(owner, options)?
+            .expect("call context enabled");
+        assert!(
+            after.iter().all(|need| need.call_site.site_id != site),
+            "{} summary should discharge its exact need: {after:#?}",
+            case.label
+        );
+        if case.post_targetless {
+            assert_db_targetless(&db, owner, site, case.label)?;
+        }
+    }
+
+    Ok(())
+}
+
+// axum/src/error_handling/mod.rs:240,251 stores a dyn Future and calls
+// `self.project().future.poll(cx)`; the exact method-result field is the contract.
+#[tokio::test]
+async fn runtime_dispatch_needs_exact_axum_dyn_future_poll() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;
-    let domain_id = "bd:corpus-axum-call-graph";
-
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Debugging / RAG:
-    //   "Which runtime-dispatch frontiers are blocking a complete local
-    //   traversal from this owner?"
-    //
-    // Source oracle:
-    //   axum/src/error_handling/mod.rs:240 stores
-    //     `Pin<Box<dyn Future<Output = Result<Response, Infallible>>>>`.
-    //   axum/src/error_handling/mod.rs:251
-    //     `HandleErrorFuture::poll` calls `self.project().future.poll(cx)`.
-    // Expected contract: RAG exposes the owner-scoped runtime-dispatch queue
-    // for the dyn `Future::poll` frontier without adding a local traversal
-    // edge.
-    let owner = method_id_by_file(
+    let owner_spec = OracleOwner::MethodFile {
+        name: "poll",
+        body: "self.project().future.poll(cx)",
+        file: "axum/src/error_handling/mod.rs",
+    };
+    let site_spec = OracleSite::Method {
+        name: "poll",
+        receiver: OracleReceiver::MethodResultField {
+            method: "project",
+            field: &["future"],
+        },
+    };
+    let owner = oracle_owner_id(&db, owner_spec)?;
+    let site = oracle_site_id(
         &db,
-        "poll",
-        "self.project().future.poll(cx)",
-        "axum/src/error_handling/mod.rs",
+        owner,
+        site_spec,
+        DbCallStatusKind::Unsupported,
+        "HandleErrorFuture::poll dyn Future::poll",
     )?;
-    let context = db.call_context_for_owner(owner)?;
-    let poll = context
-        .iter()
-        .find(|row| {
-            row.site.method.as_deref() == Some("poll")
-                && matches!(
-                    row.site.receiver.as_ref(),
-                    Some(CallReceiver::MethodResultField {
-                        method_name,
-                        field_path,
-                        ..
-                    }) if method_name == "project" && field_path == &vec!["future".to_string()]
-                )
-                && row.status.status == DbCallStatusKind::Unsupported
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "HandleErrorFuture::poll should expose targetless dyn Future::poll: {context:#?}"
-            )
-        });
-    assert!(
-        poll.targets.is_empty(),
-        "dyn Future::poll should stay targetless before blocker insertion: {poll:#?}"
-    );
-
-    db.project_call_proof_facts_for_owner(owner, domain_id)?;
-    db.upsert_proof_fact_values(&[ploke_test_utils::axum_dyn_future_poll_blocker(poll.site.id)])?;
+    db.project_call_proof_facts_for_owner(owner, "bd:corpus-axum-call-graph")?;
+    db.upsert_proof_fact_values(&[ploke_test_utils::axum_dyn_future_poll_blocker(site)])?;
 
     let options = CallPathOptions {
         max_depth: 1,
@@ -4381,60 +3759,35 @@ async fn runtime_dispatch_needs_exact_reads_axum_dyn_future_poll_queue() -> Resu
         .expect("call context enabled");
     let need = needs
         .iter()
-        .find(|need| need.call_site.site_id == poll.site.id)
-        .unwrap_or_else(|| {
-            panic!("RAG should expose dyn Future::poll as a runtime-dispatch need: {needs:#?}")
-        });
-    assert_eq!(need.call_site.owner_id, owner);
-    assert_eq!(need.call_site.status, CallStatusKind::Unsupported);
-    assert!(
-        need.paths_to_owner.is_empty(),
-        "direct owner frontier should not carry an intermediate path: {need:#?}"
+        .find(|need| need.call_site.site_id == site)
+        .unwrap_or_else(|| panic!("missing dyn Future::poll runtime need: {needs:#?}"));
+    assert_rag_site(
+        &need.call_site,
+        owner,
+        site,
+        CallStatusKind::Unsupported,
+        site_spec,
+        "HandleErrorFuture::poll dyn Future::poll",
     );
+    assert!(need.paths_to_owner.is_empty(), "{need:#?}");
     assert!(
         need.blocker_reasons
             .iter()
             .any(|reason| reason == "dynamic_dispatch_unbounded"),
-        "RAG need should preserve the active dynamic-dispatch blocker: {need:#?}"
-    );
-    assert!(
-        matches!(
-            &need.call_site.callee,
-            CallCalleeInfo::Method {
-                name,
-                receiver: Some(CallReceiverInfo::MethodResultField {
-                    method_name,
-                    field_path,
-                    ..
-                }),
-            } if name == "poll" && method_name == "project" && field_path == &vec!["future".to_string()]
-        ),
-        "RAG need should preserve the dyn Future::poll method-result field receiver payload: {need:#?}"
+        "{need:#?}"
     );
 
     db.upsert_proof_fact_values(&[
-        ploke_test_utils::axum_dyn_future_poll_runtime_dispatch_summary(poll.site.id),
+        ploke_test_utils::axum_dyn_future_poll_runtime_dispatch_summary(site),
     ])?;
     let after = rag
         .exact_runtime_dispatch_needs_for_owner(owner, options)?
         .expect("call context enabled");
     assert!(
-        after
-            .iter()
-            .all(|need| need.call_site.site_id != poll.site.id),
-        "admitted dyn Future::poll runtime-dispatch summary should remove the exact RAG authoring need: {after:#?}"
+        after.iter().all(|need| need.call_site.site_id != site),
+        "runtime summary should discharge dyn Future::poll: {after:#?}"
     );
-    let context_after = db.call_context_for_owner(owner)?;
-    let poll_after = context_after
-        .iter()
-        .find(|row| row.site.id == poll.site.id)
-        .unwrap_or_else(|| {
-            panic!("dyn Future::poll row should remain visible after summary: {context_after:#?}")
-        });
-    assert!(
-        poll_after.targets.is_empty(),
-        "summary admission must not fabricate a local dyn Future::poll edge: {poll_after:#?}"
-    );
+    assert_db_targetless(&db, owner, site, "HandleErrorFuture::poll dyn Future::poll")?;
 
     Ok(())
 }
@@ -4616,236 +3969,6 @@ fn assert_call_source_module(modules: &[Vec<String>], expected: &[&str], label: 
         modules.iter().any(|module| module == &expected),
         "{label} should include module {expected:?}: {modules:#?}"
     );
-}
-
-#[tokio::test]
-async fn call_context_collection_preserves_axum_turbofish_generic_counts() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
-
-    let owner = function_id_by_name_in_module(
-        &db,
-        &["crate", "attr_parsing"],
-        "parse_parenthesized_attribute",
-    )?;
-
-    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
-    let context = call_context.get(&owner).unwrap_or_else(|| {
-        panic!("parse_parenthesized_attribute should receive outgoing call context")
-    });
-    let type_name = context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Path
-                && matches!(
-                    &call.callee,
-                    CallCalleeInfo::Path { path: call_path }
-                        if call_path == &path(&["std", "any", "type_name"])
-                )
-        })
-        .unwrap_or_else(|| {
-            panic!("RAG context should include std::any::type_name::<K> row: {context:#?}")
-        });
-
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // API understanding:
-    //   "What argument shapes do existing callers pass?"
-    // Build/deployment optimization:
-    //   "Are there feature-gated or platform-specific call paths that should
-    //   be checked separately?"
-    //
-    // Source oracle:
-    //   axum-macros/src/attr_parsing.rs:22 calls
-    //   `std::any::type_name::<K>()`.
-    //
-    // Current contract: dependency-root calls stay external and targetless,
-    // but RAG payloads preserve the turbofish arity needed for API-shape
-    // answers.
-    assert_eq!(type_name.owner_id, owner);
-    assert_eq!(type_name.status, CallStatusKind::External);
-    assert_eq!(type_name.generic_arg_count, Some(1));
-    assert!(
-        type_name.targets.is_empty(),
-        "external type_name::<K> call should remain targetless: {type_name:#?}"
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn call_context_collection_preserves_axum_turbofish_method_receiver_shape()
--> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
-
-    let owner = function_id_by_name_in_module(
-        &db,
-        &["crate", "ext_traits", "request_parts", "tests"],
-        "extract_with_state",
-    )?;
-    let target =
-        method_id_by_name_and_body_substring(&db, "extract_with_state", "E::from_request_parts")?;
-
-    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
-    let context = call_context.get(&owner).unwrap_or_else(|| {
-        panic!("request_parts::tests::extract_with_state should receive outgoing call context")
-    });
-    let expected_callee = CallCalleeInfo::Method {
-        name: "extract_with_state".to_string(),
-        receiver: Some(CallReceiverInfo::TupleMethodReturn {
-            name: "parts".to_string(),
-            method_name: "into_parts".to_string(),
-            method_span: (4640, 4669),
-            index: 0,
-        }),
-    };
-    let turbofish = context
-        .iter()
-        .filter(|call| call.kind == CallSiteKind::Method && call.callee == expected_callee)
-        .collect::<Vec<_>>();
-
-    // Matrix:
-    //   docs/active/agents/call-graph/
-    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
-    //
-    // Source chain:
-    //   axum-core/src/ext_traits/request_parts.rs:159 binds `parts` from
-    //   `Request::new(()).into_parts()`.
-    //   axum-core/src/ext_traits/request_parts.rs:164 calls
-    //   `parts.extract_with_state::<State<String>, String>(&state)`.
-    //
-    // Current contract: the row is visible to RAG, preserves the two explicit
-    // method generic arguments and tuple-method-return receiver proof, and
-    // resolves to the local `RequestPartsExt for Parts::extract_with_state`
-    // method through the external-return summary for `Request::into_parts`.
-    assert_eq!(
-        turbofish.len(),
-        1,
-        "RAG call context should expose exactly the request_parts.rs:164 turbofish row: {context:#?}"
-    );
-
-    let call = turbofish[0];
-    assert_eq!(call.owner_id, owner);
-    assert_eq!(call.status, CallStatusKind::Resolved);
-    assert_eq!(call.generic_arg_count, Some(2));
-    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(call.targets.len(), 1);
-    assert_eq!(call.targets[0].target_id, target);
-    let reach = rag
-        .exact_call_reach_for_owner(
-            owner,
-            CallPathOptions {
-                max_depth: 2,
-                max_paths: 128,
-            },
-        )?
-        .expect("call context enabled");
-    assert!(
-        reach
-            .unsupported_frontier_calls
-            .iter()
-            .all(|frontier| frontier.site_id != call.site_id),
-        "RAG reach should not keep the resolved turbofish row in the unsupported frontier: {reach:#?}"
-    );
-    let path = reach
-        .paths
-        .iter()
-        .find(|path| {
-            path.edges
-                .iter()
-                .any(|edge| edge.call_site_id == call.site_id && edge.callee_id == target)
-        })
-        .unwrap_or_else(|| {
-            panic!("RAG reach should expose the resolved turbofish edge: {reach:#?}")
-        });
-    assert!(
-        path.edges
-            .iter()
-            .any(|edge| edge.call_site_id == call.site_id && edge.callee_id == target),
-        "RAG reach should include the request_parts.rs:164 edge to RequestPartsExt::extract_with_state: {path:#?}"
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn call_context_collection_reads_axum_await_result_receiver_gap() -> Result<(), Error> {
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
-
-    let owner = method_id_by_name_and_body_substring(
-        &db,
-        "accept",
-        "self.sem.clone().acquire_owned().await.unwrap()",
-    )?;
-
-    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
-    let context = call_context
-        .get(&owner)
-        .unwrap_or_else(|| panic!("ConnLimiter::accept should receive outgoing call context"));
-    let expected_callee = CallCalleeInfo::Method {
-        name: "unwrap".to_string(),
-        receiver: Some(CallReceiverInfo::AwaitMethodCallResult {
-            method_name: "acquire_owned".to_string(),
-        }),
-    };
-    let await_unwrap = context
-        .iter()
-        .filter(|call| call.kind == CallSiteKind::Method && call.callee == expected_callee)
-        .collect::<Vec<_>>();
-
-    // Matrix: awaited-result receiver row.
-    // Source chain:
-    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
-    //   axum/src/serve/listener.rs:142 owns `ConnLimiter<T>::accept`.
-    //   axum/src/serve/listener.rs:143 calls
-    //   `self.sem.clone().acquire_owned().await.unwrap()`.
-    // Current contract: RAG owner-seeded call context preserves the DB-pinned
-    // `AwaitMethodCallResult(acquire_owned).unwrap` row as an external
-    // targetless frontier. It must expose zero traversal targets rather than
-    // guessing the concrete awaited result type or a local `unwrap` callee.
-    assert_eq!(
-        await_unwrap.len(),
-        1,
-        "RAG call context should expose exactly the listener AwaitMethodCallResult unwrap row: {context:#?}"
-    );
-
-    let call = await_unwrap[0];
-    assert_eq!(call.owner_id, owner);
-    assert_eq!(call.status, CallStatusKind::External);
-    assert_eq!(call.resolution, None);
-    assert!(
-        call.targets.is_empty(),
-        "AwaitMethodCallResult unwrap should remain targetless in RAG call context: {call:#?}"
-    );
-    let reach = rag
-        .exact_call_reach_for_owner(
-            owner,
-            CallPathOptions {
-                max_depth: 2,
-                max_paths: 128,
-            },
-        )?
-        .expect("call context enabled");
-    let external = reach
-        .external_frontier_calls
-        .iter()
-        .find(|frontier| frontier.site_id == call.site_id)
-        .unwrap_or_else(|| {
-            panic!(
-                "RAG reach should expose AwaitMethodCallResult unwrap in external frontier rows: {reach:#?}"
-            )
-        });
-    assert_eq!(external.owner_id, owner);
-    assert_eq!(external.status, CallStatusKind::External);
-    assert!(
-        external.targets.is_empty(),
-        "RAG external frontier call should remain targetless: {external:#?}"
-    );
-
-    Ok(())
 }
 
 #[derive(Debug)]

@@ -116,6 +116,16 @@ impl CallRelationResolver<'_> {
                 *method_span,
                 type_relations,
             )?,
+            MethodCallReceiver::SelfFieldMethodResult {
+                method_name,
+                method_span,
+                ..
+            } => self.resolve_local_result_method_call(
+                call,
+                method_name,
+                *method_span,
+                type_relations,
+            )?,
             MethodCallReceiver::EnumVariantBinding {
                 enum_path,
                 variant_name,
@@ -233,7 +243,7 @@ impl CallRelationResolver<'_> {
                 *method_span,
                 type_relations,
             ),
-            MethodCallReceiver::MethodResultField {
+            MethodCallReceiver::SelfFieldMethodResult {
                 method_name,
                 field_path,
                 ..
@@ -271,6 +281,7 @@ impl CallRelationResolver<'_> {
             | MethodCallReceiver::AwaitPathCallResult { .. }
             | MethodCallReceiver::AwaitResult
             | MethodCallReceiver::TryResult
+            | MethodCallReceiver::MethodResultField { .. }
             | MethodCallReceiver::Unsupported => Ok(false),
         }
     }
@@ -2019,6 +2030,16 @@ impl CallRelationResolver<'_> {
                 self.resolve_method_result_method_call(call, method_name, type_relations)
             }
             MethodCallReceiver::MethodResultLocalBinding {
+                method_name,
+                method_span,
+                ..
+            } => self.resolve_local_result_method_call(
+                call,
+                method_name,
+                *method_span,
+                type_relations,
+            ),
+            MethodCallReceiver::SelfFieldMethodResult {
                 method_name,
                 method_span,
                 ..

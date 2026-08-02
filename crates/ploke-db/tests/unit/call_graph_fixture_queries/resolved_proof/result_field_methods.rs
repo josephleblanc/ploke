@@ -123,8 +123,10 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
                 ),
                 ResolvedProofCall::method(
                     "instance_value",
-                    CallReceiver::MethodCallResult {
+                    CallReceiver::MethodResultField {
                         method_name: "clone_assoc".to_string(),
+                        method_span: (31263, 31287),
+                        field_path: path(&["value"]),
                     },
                     method_target,
                 ),

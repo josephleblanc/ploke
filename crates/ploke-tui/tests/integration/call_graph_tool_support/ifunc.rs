@@ -89,10 +89,6 @@ impl IfuncToolFixture {
     pub(crate) fn module_path_arg(&self) -> String {
         self.module_path.join("::")
     }
-
-    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
-        ctx_for_state(&self.state, call_id)
-    }
 }
 
 pub(crate) fn assert_ifunc_context(

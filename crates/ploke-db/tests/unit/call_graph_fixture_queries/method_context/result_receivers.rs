@@ -175,8 +175,10 @@ fn fixture_context_reads_projected_result_receiver_method_chains() -> Result<(),
         CallTargetKind::Method,
     );
 
-    let result_receiver = CallReceiver::MethodCallResult {
+    let result_receiver = CallReceiver::MethodResultField {
         method_name: "clone_assoc".to_string(),
+        method_span: (31263, 31287),
+        field_path: path(&["value"]),
     };
     let row = row_by_method_receiver(&context, "instance_value", &result_receiver);
     assert_resolved_target(

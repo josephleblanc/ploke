@@ -189,8 +189,10 @@ async fn call_context_collection_reads_real_result_field_receiver_rows() -> Resu
                     kind: CallSiteKind::Method,
                     callee: method_call(
                         "instance_value",
-                        CallReceiverInfo::MethodCallResult {
+                        CallReceiverInfo::MethodResultField {
                             method_name: "clone_assoc".to_string(),
+                            method_span: (31263, 31287),
+                            field_path: path(&["value"]),
                         },
                     ),
                     target: method_target,

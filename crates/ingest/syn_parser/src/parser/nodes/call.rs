@@ -506,6 +506,16 @@ pub enum MethodCallReceiver {
         /// Byte span of the initializer method call.
         method_span: (usize, usize),
     },
+    /// The receiver is the result of invoking a method directly on a field
+    /// rooted at `self`, such as `self.value.clone()`.
+    SelfFieldMethodResult {
+        /// Method name used by the receiver call.
+        method_name: String,
+        /// Byte span of the receiver method call.
+        method_span: (usize, usize),
+        /// Field/member projection path between `self` and the receiver method.
+        field_path: Vec<String>,
+    },
     /// The receiver is a field projection rooted at a method-call result, such
     /// as `self.project().future`.
     MethodResultField {

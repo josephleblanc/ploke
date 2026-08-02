@@ -65,9 +65,6 @@ pub(crate) struct ReceiverToolCase {
 
 #[derive(Clone, Copy)]
 enum ReceiverShape {
-    MethodResult {
-        method: &'static str,
-    },
     MethodResultField {
         method_name: &'static str,
         field_path: &'static [&'static str],
@@ -351,9 +348,6 @@ impl ReceiverToolCase {
 
     pub(crate) fn callee(&self) -> CallCalleeInfo {
         let receiver = match self.receiver {
-            ReceiverShape::MethodResult { method } => Some(CallReceiverInfo::MethodCallResult {
-                method_name: method.to_string(),
-            }),
             ReceiverShape::MethodResultField {
                 method_name,
                 field_path,
@@ -903,10 +897,6 @@ impl AmbiguousDynamicToolFixture {
     pub(crate) fn module_path_arg(&self) -> String {
         self.module_path.join("::")
     }
-
-    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
-        ctx_for_state(&self.state, call_id)
-    }
 }
 
 impl ReceiverToolFixture {
@@ -954,10 +944,6 @@ impl ReceiverToolFixture {
 
     pub(crate) fn module_path_arg(&self) -> String {
         self.module_path.join("::")
-    }
-
-    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
-        ctx_for_state(&self.state, call_id)
     }
 }
 
@@ -1072,10 +1058,6 @@ impl PathToolFixture {
 
     pub(crate) fn module_path_arg(&self) -> String {
         self.module_path.join("::")
-    }
-
-    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
-        ctx_for_state(&self.state, call_id)
     }
 }
 
@@ -1600,32 +1582,6 @@ pub(crate) fn assert_resolved_path_context_target(
     );
     assert_eq!(call.targets[0].relation, relation);
     (call.site_id, call.targets[0].target_id)
-}
-
-pub(crate) fn assert_path_context_count(
-    calls: &[serde_json::Value],
-    owner: Uuid,
-    callee: &CallCalleeInfo,
-    status: &CallStatusKind,
-    expected_count: usize,
-    label: &str,
-    tool: &str,
-) -> Vec<Uuid> {
-    let matching = matching_path_context(calls, owner, callee);
-    assert_eq!(
-        matching.len(),
-        expected_count,
-        "{tool} should return exactly {expected_count} path targetless rows for {label}: {calls:#?}"
-    );
-    for call in &matching {
-        assert_eq!(&call.status, status);
-        assert_eq!(call.resolution, None);
-        assert!(
-            call.targets.is_empty(),
-            "{tool} should not fabricate traversal targets for {label}: {call:#?}"
-        );
-    }
-    matching.iter().map(|call| call.site_id).collect()
 }
 
 pub(crate) fn assert_resolved_path_context_count(

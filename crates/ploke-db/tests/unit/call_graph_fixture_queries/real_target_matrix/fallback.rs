@@ -11,28 +11,94 @@ use super::source_lines::{
     assert_targetless_method_line_fanout,
 };
 
+const fn fanout(file_suffix: &'static str, lines: &'static [u32]) -> SourceLineFanout {
+    SourceLineFanout { file_suffix, lines }
+}
+
+#[derive(Clone, Copy)]
+struct CallableCase {
+    site: Uuid,
+    method: &'static str,
+    assignment: &'static str,
+    field: &'static str,
+    line: u32,
+    label: &'static str,
+}
+
+struct CallableSet {
+    owner: Uuid,
+    cases: [CallableCase; 2],
+}
+
+fn memchr_callable_set(db: &Database) -> Result<CallableSet, DbError> {
+    let owner = method_id_by_name_body_and_file_suffix(
+        db,
+        "run",
+        "fwd(t.haystack.as_bytes(), t.needle.as_bytes())",
+        "src/tests/substring/mod.rs",
+    )?;
+    let context = db.call_context_for_owner(owner)?;
+    let fwd = row_by_path(&context, &["fwd"]).site.id;
+    let rev = row_by_path(&context, &["rev"]).site.id;
+    #[rustfmt::skip]
+    let cases = [
+        CallableCase { site: fwd, method: "fwd", assignment: "self.fwd = Some(Box::new(search));", field: "fwd", line: 137, label: "memchr/src/tests/substring/mod.rs:94 boxed fwd dyn FnMut local binding" },
+        CallableCase { site: rev, method: "rev", assignment: "self.rev = Some(Box::new(search));", field: "rev", line: 153, label: "memchr/src/tests/substring/mod.rs:110 boxed rev dyn FnMut local binding" },
+    ];
+    Ok(CallableSet { owner, cases })
+}
+
+fn memchr_setter(db: &Database, case: &CallableCase) -> Result<Uuid, DbError> {
+    method_id_by_name_body_and_file_suffix(
+        db,
+        case.method,
+        case.assignment,
+        "src/tests/substring/mod.rs",
+    )
+}
+
+fn assert_field_shape(flow: &ploke_db::SelfFieldAssignmentFlow, case: &CallableCase, setter: Uuid) {
+    assert_eq!(flow.site.kind, CallSiteKind::Path);
+    assert_eq!(flow.site.path.as_ref(), Some(&path(&[case.field])));
+    assert_eq!(flow.status.status, CallStatusKind::Unsupported);
+    assert!(flow.status.resolution.is_none());
+    assert_eq!(flow.setter_id, setter);
+    assert_eq!(flow.parameter_binding.name, "search");
+}
+
+fn assert_edge_free(db: &Database, site: Uuid, label: &str) -> Result<(), DbError> {
+    assert!(
+        relations_for_site(db, site)?.rows.is_empty(),
+        "{label} must remain free of raw call_relation targets"
+    );
+    Ok(())
+}
+
+fn chrono_slice_site(db: &Database) -> Result<(Uuid, Uuid), DbError> {
+    let owner = method_id_by_name_body_and_file_suffix(
+        db,
+        "parse_next_item",
+        "self.queue.is_empty()",
+        "src/format/strftime.rs",
+    )?;
+    let site = assert_owner_method_targetless(
+        db,
+        owner,
+        "is_empty",
+        &CallReceiver::SelfField {
+            path: vec!["queue".to_string()],
+        },
+        CallStatusKind::External,
+        "chrono/src/format/strftime.rs:635 self.queue.is_empty",
+    )?;
+    Ok((owner, site))
+}
+
 #[test]
 fn chrono_alias_constructor_rows_reach_local_result_single() -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_CHRONO_CALL_GRAPH)?;
 
-    // Matrix: `Fallback Source Oracle Matrix` in
-    // docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md.
-    //
-    // Source chain:
-    //   chrono/src/offset/mod.rs:77 aliases `MappedLocalTime<T> = LocalResult<T>`.
-    //   chrono/src/offset/mod.rs:81-83 defines `LocalResult::Single(T)`.
-    //   chrono/src/offset/mod.rs:{143,156,468,502,535} call
-    //   `MappedLocalTime::Single(...)` through the alias.
-    //   chrono/src/offset/{fixed.rs:135,138,utc.rs:122,125},
-    //   chrono/src/offset/local/unix.rs:159, and
-    //   chrono/src/datetime/tests.rs:{75,79} are additional
-    //   fixture-projected direct constructor rows. The Unix row is visible in
-    //   the regenerated fixture because bare `#[cfg(unix)]` is now evaluated
-    //   as target-family cfg evidence.
-    //
-    // Expected traversal: every alias path call now reaches the underlying
-    // `LocalResult::Single` enum variant through the existing type-alias
-    // `TypeRelation::Ordinary` proof.
+    // All 12 MappedLocalTime::Single alias calls resolve to LocalResult::Single.
     let target = variant_id_by_enum_and_variant_names(&db, "LocalResult", "Single")?;
     assert_no_path_rows(&db, &["LocalResult", "Single"])?;
 
@@ -70,95 +136,30 @@ fn chrono_alias_constructor_rows_reach_local_result_single() -> Result<(), DbErr
     struct AliasCase {
         owner: &'static str,
         marker: &'static str,
-        file_suffix: &'static str,
+        file: &'static str,
         label: &'static str,
-        expected_count: usize,
+        count: usize,
     }
 
+    #[rustfmt::skip]
     let cases = [
-        AliasCase {
-            owner: "map",
-            marker: "MappedLocalTime::Single(f(v))",
-            file_suffix: "src/offset/mod.rs",
-            label: "chrono/src/offset/mod.rs:143 MappedLocalTime::Single",
-            expected_count: 1,
-        },
-        AliasCase {
-            owner: "and_then",
-            marker: "MappedLocalTime::Single(new)",
-            file_suffix: "src/offset/mod.rs",
-            label: "chrono/src/offset/mod.rs:156 MappedLocalTime::Single",
-            expected_count: 1,
-        },
-        AliasCase {
-            owner: "offset_from_local_date",
-            marker: "MappedLocalTime::Single(*self)",
-            file_suffix: "src/offset/fixed.rs",
-            label: "chrono/src/offset/fixed.rs:135 MappedLocalTime::Single",
-            expected_count: 1,
-        },
-        AliasCase {
-            owner: "offset_from_local_datetime",
-            marker: "MappedLocalTime::Single(*self)",
-            file_suffix: "src/offset/fixed.rs",
-            label: "chrono/src/offset/fixed.rs:138 MappedLocalTime::Single",
-            expected_count: 1,
-        },
-        AliasCase {
-            owner: "offset_from_local_date",
-            marker: "MappedLocalTime::Single(Utc)",
-            file_suffix: "src/offset/utc.rs",
-            label: "chrono/src/offset/utc.rs:122 MappedLocalTime::Single",
-            expected_count: 1,
-        },
-        AliasCase {
-            owner: "offset_from_local_datetime",
-            marker: "MappedLocalTime::Single(Utc)",
-            file_suffix: "src/offset/utc.rs",
-            label: "chrono/src/offset/utc.rs:125 MappedLocalTime::Single",
-            expected_count: 1,
-        },
-        AliasCase {
-            owner: "offset",
-            marker: "MappedLocalTime::Single(offset)",
-            file_suffix: "src/offset/local/unix.rs",
-            label: "chrono/src/offset/local/unix.rs:159 MappedLocalTime::Single",
-            expected_count: 1,
-        },
-        AliasCase {
-            owner: "offset_from_local_datetime",
-            marker: "Unexpected local time {local}",
-            file_suffix: "src/datetime/tests.rs",
-            label: "chrono/src/datetime/tests.rs:75 and :79 MappedLocalTime::Single",
-            expected_count: 2,
-        },
-        AliasCase {
-            owner: "timestamp_opt",
-            marker: "MappedLocalTime::Single(self.from_utc_datetime(&dt.naive_utc()))",
-            file_suffix: "src/offset/mod.rs",
-            label: "chrono/src/offset/mod.rs:468 MappedLocalTime::Single",
-            expected_count: 1,
-        },
-        AliasCase {
-            owner: "timestamp_millis_opt",
-            marker: "MappedLocalTime::Single(self.from_utc_datetime(&dt.naive_utc()))",
-            file_suffix: "src/offset/mod.rs",
-            label: "chrono/src/offset/mod.rs:502 MappedLocalTime::Single",
-            expected_count: 1,
-        },
-        AliasCase {
-            owner: "timestamp_micros",
-            marker: "MappedLocalTime::Single(self.from_utc_datetime(&dt.naive_utc()))",
-            file_suffix: "src/offset/mod.rs",
-            label: "chrono/src/offset/mod.rs:535 MappedLocalTime::Single",
-            expected_count: 1,
-        },
+        AliasCase { owner: "map", marker: "MappedLocalTime::Single(f(v))", file: "src/offset/mod.rs", label: "chrono/src/offset/mod.rs:143 MappedLocalTime::Single", count: 1 },
+        AliasCase { owner: "and_then", marker: "MappedLocalTime::Single(new)", file: "src/offset/mod.rs", label: "chrono/src/offset/mod.rs:156 MappedLocalTime::Single", count: 1 },
+        AliasCase { owner: "offset_from_local_date", marker: "MappedLocalTime::Single(*self)", file: "src/offset/fixed.rs", label: "chrono/src/offset/fixed.rs:135 MappedLocalTime::Single", count: 1 },
+        AliasCase { owner: "offset_from_local_datetime", marker: "MappedLocalTime::Single(*self)", file: "src/offset/fixed.rs", label: "chrono/src/offset/fixed.rs:138 MappedLocalTime::Single", count: 1 },
+        AliasCase { owner: "offset_from_local_date", marker: "MappedLocalTime::Single(Utc)", file: "src/offset/utc.rs", label: "chrono/src/offset/utc.rs:122 MappedLocalTime::Single", count: 1 },
+        AliasCase { owner: "offset_from_local_datetime", marker: "MappedLocalTime::Single(Utc)", file: "src/offset/utc.rs", label: "chrono/src/offset/utc.rs:125 MappedLocalTime::Single", count: 1 },
+        AliasCase { owner: "offset", marker: "MappedLocalTime::Single(offset)", file: "src/offset/local/unix.rs", label: "chrono/src/offset/local/unix.rs:159 MappedLocalTime::Single", count: 1 },
+        AliasCase { owner: "offset_from_local_datetime", marker: "Unexpected local time {local}", file: "src/datetime/tests.rs", label: "chrono/src/datetime/tests.rs:75 and :79 MappedLocalTime::Single", count: 2 },
+        AliasCase { owner: "timestamp_opt", marker: "MappedLocalTime::Single(self.from_utc_datetime(&dt.naive_utc()))", file: "src/offset/mod.rs", label: "chrono/src/offset/mod.rs:468 MappedLocalTime::Single", count: 1 },
+        AliasCase { owner: "timestamp_millis_opt", marker: "MappedLocalTime::Single(self.from_utc_datetime(&dt.naive_utc()))", file: "src/offset/mod.rs", label: "chrono/src/offset/mod.rs:502 MappedLocalTime::Single", count: 1 },
+        AliasCase { owner: "timestamp_micros", marker: "MappedLocalTime::Single(self.from_utc_datetime(&dt.naive_utc()))", file: "src/offset/mod.rs", label: "chrono/src/offset/mod.rs:535 MappedLocalTime::Single", count: 1 },
     ];
 
     let mut checked_sites = 0usize;
     for case in cases {
         let owner =
-            method_id_by_name_body_and_file_suffix(&db, case.owner, case.marker, case.file_suffix)?;
+            method_id_by_name_body_and_file_suffix(&db, case.owner, case.marker, case.file)?;
         let sites = assert_owner_path_resolved_count(
             &db,
             owner,
@@ -166,7 +167,7 @@ fn chrono_alias_constructor_rows_reach_local_result_single() -> Result<(), DbErr
             target,
             CallRelationKind::EnumVariantConstructor,
             CallTargetKind::Variant,
-            case.expected_count,
+            case.count,
             case.label,
         )?;
         checked_sites += sites.len();
@@ -183,27 +184,7 @@ fn chrono_alias_constructor_rows_reach_local_result_single() -> Result<(), DbErr
 fn chrono_try_receiver_method_rows_resolve_option_ok_or_oracles() -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_CHRONO_CALL_GRAPH)?;
 
-    // Matrix: `Fallback Source Oracle Matrix`.
-    //
-    // Source chain:
-    //   chrono/src/datetime/mod.rs:563 defines `DateTime<Tz>::naive_utc`.
-    //   chrono/src/format/parsed.rs:836 calls
-    //   `DateTime::from_timestamp_secs(ts).ok_or(...)?.naive_utc()`.
-    //   chrono/src/format/parsed.rs:953 calls
-    //   `DateTime::from_timestamp(...).ok_or(...)?.naive_utc()`.
-    //   chrono also exposes two cfg(test, feature = "clock") initialized
-    //   `Local::now()` receiver rows to the same target.
-    //   chrono/src/offset/mod.rs:520 calls
-    //   `DateTime::from_timestamp_nanos(nanos).naive_utc()`.
-    //   chrono/src/offset/mod.rs:468 and :502 call `dt.naive_utc()` from
-    //   `Some(dt)` match arms.
-    //
-    // Expected traversal: the receiver is a `?` applied after `Option::ok_or`
-    // on a local `DateTime::from_timestamp*` associated function returning
-    // `Option<Self>`, so the outer method call reaches `DateTime::naive_utc`.
-    // The same target-centered query also includes the initialized-local,
-    // path-call-result, and self-value receiver rows that resolve to the same
-    // method in the regenerated chrono corpus.
+    // Preserve all seven exact DateTime::naive_utc receiver shapes and edges.
     let target = method_id_by_name_body_and_file_suffix(
         &db,
         "naive_utc",
@@ -217,17 +198,10 @@ fn chrono_try_receiver_method_rows_resolve_option_ok_or_oracles() -> Result<(), 
         label: &'static str,
     }
 
+    #[rustfmt::skip]
     let cases = [
-        TryCase {
-            owner: "to_naive_datetime_with_offset",
-            marker: "DateTime::from_timestamp_secs(ts).ok_or(OUT_OF_RANGE)?.naive_utc()",
-            label: "chrono/src/format/parsed.rs:836 DateTime...?.naive_utc",
-        },
-        TryCase {
-            owner: "to_datetime_with_timezone",
-            marker: "DateTime::from_timestamp(timestamp, nanosecond).ok_or(OUT_OF_RANGE)?.naive_utc()",
-            label: "chrono/src/format/parsed.rs:953 DateTime...?.naive_utc",
-        },
+        TryCase { owner: "to_naive_datetime_with_offset", marker: "DateTime::from_timestamp_secs(ts).ok_or(OUT_OF_RANGE)?.naive_utc()", label: "chrono/src/format/parsed.rs:836 DateTime...?.naive_utc" },
+        TryCase { owner: "to_datetime_with_timezone", marker: "DateTime::from_timestamp(timestamp, nanosecond).ok_or(OUT_OF_RANGE)?.naive_utc()", label: "chrono/src/format/parsed.rs:953 DateTime...?.naive_utc" },
     ];
 
     let receiver = CallReceiver::TryMethodCallResult {
@@ -245,49 +219,23 @@ fn chrono_try_receiver_method_rows_resolve_option_ok_or_oracles() -> Result<(), 
         &callers,
         "chrono DateTime::naive_utc try callers",
     )?;
-    assert_eq!(
-        callers
-            .iter()
-            .filter(|caller| caller.site.receiver.as_ref() == Some(&receiver))
-            .count(),
-        2,
-        "DateTime::naive_utc should retain exactly the two parsed.rs ok_or try-receiver rows: {callers:#?}"
-    );
-    assert_eq!(
-        callers
-            .iter()
-            .filter(|caller| {
-                caller.site.receiver.as_ref()
-                    == Some(&CallReceiver::InitializedLocalBinding {
-                        name: "now".to_string(),
-                        init_path: path(&["Local", "now"]),
-                    })
-            })
-            .count(),
-        2,
-        "DateTime::naive_utc should retain exactly the two cfg(test) Local::now initialized-local rows: {callers:#?}"
-    );
-    assert_eq!(
-        callers
-            .iter()
-            .filter(|caller| {
-                caller.site.receiver.as_ref()
-                    == Some(&CallReceiver::PathCallResult {
-                        path: path(&["DateTime", "from_timestamp_nanos"]),
-                    })
-            })
-            .count(),
-        1,
-        "DateTime::naive_utc should retain the DateTime::from_timestamp_nanos path-call-result row: {callers:#?}"
-    );
-    assert_eq!(
-        callers
-            .iter()
-            .filter(|caller| caller.site.receiver.as_ref() == Some(&CallReceiver::SelfValue))
-            .count(),
-        2,
-        "DateTime::naive_utc should retain the two Some(dt) self-value rows: {callers:#?}"
-    );
+    #[rustfmt::skip]
+    let receiver_counts = [
+        (receiver.clone(), 2, "parsed.rs:836/:953 ok_or try receivers"),
+        (CallReceiver::InitializedLocalBinding { name: "now".to_string(), init_path: path(&["Local", "now"]) }, 2, "cfg(test) Local::now initialized receivers"),
+        (CallReceiver::PathCallResult { path: path(&["DateTime", "from_timestamp_nanos"]) }, 1, "offset/mod.rs:520 from_timestamp_nanos result receiver"),
+        (CallReceiver::SelfValue, 2, "offset/mod.rs:468/:502 Some(dt) self receivers"),
+    ];
+    for (shape, count, label) in receiver_counts {
+        assert_eq!(
+            callers
+                .iter()
+                .filter(|caller| caller.site.receiver.as_ref() == Some(&shape))
+                .count(),
+            count,
+            "DateTime::naive_utc should retain exactly {count} {label}: {callers:#?}"
+        );
+    }
 
     for case in cases {
         let owner = method_id_by_name_body_and_file_suffix(
@@ -345,20 +293,7 @@ fn chrono_parse_internal_function_pointer_match_tuple_binding_exposes_ambiguous_
 -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_CHRONO_CALL_GRAPH)?;
 
-    // Matrix: `Fallback Source Oracle Matrix`.
-    //
-    // Source chain:
-    //   chrono/src/format/parse.rs:378 defines
-    //   `type Setter = fn(&mut Parsed, i64) -> ParseResult<()>`.
-    //   chrono/src/format/parse.rs:380-405 binds
-    //   `(width, signed, set): (usize, bool, Setter)` from a `match *spec`
-    //   whose tuple arms contain setter function and method items.
-    //   chrono/src/format/parse.rs:421 calls `set(parsed, v)?`.
-    //
-    // Expected result: the parser preserves the per-position setter paths from
-    // the tuple match arms, but keeps the call ambiguous because the selected
-    // branch depends on the runtime `spec` value. This exposes finite candidate
-    // evidence without admitting a resolved traversal edge.
+    // parse.rs:421 retains the exact 21 runtime-selected setter candidates without reach.
     let owner = function_id_by_name(&db, "parse_internal")?;
     let target_label = "chrono/src/format/parse.rs:421 set(parsed, v)";
     let context = db.call_context_for_owner(owner)?;
@@ -397,27 +332,14 @@ fn chrono_parse_internal_function_pointer_match_tuple_binding_exposes_ambiguous_
         );
     }
 
-    for method in [
-        "set_year",
-        "set_year_div_100",
-        "set_year_mod_100",
-        "set_isoyear",
-        "set_isoyear_div_100",
-        "set_isoyear_mod_100",
-        "set_quarter",
-        "set_month",
-        "set_day",
-        "set_week_from_sun",
-        "set_week_from_mon",
-        "set_isoweek",
-        "set_ordinal",
-        "set_hour",
-        "set_hour12",
-        "set_minute",
-        "set_second",
-        "set_nanosecond",
-        "set_timestamp",
-    ] {
+    #[rustfmt::skip]
+    let methods = [
+        "set_year", "set_year_div_100", "set_year_mod_100", "set_isoyear", "set_isoyear_div_100",
+        "set_isoyear_mod_100", "set_quarter", "set_month", "set_day", "set_week_from_sun",
+        "set_week_from_mon", "set_isoweek", "set_ordinal", "set_hour", "set_hour12", "set_minute",
+        "set_second", "set_nanosecond", "set_timestamp",
+    ];
+    for method in methods {
         let target = method_id_by_impl_self_type_name(&db, "Parsed", method)?;
         assert!(
             row.targets.iter().any(|candidate| {
@@ -466,16 +388,7 @@ fn chrono_parse_internal_function_pointer_match_tuple_binding_exposes_ambiguous_
 fn chrono_guarded_match_arm_slice_method_guard_is_external_frontier() -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_CHRONO_CALL_GRAPH)?;
 
-    // Matrix: `Fallback Source Oracle Matrix`.
-    //
-    // Source chain:
-    //   chrono/src/format/strftime.rs:193-198 defines `StrftimeItems::queue`.
-    //   chrono/src/format/strftime.rs:635 guards a match arm with
-    //   `self.queue.is_empty()`.
-    //
-    // Expected traversal: the named self-field type is source-visible as
-    // `&'static [Item<'static>]`, so `is_empty` is classified as an external
-    // slice frontier. No local traversal edge is fabricated.
+    // strftime.rs:635 remains an exact external, edge-free slice frontier.
     assert_targetless_method_rows(
         &db,
         "is_empty",
@@ -491,28 +404,9 @@ fn chrono_guarded_match_arm_slice_method_guard_is_external_frontier() -> Result<
         "SelfField",
         Some(&["queue"]),
         CallStatusKind::External,
-        &[SourceLineFanout {
-            file_suffix: "src/format/strftime.rs",
-            lines: &[635],
-        }],
+        &[fanout("src/format/strftime.rs", &[635])],
     )?;
-
-    let owner = method_id_by_name_body_and_file_suffix(
-        &db,
-        "parse_next_item",
-        "self.queue.is_empty()",
-        "src/format/strftime.rs",
-    )?;
-    assert_owner_method_targetless(
-        &db,
-        owner,
-        "is_empty",
-        &CallReceiver::SelfField {
-            path: vec!["queue".to_string()],
-        },
-        CallStatusKind::External,
-        "chrono/src/format/strftime.rs:635 self.queue.is_empty",
-    )?;
+    chrono_slice_site(&db)?;
 
     Ok(())
 }
@@ -521,33 +415,8 @@ fn chrono_guarded_match_arm_slice_method_guard_is_external_frontier() -> Result<
 fn chrono_guarded_match_arm_slice_method_guard_reach_is_bounded() -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_CHRONO_CALL_GRAPH)?;
 
-    // Matrix: `Fallback Source Oracle Matrix` in
-    // docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md.
-    //
-    // Source chain:
-    //   chrono/src/format/strftime.rs:193-198 defines `StrftimeItems::queue`.
-    //   chrono/src/format/strftime.rs:635 guards a match arm with
-    //   `self.queue.is_empty()`.
-    //
-    // Expected traversal: owner reach over the long `parse_next_item` body must
-    // remain bounded and keep the slice method call as an external frontier,
-    // without fabricating a local `is_empty` traversal edge.
-    let owner = method_id_by_name_body_and_file_suffix(
-        &db,
-        "parse_next_item",
-        "self.queue.is_empty()",
-        "src/format/strftime.rs",
-    )?;
-    let site = assert_owner_method_targetless(
-        &db,
-        owner,
-        "is_empty",
-        &CallReceiver::SelfField {
-            path: vec!["queue".to_string()],
-        },
-        CallStatusKind::External,
-        "chrono/src/format/strftime.rs:635 self.queue.is_empty",
-    )?;
+    // Bounded owner reach must retain, but never traverse, the slice frontier.
+    let (owner, site) = chrono_slice_site(&db)?;
 
     let report = db.call_reach_for_owner(
         owner,
@@ -565,11 +434,7 @@ fn chrono_guarded_match_arm_slice_method_guard_reach_is_bounded() -> Result<(), 
         });
     assert_external_targetless(frontier);
     assert_eq!(frontier.site.owner_id, owner);
-    assert_eq!(
-        relations_for_site(&db, site)?.rows.len(),
-        0,
-        "slice method frontier must not fabricate a local call edge"
-    );
+    assert_edge_free(&db, site, "slice method frontier after owner reach")?;
 
     Ok(())
 }
@@ -578,33 +443,8 @@ fn chrono_guarded_match_arm_slice_method_guard_reach_is_bounded() -> Result<(), 
 fn chrono_guarded_match_arm_external_summary_need_is_bounded() -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_CHRONO_CALL_GRAPH)?;
 
-    // Matrix: `Fallback Source Oracle Matrix` in
-    // docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md.
-    //
-    // Source chain:
-    //   chrono/src/format/strftime.rs:193-198 defines `StrftimeItems::queue`.
-    //   chrono/src/format/strftime.rs:635 guards a match arm with
-    //   `self.queue.is_empty()`.
-    //
-    // Expected traversal: proof-needs queries over the long `parse_next_item`
-    // body must remain bounded, keep the slice call as an external summary
-    // need, and avoid creating a local `is_empty` edge.
-    let owner = method_id_by_name_body_and_file_suffix(
-        &db,
-        "parse_next_item",
-        "self.queue.is_empty()",
-        "src/format/strftime.rs",
-    )?;
-    let site = assert_owner_method_targetless(
-        &db,
-        owner,
-        "is_empty",
-        &CallReceiver::SelfField {
-            path: vec!["queue".to_string()],
-        },
-        CallStatusKind::External,
-        "chrono/src/format/strftime.rs:635 self.queue.is_empty",
-    )?;
+    // Bounded proof-needs retain the missing-summary blocker without adding an edge.
+    let (owner, site) = chrono_slice_site(&db)?;
     let projected = db.project_call_proof_facts_for_owner(owner, "bd:corpus-chrono-call-graph")?;
     assert!(
         projected >= 2,
@@ -632,11 +472,7 @@ fn chrono_guarded_match_arm_external_summary_need_is_bounded() -> Result<(), DbE
             .any(|reason| reason == "external_dependency_summary_missing"),
         "need should preserve the missing-summary blocker: {need:#?}"
     );
-    assert_eq!(
-        relations_for_site(&db, site)?.rows.len(),
-        0,
-        "external-summary needs must not fabricate a local call edge"
-    );
+    assert_edge_free(&db, site, "slice method frontier after proof-needs query")?;
 
     Ok(())
 }
@@ -645,38 +481,15 @@ fn chrono_guarded_match_arm_external_summary_need_is_bounded() -> Result<(), DbE
 fn memchr_function_pointer_field_calls_preserve_ambiguous_candidates() -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_MEMCHR_CALL_GRAPH)?;
 
-    // Matrix: `Fallback Source Oracle Matrix`.
-    //
-    // Source chain:
-    //   memchr/src/memmem/searcher.rs:33-35 defines `Searcher.call`.
-    //   memchr/src/memmem/searcher.rs:222 calls
-    //   `(self.call)(self, prestate, haystack, needle)`.
-    //   memchr/src/memmem/searcher.rs:604-605 defines `Prefilter.call`.
-    //   memchr/src/memmem/searcher.rs:718 calls `(self.call)(self, haystack)`.
-    //
-    // Current model: both function-pointer field calls are structural dynamic
-    // rows owned by methods named `find`. Local initializer proof can bound the
-    // cfg-visible helper function candidates, so the rows are ambiguous rather
-    // than targetless. Missing cfg-gated architecture helpers are not invented
-    // as candidates for this fixture.
-    let searcher_candidates = function_ids_by_names(
-        &db,
-        &[
-            "searcher_kind_empty",
-            "searcher_kind_one_byte",
-            "searcher_kind_two_way",
-            "searcher_kind_two_way_with_prefilter",
-            "searcher_kind_sse2",
-            "searcher_kind_avx2",
-        ],
-    )?;
+    // Searcher/Prefilter function fields retain exact finite ambiguous candidate sets.
+    #[rustfmt::skip]
+    let searcher_candidates = function_ids_by_names(&db, &[
+        "searcher_kind_empty", "searcher_kind_one_byte", "searcher_kind_two_way",
+        "searcher_kind_two_way_with_prefilter", "searcher_kind_sse2", "searcher_kind_avx2",
+    ])?;
+    #[rustfmt::skip]
     let prefilter_candidates = function_ids_by_names(
-        &db,
-        &[
-            "prefilter_kind_fallback",
-            "prefilter_kind_sse2",
-            "prefilter_kind_avx2",
-        ],
+        &db, &["prefilter_kind_fallback", "prefilter_kind_sse2", "prefilter_kind_avx2"],
     )?;
 
     let searcher_find = method_id_by_name_body_and_file_suffix(
@@ -748,33 +561,21 @@ fn memchr_function_pointer_field_calls_preserve_ambiguous_candidates() -> Result
 fn memchr_arbitrary_expression_dynamic_callee_projects_generated_rows() -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_MEMCHR_CALL_GRAPH)?;
 
-    // Matrix: `Fallback Source Oracle Matrix`.
-    //
-    // Source chain:
-    //   memchr/src/arch/x86_64/memchr.rs:72-74 defines `Fn`, `RealFn`, and `FN`.
-    //   memchr/src/arch/x86_64/memchr.rs:153 invokes
-    //   `core::mem::transmute::<Fn, RealFn>(fun)(...)`.
-    //   macro invocations at lines 180, 203, 227, 252, 278, 305, and 326
-    //   instantiate that arbitrary-expression dynamic callee.
-    //
-    // Expected traversal: the bounded source-oracle projection records the
-    // generated inner path call and outer arbitrary-expression dynamic call,
-    // but both remain targetless. The inner path is a `core` external frontier;
-    // the outer returned-path dynamic call inherits that external frontier and
-    // does not fabricate a concrete function-pointer target.
+    // x86_64/memchr.rs:153 expanded at :180/:203/:227/:252/:278/:305/:326 stays edge-free.
     assert_targetless_path_rows(
         &db,
         &["core", "mem", "transmute"],
         CallStatusKind::External,
         7,
     )?;
-    assert_memchr_ifunc_owner(&db, "memchr_raw", "unsafe_ifunc!", 3, "memchr_raw")?;
-    assert_memchr_ifunc_owner(&db, "memrchr_raw", "unsafe_ifunc!", 3, "memrchr_raw")?;
-    assert_memchr_ifunc_owner(&db, "memchr2_raw", "unsafe_ifunc!", 4, "memchr2_raw")?;
-    assert_memchr_ifunc_owner(&db, "memrchr2_raw", "unsafe_ifunc!", 4, "memrchr2_raw")?;
-    assert_memchr_ifunc_owner(&db, "memchr3_raw", "unsafe_ifunc!", 5, "memchr3_raw")?;
-    assert_memchr_ifunc_owner(&db, "memrchr3_raw", "unsafe_ifunc!", 5, "memrchr3_raw")?;
-    assert_memchr_ifunc_owner(&db, "count_raw", "unsafe_ifunc!", 3, "count_raw")?;
+    #[rustfmt::skip]
+    let cases = [
+        ("memchr_raw", 3), ("memrchr_raw", 3), ("memchr2_raw", 4), ("memrchr2_raw", 4),
+        ("memchr3_raw", 5), ("memrchr3_raw", 5), ("count_raw", 3),
+    ];
+    for (owner, args) in cases {
+        assert_memchr_ifunc_owner(&db, owner, "unsafe_ifunc!", args, owner)?;
+    }
 
     Ok(())
 }
@@ -784,31 +585,37 @@ fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -
 {
     let db = setup_call_graph_db(&CORPUS_MEMCHR_CALL_GRAPH)?;
 
-    // Matrix: `Fallback Source Oracle Matrix`.
-    //
-    // Source chain:
-    //   memchr/src/tests/substring/mod.rs:67-71 defines boxed `fwd`/`rev`
-    //   `dyn FnMut` fields.
-    //   memchr/src/tests/substring/mod.rs:94 calls
-    //   `fwd(t.haystack.as_bytes(), t.needle.as_bytes())`.
-    //   memchr/src/tests/substring/mod.rs:110 calls
-    //   `rev(t.haystack.as_bytes(), t.needle.as_bytes())`.
-    //   setters at lines 137 and 153 bind the closures into those fields.
-    //
-    // Current model gap: callable trait-object local bindings are visible as
-    // targetless path rows, but boxed `dyn FnMut` dispatch is not resolved and
-    // must not fabricate call edges to the setter closures.
+    // substring/mod.rs:67-71/:94/:110/:137/:153 retain boxed fwd/rev setter proof, never edges.
     assert_no_dynamic_rows_by_method_name(&db, "run")?;
-    for (method_name, assignment, field_name, line) in [
-        ("fwd", "self.fwd = Some(Box::new(search));", "fwd", 137),
-        ("rev", "self.rev = Some(Box::new(search));", "rev", 153),
-    ] {
-        let setter = method_id_by_name_body_and_file_suffix(
+    let CallableSet { owner, cases } = memchr_callable_set(&db)?;
+    assert_no_owner_dynamic_rows(
+        &db,
+        owner,
+        "memchr/src/tests/substring/mod.rs:94 and :110 boxed dyn FnMut calls",
+    )?;
+    for case in &cases {
+        let site = assert_owner_path_targetless(
             &db,
-            method_name,
-            assignment,
-            "src/tests/substring/mod.rs",
+            owner,
+            &[case.method],
+            CallStatusKind::Unsupported,
+            case.label,
         )?;
+        assert_eq!(
+            site, case.site,
+            "{} should retain its exact site",
+            case.label
+        );
+    }
+
+    let flows = db.self_field_assignment_flows_for_owner(owner)?;
+    assert_eq!(
+        flows.len(),
+        3,
+        "Runner::run should expose substring fwd/rev plus packedpair fwd setter flows: {flows:#?}"
+    );
+    for case in &cases {
+        let setter = memchr_setter(&db, case)?;
         let bindings = db.local_bindings_for_owner(setter)?;
         let search = bindings
             .iter()
@@ -819,25 +626,26 @@ fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -
             })
             .unwrap_or_else(|| {
                 panic!(
-                    "memchr/src/tests/substring/mod.rs:{line} should persist the setter search parameter: {bindings:#?}"
+                    "memchr/src/tests/substring/mod.rs:{} should persist the setter search parameter: {bindings:#?}",
+                    case.line
                 )
             });
         let field = bindings
             .iter()
             .find(|binding| {
                 binding.kind == "FieldAssignment"
-                    && binding.name == format!("self.{field_name}")
+                    && binding.name == format!("self.{}", case.field)
                     && binding.source_kind == "SelfFieldAssignment"
-                    && binding.source_path.as_ref() == Some(&path(&[field_name]))
+                    && binding.source_path.as_ref() == Some(&path(&[case.field]))
                     && binding.callee_kind.as_deref() == Some("Path")
                     && binding.callee_path.as_ref() == Some(&path(&["search"]))
             })
             .unwrap_or_else(|| {
                 panic!(
-                    "memchr/src/tests/substring/mod.rs:{line} should persist the self.{field_name} setter assignment source: {bindings:#?}"
+                    "memchr/src/tests/substring/mod.rs:{} should persist the self.{} setter assignment source: {bindings:#?}",
+                    case.line, case.field
                 )
             });
-
         let edges = db.local_binding_edges_for_owner(setter)?;
         assert!(
             edges.iter().any(|edge| edge.relation
@@ -845,7 +653,8 @@ fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -
                 && edge.source_id == setter
                 && edge.target_id == field.id
                 && edge.target_kind == "LocalBinding"),
-            "memchr/src/tests/substring/mod.rs:{line} should expose owner-to-field-assignment evidence: {edges:#?}"
+            "{} should expose owner-to-field-assignment evidence: {edges:#?}",
+            case.label
         );
         assert!(
             edges.iter().any(|edge| edge.relation
@@ -854,84 +663,26 @@ fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -
                 && edge.target_id == search.id
                 && edge.source_kind == "LocalBinding"
                 && edge.target_kind == "LocalBinding"),
-            "memchr/src/tests/substring/mod.rs:{line} should link self.{field_name} assignment to the search parameter: {edges:#?}"
+            "{} should link its field assignment to the search parameter: {edges:#?}",
+            case.label
         );
-    }
-
-    let owner = method_id_by_name_body_and_file_suffix(
-        &db,
-        "run",
-        "fwd(t.haystack.as_bytes(), t.needle.as_bytes())",
-        "src/tests/substring/mod.rs",
-    )?;
-    assert_no_owner_dynamic_rows(
-        &db,
-        owner,
-        "memchr/src/tests/substring/mod.rs:94 and :110 boxed dyn FnMut calls",
-    )?;
-    let fwd_site = assert_owner_path_targetless(
-        &db,
-        owner,
-        &["fwd"],
-        CallStatusKind::Unsupported,
-        "memchr/src/tests/substring/mod.rs:94 boxed fwd dyn FnMut local binding",
-    )?;
-    let rev_site = assert_owner_path_targetless(
-        &db,
-        owner,
-        &["rev"],
-        CallStatusKind::Unsupported,
-        "memchr/src/tests/substring/mod.rs:110 boxed rev dyn FnMut local binding",
-    )?;
-
-    let flows = db.self_field_assignment_flows_for_owner(owner)?;
-    assert_eq!(
-        flows.len(),
-        3,
-        "Runner::run should expose same-type setter-side source evidence without resolving boxed dyn FnMut dispatch. The current memchr corpus has substring fwd/rev plus packedpair fwd Runner setters: {flows:#?}"
-    );
-    for (site, method_name, assignment, field_name, line) in [
-        (
-            fwd_site,
-            "fwd",
-            "self.fwd = Some(Box::new(search));",
-            "fwd",
-            137,
-        ),
-        (
-            rev_site,
-            "rev",
-            "self.rev = Some(Box::new(search));",
-            "rev",
-            153,
-        ),
-    ] {
-        let setter = method_id_by_name_body_and_file_suffix(
-            &db,
-            method_name,
-            assignment,
-            "src/tests/substring/mod.rs",
-        )?;
         let flow = flows
             .iter()
-            .find(|flow| flow.site.id == site && flow.setter_id == setter)
+            .find(|flow| flow.site.id == case.site && flow.setter_id == setter)
             .unwrap_or_else(|| {
                 panic!(
-                    "memchr/src/tests/substring/mod.rs:{line} should expose a self-field assignment source flow: {flows:#?}"
+                    "{} should expose a self-field assignment source flow: {flows:#?}",
+                    case.label
                 )
             });
-        assert_eq!(flow.site.kind, CallSiteKind::Path);
-        assert_eq!(flow.site.path.as_ref(), Some(&path(&[field_name])));
-        assert_eq!(flow.status.status, CallStatusKind::Unsupported);
-        assert!(flow.status.resolution.is_none());
+        assert_field_shape(flow, case, setter);
         assert_eq!(flow.owner_type, "Runner");
-        assert_eq!(flow.setter_id, setter);
         assert_eq!(flow.assignment_binding.owner_id, setter);
         assert_eq!(flow.assignment_binding.kind, "FieldAssignment");
         assert_eq!(flow.assignment_binding.source_kind, "SelfFieldAssignment");
         assert_eq!(
             flow.assignment_binding.source_path.as_ref(),
-            Some(&path(&[field_name]))
+            Some(&path(&[case.field]))
         );
         assert_eq!(flow.assignment_binding.callee_kind.as_deref(), Some("Path"));
         assert_eq!(
@@ -940,7 +691,6 @@ fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -
         );
         assert_eq!(flow.parameter_binding.owner_id, setter);
         assert_eq!(flow.parameter_binding.kind, "ParameterBinding");
-        assert_eq!(flow.parameter_binding.name, "search");
         assert_eq!(flow.parameter_binding.source_kind, "Parameter");
         assert_eq!(
             flow.source_edge.relation,
@@ -950,10 +700,9 @@ fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -
         assert_eq!(flow.source_edge.target_id, flow.parameter_binding.id);
     }
 
-    db.upsert_proof_fact_values(&[
-        ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_blocker(fwd_site),
-        ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_blocker(rev_site),
-    ])?;
+    db.upsert_proof_fact_values(&cases.map(|case| {
+        ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_blocker(case.site)
+    }))?;
 
     let needs = db.runtime_dispatch_needs_for_owner(
         owner,
@@ -962,44 +711,34 @@ fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -
             max_paths: 16,
         },
     )?;
-    for (site, label) in [
-        (
-            fwd_site,
-            "memchr/src/tests/substring/mod.rs:94 boxed fwd dyn FnMut local binding",
-        ),
-        (
-            rev_site,
-            "memchr/src/tests/substring/mod.rs:110 boxed rev dyn FnMut local binding",
-        ),
-    ] {
+    for case in &cases {
         let need = needs
             .iter()
-            .find(|need| need.call_site.site.id == site)
+            .find(|need| need.call_site.site.id == case.site)
             .unwrap_or_else(|| {
                 panic!(
-                    "{label} should be listed as an owner-scoped runtime-dispatch need: {needs:#?}"
+                    "{} should be listed in runtime-dispatch needs: {needs:#?}",
+                    case.label
                 )
             });
         assert!(
             need.paths_to_owner.is_empty(),
-            "{label} is a direct boxed dyn FnMut frontier and should not need an intermediate path: {need:#?}"
+            "{} should be a direct frontier: {need:#?}",
+            case.label
         );
         assert!(
             need.blocker_reasons
                 .iter()
                 .any(|reason| reason == "dynamic_dispatch_unbounded"),
-            "{label} should retain the dynamic dispatch blocker: {need:#?}"
+            "{} should retain the dynamic dispatch blocker: {need:#?}",
+            case.label
         );
-        assert!(
-            relations_for_site(&db, site)?.rows.is_empty(),
-            "{label} runtime-dispatch proof queue must not fabricate a boxed dyn FnMut edge"
-        );
+        assert_edge_free(&db, case.site, case.label)?;
     }
 
-    db.upsert_proof_fact_values(&[
-        ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_summary(fwd_site),
-        ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_summary(rev_site),
-    ])?;
+    db.upsert_proof_fact_values(&cases.map(|case| {
+        ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_summary(case.site)
+    }))?;
     let after = db.runtime_dispatch_needs_for_owner(
         owner,
         CallPathOptions {
@@ -1007,24 +746,13 @@ fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -
             max_paths: 16,
         },
     )?;
-    for (site, label) in [
-        (
-            fwd_site,
-            "memchr/src/tests/substring/mod.rs:94 boxed fwd dyn FnMut local binding",
-        ),
-        (
-            rev_site,
-            "memchr/src/tests/substring/mod.rs:110 boxed rev dyn FnMut local binding",
-        ),
-    ] {
+    for case in &cases {
         assert!(
-            after.iter().all(|need| need.call_site.site.id != site),
-            "{label} admitted runtime-dispatch summary should discharge the proof-authoring need: {after:#?}"
+            after.iter().all(|need| need.call_site.site.id != case.site),
+            "{} summary should discharge the proof need: {after:#?}",
+            case.label
         );
-        assert!(
-            relations_for_site(&db, site)?.rows.is_empty(),
-            "{label} admitted runtime-dispatch summary must not fabricate a boxed dyn FnMut edge"
-        );
+        assert_edge_free(&db, case.site, case.label)?;
     }
 
     let projected = db.project_call_proof_facts_for_owner(owner, "bd:corpus-memchr-call-graph")?;
@@ -1033,45 +761,25 @@ fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -
         "memchr boxed dyn FnMut owner should project call_site and call_resolution rows for fwd/rev"
     );
     let blockers = db.proof_blockers()?;
-    for (site, label) in [
-        (
-            fwd_site,
-            "memchr/src/tests/substring/mod.rs:94 boxed fwd dyn FnMut local binding",
-        ),
-        (
-            rev_site,
-            "memchr/src/tests/substring/mod.rs:110 boxed rev dyn FnMut local binding",
-        ),
-    ] {
+    let proof_rows = db.proof_graphrag_context("boxed dyn FnMut dispatch")?;
+    for case in &cases {
         assert_blocked_resolution_proof(
             &db,
-            site,
+            case.site,
             "type_resolution_missing",
             "src/tests/substring/mod.rs",
-            label,
+            case.label,
         )?;
-        let site = site.to_string();
+        let site = case.site.to_string();
         assert!(
             blockers.iter().any(|proof| {
                 proof.call_site_id.as_deref() == Some(site.as_str())
                     && proof.reason == "dynamic_dispatch_unbounded"
                     && proof.status == "blocked"
             }),
-            "{label} should expose an explicit dynamic dispatch proof blocker: {blockers:#?}"
+            "{} should expose an explicit dispatch blocker: {blockers:#?}",
+            case.label
         );
-    }
-    let proof_rows = db.proof_graphrag_context("boxed dyn FnMut dispatch")?;
-    for (site, label) in [
-        (
-            fwd_site,
-            "memchr/src/tests/substring/mod.rs:94 boxed fwd dyn FnMut local binding",
-        ),
-        (
-            rev_site,
-            "memchr/src/tests/substring/mod.rs:110 boxed rev dyn FnMut local binding",
-        ),
-    ] {
-        let site = site.to_string();
         assert!(
             proof_rows.iter().any(|proof| {
                 proof.kind == "proof_blocker"
@@ -1079,7 +787,8 @@ fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -
                     && proof.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
                     && proof.status.as_deref() == Some("blocked")
             }),
-            "{label} should be retrievable as explicit boxed dyn FnMut dispatch proof context: {proof_rows:#?}"
+            "{} should be retrievable as dispatch proof context: {proof_rows:#?}",
+            case.label
         );
     }
 
@@ -1090,30 +799,8 @@ fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -
 fn memchr_callable_trait_object_setter_arguments_remain_proof_only() -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_MEMCHR_CALL_GRAPH)?;
 
-    // Matrix: `Fallback Source Oracle Matrix`.
-    //
-    // Source chain:
-    //   memchr/src/tests/substring/mod.rs:94 calls boxed `fwd(...)`.
-    //   memchr/src/tests/substring/mod.rs:110 calls boxed `rev(...)`.
-    //   memchr/src/tests/substring/mod.rs:133-154 stores setter parameter
-    //   `search` into `self.fwd` / `self.rev` through `Some(Box::new(search))`.
-    //   Real callers such as src/tests/substring/naive.rs:38,43 and
-    //   src/memmem/mod.rs:762-771 call `Runner::new().fwd(...)` / `.rev(...)`
-    //   with source-visible callable arguments.
-    //
-    // Expected proof: the owner-scoped flow composes the targetless boxed
-    // dyn-FnMut call with setter assignment evidence and the incoming setter
-    // callsite's `ArgumentSuppliesParameter` edge. It must not turn the boxed
-    // dyn dispatch into a local traversal edge.
-    let owner = method_id_by_name_body_and_file_suffix(
-        &db,
-        "run",
-        "fwd(t.haystack.as_bytes(), t.needle.as_bytes())",
-        "src/tests/substring/mod.rs",
-    )?;
-    let context = db.call_context_for_owner(owner)?;
-    let fwd_site = row_by_path(&context, &["fwd"]).site.id;
-    let rev_site = row_by_path(&context, &["rev"]).site.id;
+    // substring/mod.rs:94/:110 and setters :137/:153 retain argument proof, never edges.
+    let CallableSet { owner, cases } = memchr_callable_set(&db)?;
 
     let flows = db.self_field_assignment_argument_flows_for_owner(owner)?;
     assert!(
@@ -1121,54 +808,27 @@ fn memchr_callable_trait_object_setter_arguments_remain_proof_only() -> Result<(
         "Runner::run should expose setter argument proof for at least the substring fwd/rev fields: {flows:#?}"
     );
 
-    for (site, method_name, assignment, field_name, line) in [
-        (
-            fwd_site,
-            "fwd",
-            "self.fwd = Some(Box::new(search));",
-            "fwd",
-            137,
-        ),
-        (
-            rev_site,
-            "rev",
-            "self.rev = Some(Box::new(search));",
-            "rev",
-            153,
-        ),
-    ] {
-        let setter = method_id_by_name_body_and_file_suffix(
-            &db,
-            method_name,
-            assignment,
-            "src/tests/substring/mod.rs",
-        )?;
+    for case in &cases {
+        let setter = memchr_setter(&db, case)?;
         let flow = flows
             .iter()
-            .find(|flow| flow.field_flow.site.id == site && flow.field_flow.setter_id == setter)
+            .find(|flow| {
+                flow.field_flow.site.id == case.site && flow.field_flow.setter_id == setter
+            })
             .unwrap_or_else(|| {
                 panic!(
-                    "memchr/src/tests/substring/mod.rs:{line} should expose caller argument proof for self.{field_name}: {flows:#?}"
+                    "{} should expose caller argument proof: {flows:#?}",
+                    case.label
                 )
             });
-        assert_eq!(
-            flow.field_flow.site.path.as_ref(),
-            Some(&path(&[field_name]))
-        );
-        assert_eq!(flow.field_flow.status.status, CallStatusKind::Unsupported);
-        assert!(flow.field_flow.status.resolution.is_none());
-        assert_eq!(flow.setter_call.site.kind, CallSiteKind::Method);
-        assert_eq!(flow.setter_call.site.method.as_deref(), Some(method_name));
-        assert_eq!(flow.setter_call.status.status, CallStatusKind::Resolved);
-        assert_eq!(
-            flow.setter_call.status.resolution,
-            Some(CallResolutionKind::LocalExact)
-        );
-        assert_eq!(flow.setter_call.targets.len(), 1);
-        assert_eq!(flow.setter_call.targets[0].target_id, setter);
-        assert_eq!(
-            flow.setter_call.targets[0].relation,
-            CallRelationKind::Method
+        assert_field_shape(&flow.field_flow, case, setter);
+        assert_eq!(flow.setter_call.site.method.as_deref(), Some(case.method));
+        assert_resolved_target(
+            &flow.setter_call,
+            setter,
+            CallRelationKind::Method,
+            CallSiteKind::Method,
+            CallTargetKind::Method,
         );
         assert_eq!(
             flow.argument_edge.relation,
@@ -1179,11 +839,7 @@ fn memchr_callable_trait_object_setter_arguments_remain_proof_only() -> Result<(
             flow.argument_edge.target_id,
             flow.field_flow.parameter_binding.id
         );
-        assert_eq!(flow.field_flow.parameter_binding.name, "search");
-        assert!(
-            relations_for_site(&db, site)?.rows.is_empty(),
-            "setter argument proof must not fabricate a boxed dyn FnMut dispatch edge"
-        );
+        assert_edge_free(&db, case.site, case.label)?;
     }
 
     Ok(())
@@ -1193,18 +849,7 @@ fn memchr_callable_trait_object_setter_arguments_remain_proof_only() -> Result<(
 fn generic_array_guarded_match_arm_method_guard_is_external_frontier() -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_GENERIC_ARRAY_CALL_GRAPH)?;
 
-    // Matrix: `Fallback Source Oracle Matrix`.
-    //
-    // Source chain:
-    //   generic-array/src/lib.rs:1239 calls `iter.size_hint()`, with guarded
-    //   tuple arms at lines 1241 and 1243.
-    //   generic-array/src/lib.rs:1276 repeats the same guard shape, with arms
-    //   at lines 1278 and 1280.
-    //
-    // Expected contract: the guarded receiver rows are visible and targetless,
-    // but no longer unsupported. The local binding proof ties `iter` to the
-    // `iter.into_iter()` initializer, and the owner where-clause proves the
-    // receiver is an external `IntoIterator` result.
+    // Both guarded iter.size_hint rows remain exact external proof frontiers.
     let sites = generic_array_size_hint_sites(&db)?;
     let site_ids = sites.iter().map(|(_, site)| *site).collect::<Vec<_>>();
     assert_targetless_method_kind_line_fanout(
@@ -1213,10 +858,7 @@ fn generic_array_guarded_match_arm_method_guard_is_external_frontier() -> Result
         "size_hint",
         "MethodResultLocalBinding",
         CallStatusKind::External,
-        &[SourceLineFanout {
-            file_suffix: "src/lib.rs",
-            lines: &[1239, 1276],
-        }],
+        &[fanout("src/lib.rs", &[1239, 1276])],
     )?;
 
     for (owner_id, _) in &sites {

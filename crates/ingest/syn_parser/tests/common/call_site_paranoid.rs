@@ -5,6 +5,11 @@
 //! checks exact ID lookup, checks value lookup, checks containment relation
 //! facts, and checks resolver status/edge facts.
 
+use std::{
+    collections::HashMap,
+    sync::{Arc, LazyLock, Mutex, OnceLock},
+};
+
 use crate::common::{
     AssocParanoidArgs, PARSED_FIXTURE_CRATE_CALL_GRAPH, PARSED_FIXTURE_CRATE_DIR_DETECTION,
     PARSED_FIXTURE_CRATE_EDGE_CASES, PARSED_FIXTURE_CRATE_GENERICS, PARSED_FIXTURE_CRATE_IMPLS,
@@ -26,6 +31,48 @@ use syn_parser::parser::relations::{
     CallRelation, CallResolutionKind, CallResolutionStatus, CallSiteRelation,
 };
 use syn_parser::resolve::call_resolution::CallResolutionReport;
+
+/// Immutable graph and resolver output shared by call-site tests for one fixture.
+pub struct CallFixture {
+    graph: ParsedCodeGraph,
+    report: CallResolutionReport,
+}
+
+impl CallFixture {
+    pub fn graph(&self) -> &ParsedCodeGraph {
+        &self.graph
+    }
+
+    pub fn report(&self) -> &CallResolutionReport {
+        &self.report
+    }
+}
+
+type CallSlot = Arc<OnceLock<Arc<CallFixture>>>;
+
+static CALL_CACHE: LazyLock<Mutex<HashMap<String, CallSlot>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Returns the graph and call-resolution report cached for an exact fixture key.
+pub fn call_fixture(fixture: &str) -> Arc<CallFixture> {
+    let slot = {
+        let mut cache = CALL_CACHE.lock().expect("call fixture cache poisoned");
+        Arc::clone(
+            cache
+                .entry(fixture.to_string())
+                .or_insert_with(|| Arc::new(OnceLock::new())),
+        )
+    };
+    Arc::clone(slot.get_or_init(|| {
+        let (graph, tree) = crate::common::build_tree_for_tests(fixture);
+        let report =
+            syn_parser::resolve::call_resolution::resolve_call_relations_after_tree(&graph, &tree)
+                .unwrap_or_else(|error| {
+                    panic!("call resolution failed for fixture {fixture:?}: {error:?}")
+                });
+        Arc::new(CallFixture { graph, report })
+    }))
+}
 
 /// The function-like body that should own an expected call site.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,6 +128,18 @@ pub enum ExpectedMethodReceiver<'a> {
         name: &'a str,
         method_name: &'a str,
         method_span: (usize, usize),
+    },
+    /// The receiver is a method result invoked directly on a field rooted at `self`.
+    SelfFieldMethodResult {
+        method_name: &'a str,
+        method_span: (usize, usize),
+        field_path: &'a [&'a str],
+    },
+    /// The receiver is a method result structurally associated with a field path.
+    MethodResultField {
+        method_name: &'a str,
+        method_span: (usize, usize),
+        field_path: &'a [&'a str],
     },
     /// The receiver expression is a borrowed named local binding.
     BorrowedLocalBinding { name: &'a str },
@@ -194,6 +253,24 @@ impl ExpectedMethodReceiver<'_> {
                 name: name.to_string(),
                 method_name: method_name.to_string(),
                 method_span,
+            },
+            Self::SelfFieldMethodResult {
+                method_name,
+                method_span,
+                field_path,
+            } => MethodCallReceiver::SelfFieldMethodResult {
+                method_name: method_name.to_string(),
+                method_span,
+                field_path: field_path.iter().copied().map(String::from).collect(),
+            },
+            Self::MethodResultField {
+                method_name,
+                method_span,
+                field_path,
+            } => MethodCallReceiver::MethodResultField {
+                method_name: method_name.to_string(),
+                method_span,
+                field_path: field_path.iter().copied().map(String::from).collect(),
             },
             Self::BorrowedLocalBinding { name } => MethodCallReceiver::BorrowedLocalBinding {
                 name: name.to_string(),

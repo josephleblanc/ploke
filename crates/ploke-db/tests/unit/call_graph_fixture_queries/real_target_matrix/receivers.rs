@@ -9,6 +9,122 @@ use super::source_lines::{
     assert_targetless_method_result_field_line_fanout, assert_targetless_path_line_fanout,
 };
 
+const fn fanout(file_suffix: &'static str, lines: &'static [u32]) -> SourceLineFanout {
+    SourceLineFanout { file_suffix, lines }
+}
+
+fn assert_method_edge(
+    db: &Database,
+    context: &[CallContextRow],
+    owner: Uuid,
+    target: Uuid,
+    method: &str,
+    receiver: &CallReceiver,
+    label: &'static str,
+) -> Result<Uuid, DbError> {
+    let row = row_by_method_receiver(context, method, receiver);
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
+    );
+    assert_one_edge_traversal(
+        db,
+        TraversalExpectation {
+            label,
+            owner,
+            target,
+            site_id: row.site.id,
+            expected_edge_count: 1,
+        },
+    )?;
+    Ok(row.site.id)
+}
+
+fn assert_path_edge(
+    db: &Database,
+    context: &[CallContextRow],
+    owner: Uuid,
+    target: Uuid,
+    call_path: &[&str],
+    relation: CallRelationKind,
+    kind: CallTargetKind,
+    label: &'static str,
+) -> Result<Uuid, DbError> {
+    let row = row_by_path(context, call_path);
+    assert_resolved_target(row, target, relation, CallSiteKind::Path, kind);
+    assert_one_edge_traversal(
+        db,
+        TraversalExpectation {
+            label,
+            owner,
+            target,
+            site_id: row.site.id,
+            expected_edge_count: 1,
+        },
+    )?;
+    Ok(row.site.id)
+}
+
+fn assert_method_row(
+    db: &Database,
+    row: &CallContextRow,
+    target: Uuid,
+    label: &str,
+) -> Result<(), DbError> {
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
+    );
+    assert_eq!(
+        relations_for_site(db, row.site.id)?.rows.len(),
+        1,
+        "{label} should preserve exactly one raw method edge"
+    );
+    Ok(())
+}
+
+fn exact_callers(
+    db: &Database,
+    target: Uuid,
+    count: usize,
+    label: &str,
+) -> Result<Vec<ploke_db::CallCallerRow>, DbError> {
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(
+        callers.len(),
+        count,
+        "{label} should expose exactly {count} callers: {callers:#?}"
+    );
+    assert_sites_match_callers(db, target, &callers, label)?;
+    Ok(callers)
+}
+
+fn assert_caller_shape(
+    caller: &ploke_db::CallCallerRow,
+    target: Uuid,
+    relation: CallRelationKind,
+    source: CallSiteKind,
+    kind: CallTargetKind,
+    label: &str,
+) {
+    assert_eq!(caller.status.status, CallStatusKind::Resolved, "{label}");
+    assert_eq!(
+        caller.status.resolution,
+        Some(CallResolutionKind::LocalExact),
+        "{label}"
+    );
+    assert_eq!(caller.target.target_id, target, "{label}");
+    assert_eq!(caller.target.relation, relation, "{label}");
+    assert_eq!(caller.target.source_kind, source, "{label}");
+    assert_eq!(caller.target.target_kind, kind, "{label}");
+}
+
 #[test]
 fn axum_core_extract_self_methods_reach_same_impl_methods() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
@@ -62,30 +178,18 @@ fn axum_core_extract_self_methods_reach_same_impl_methods() -> Result<(), DbErro
 
     for (owner, expected_target, label) in expected_owner_targets {
         let context = db.call_context_for_owner(owner)?;
-        let row = row_by_method_receiver(&context, "extract_with_state", &CallReceiver::SelfValue);
-        assert_eq!(row.status.status, CallStatusKind::Resolved);
-        assert_eq!(row.status.resolution, Some(CallResolutionKind::LocalExact));
-        assert_eq!(row.targets.len(), 1);
-        assert_eq!(
-            row.targets[0].target_id, expected_target,
-            "{label} self.extract_with_state should resolve to the extract_with_state method in the same impl: {row:#?}"
-        );
         assert!(
-            expected_targets.contains(&row.targets[0].target_id),
-            "self.extract_with_state should resolve to one of the same-impl extract_with_state methods: {row:#?}"
+            expected_targets.contains(&expected_target),
+            "{label} should declare a same-impl extract_with_state target"
         );
-        assert_eq!(row.targets[0].relation, CallRelationKind::Method);
-        assert_eq!(row.targets[0].source_kind, CallSiteKind::Method);
-        assert_eq!(row.targets[0].target_kind, CallTargetKind::Method);
-        assert_one_edge_traversal(
+        assert_method_edge(
             &db,
-            TraversalExpectation {
-                label: "extract -> extract_with_state",
-                owner,
-                target: row.targets[0].target_id,
-                site_id: row.site.id,
-                expected_edge_count: 1,
-            },
+            &context,
+            owner,
+            expected_target,
+            "extract_with_state",
+            &CallReceiver::SelfValue,
+            "extract -> extract_with_state",
         )?;
     }
 
@@ -102,18 +206,7 @@ fn axum_core_extract_self_methods_reach_same_impl_methods() -> Result<(), DbErro
         ),
     ];
     for (target, expected_count, label) in expected_target_callers {
-        let callers = db.callers_for_target(target)?;
-        assert_eq!(
-            callers.len(),
-            expected_count,
-            "{label} should expose every currently supported incoming method caller: {callers:#?}"
-        );
-        assert_sites_match_callers(
-            &db,
-            target,
-            &callers,
-            "extract_with_state self-method caller",
-        )?;
+        let callers = exact_callers(&db, target, expected_count, label)?;
         assert_eq!(callers[0].status.status, CallStatusKind::Resolved);
         assert_eq!(callers[0].target.target_id, target);
     }
@@ -126,16 +219,8 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
 -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: local and parameter `req.extensions_mut` receiver rows.
-    // Source chain:
-    //   axum-core/src/ext_traits/request.rs:297 initializes
-    //   `let mut req = Request::new(())`.
-    //   axum-core/src/ext_traits/request.rs:302 calls `req.extensions_mut()`.
-    //   axum/src/extension.rs:184 calls `req.extensions_mut()`.
-    // The initializer path is an imported alias to external `http::Request`
-    // and remains targetless. Parameter receiver calls with direct external,
-    // single-reference, or request-routing receiver proof are now classified as
-    // external targetless rows.
+    // Request::new and all initialized/local req.extensions_mut rows retain exact external
+    // targetless status, source fanout, and no-edge/no-traversal behavior.
     let owner =
         method_id_by_name_and_body_substring(&db, "extract_parts_with_state", "Request::new(())")?;
     let context = db.call_context_for_owner(owner)?;
@@ -171,9 +256,6 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
     };
     let external_cases = [
         (
-            // axum/src/extract/nested_path.rs:95 and :103
-            // `SetNestedPath::call` has two `req.extensions_mut()` callsites
-            // in the same owner body, so the oracle preserves count 2.
             "axum/src/extract/nested_path.rs:95 and :103",
             method_id_by_name_body_and_file_suffix(
                 &db,
@@ -184,9 +266,6 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
             2,
         ),
         (
-            // axum/src/routing/path_router.rs:336
-            // `PathRouter::call_with_state` inserts `OriginalUri` before
-            // routing to an endpoint.
             "axum/src/routing/path_router.rs:336",
             method_id_by_name_body_and_file_suffix(
                 &db,
@@ -197,8 +276,6 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
             1,
         ),
         (
-            // axum-core/src/extract/default_body_limit.rs:183
-            // `DefaultBodyLimit::apply` has `req: &mut Request<B>`.
             "axum-core/src/extract/default_body_limit.rs:183",
             method_id_by_name_body_and_file_suffix(
                 &db,
@@ -209,8 +286,6 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
             1,
         ),
         (
-            // axum-core/src/extract/default_body_limit.rs:225
-            // `DefaultBodyLimitService::call` uses `mut req: Request<B>`.
             "axum-core/src/extract/default_body_limit.rs:225",
             method_id_by_name_body_and_file_suffix(
                 &db,
@@ -221,8 +296,6 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
             1,
         ),
         (
-            // axum/src/extension.rs:184
-            // `AddExtension::call` uses `mut req: Request<ResBody>`.
             "axum/src/extension.rs:184",
             method_id_by_name_body_and_file_suffix(
                 &db,
@@ -261,22 +334,10 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
         Some(&["req"]),
         CallStatusKind::External,
         &[
-            SourceLineFanout {
-                file_suffix: "axum/src/extract/nested_path.rs",
-                lines: &[95, 103],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/path_router.rs",
-                lines: &[336],
-            },
-            SourceLineFanout {
-                file_suffix: "axum-core/src/extract/default_body_limit.rs",
-                lines: &[183, 225],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/extension.rs",
-                lines: &[184],
-            },
+            fanout("axum/src/extract/nested_path.rs", &[95, 103]),
+            fanout("axum/src/routing/path_router.rs", &[336]),
+            fanout("axum-core/src/extract/default_body_limit.rs", &[183, 225]),
+            fanout("axum/src/extension.rs", &[184]),
         ],
     )?;
     assert_targetless_method_rows(
@@ -294,10 +355,7 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
         "InitializedLocalBinding",
         Some(&["req", "Request", "new"]),
         CallStatusKind::External,
-        &[SourceLineFanout {
-            file_suffix: "axum-core/src/ext_traits/request.rs",
-            lines: &[302],
-        }],
+        &[fanout("axum-core/src/ext_traits/request.rs", &[302])],
     )?;
 
     Ok(())
@@ -307,17 +365,8 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
 fn axum_initialized_associated_constructor_receivers_resolve() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: associated-constructor initialized local receiver rows.
-    // Source chain:
-    //   axum/src/test_helpers/counting_cloneable_state.rs:15 defines
-    //   `CountingCloneableState::new() -> Self`.
-    //   axum/src/routing/tests/mod.rs:1165 and :1187 plus
-    //   axum/src/routing/tests/fallback.rs:396 bind
-    //   `let state = CountingCloneableState::new()`.
-    //   Those owners then call `state.clone()` and `state.setup_done()`.
-    // Expected traversal: the binding initializer resolves to the local
-    // associated function, its `Self` return type proves the receiver type, and
-    // both later method calls traverse to the local impl methods.
+    // Three CountingCloneableState::new bindings prove the exact initialized receiver for
+    // local clone/setup_done calls, and every source call traverses one edge.
     let new_target = method_id_by_name_body_and_file_suffix(
         &db,
         "new",
@@ -370,44 +419,19 @@ fn axum_initialized_associated_constructor_receivers_resolve() -> Result<(), DbE
 
     for (label, owner) in cases {
         let context = db.call_context_for_owner(owner)?;
-        let new_row = row_by_path(&context, &["CountingCloneableState", "new"]);
-        assert_resolved_target(
-            new_row,
-            new_target,
-            CallRelationKind::AssociatedFunction,
-            CallSiteKind::Path,
-            CallTargetKind::Method,
-        );
-        assert_one_edge_traversal(
+        assert_path_edge(
             &db,
-            TraversalExpectation {
-                label,
-                owner,
-                target: new_target,
-                site_id: new_row.site.id,
-                expected_edge_count: 1,
-            },
+            &context,
+            owner,
+            new_target,
+            &["CountingCloneableState", "new"],
+            CallRelationKind::AssociatedFunction,
+            CallTargetKind::Method,
+            label,
         )?;
 
         for (method, target) in [("clone", clone_target), ("setup_done", setup_done_target)] {
-            let row = row_by_method_receiver(&context, method, &receiver);
-            assert_resolved_target(
-                row,
-                target,
-                CallRelationKind::Method,
-                CallSiteKind::Method,
-                CallTargetKind::Method,
-            );
-            assert_one_edge_traversal(
-                &db,
-                TraversalExpectation {
-                    label,
-                    owner,
-                    target,
-                    site_id: row.site.id,
-                    expected_edge_count: 1,
-                },
-            )?;
+            assert_method_edge(&db, &context, owner, target, method, &receiver, label)?;
         }
     }
 
@@ -418,11 +442,7 @@ fn axum_initialized_associated_constructor_receivers_resolve() -> Result<(), DbE
 fn axum_real_target_impl_trait_into_parameter_is_external_frontier() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: axum-core/src/error.rs:12-14
-    // `Error::new(error: impl Into<BoxError>)` calls `error.into()`.
-    // The parameter's `impl Into<BoxError>` bound is source-visible, but the
-    // concrete callee is external/prelude dispatch, so the row remains
-    // targetless and absent from local traversal.
+    // error.rs:14: impl Into<BoxError> dispatch remains an external targetless frontier.
     let owner = method_id_by_name_body_and_file_suffix(
         &db,
         "new",
@@ -448,12 +468,7 @@ fn axum_real_target_impl_trait_into_parameter_is_external_frontier() -> Result<(
 fn axum_real_target_self_field_size_hint_is_external_frontier() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: `self.0.size_hint` receiver row.
-    // Source chain:
-    //   axum-core/src/body.rs:127 calls `self.0.size_hint()`.
-    // The tuple-field receiver resolves through `Body(BoxBody)`, where
-    // `BoxBody` is a local type alias for an external http-body-util type.
-    // The call is therefore an external frontier, not a traversable local edge.
+    // body.rs:127: self.0 resolves through external BoxBody and remains edge-free.
     let owner = method_id_by_name_and_body_substring(&db, "size_hint", "self.0.size_hint()")?;
     assert_owner_method_targetless(
         &db,
@@ -472,10 +487,7 @@ fn axum_real_target_self_field_size_hint_is_external_frontier() -> Result<(), Db
         "SelfField",
         Some(&["0"]),
         CallStatusKind::External,
-        &[SourceLineFanout {
-            file_suffix: "axum-core/src/body.rs",
-            lines: &[127],
-        }],
+        &[fanout("axum-core/src/body.rs", &[127])],
     )?;
 
     Ok(())
@@ -486,15 +498,8 @@ fn axum_real_target_turbofish_method_receiver_rows_preserve_current_shapes() -> 
 {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: turbofish method call receiver row.
-    // Source chain:
-    //   axum-core/src/ext_traits/request_parts.rs:164 calls
-    //   `parts.extract_with_state::<State<String>, String>(&state)`.
-    // Current model: the turbofish row is projected, preserves the two
-    // explicit method generic arguments, carries tuple-method-return proof
-    // from `Request::new(()).into_parts()`, and resolves through the exact
-    // external-return summary for `http::Request::into_parts` returning
-    // `http::request::Parts`.
+    // request_parts.rs:164/:186 preserve exact tuple-return/local receiver shapes and 2/0
+    // generic counts while resolving to the same local extension method.
     let generic_owner = function_id_by_name_in_module(
         &db,
         &["crate", "ext_traits", "request_parts", "tests"],
@@ -514,16 +519,13 @@ fn axum_real_target_turbofish_method_receiver_rows_preserve_current_shapes() -> 
     };
     let generic_row =
         row_by_method_receiver(&generic_context, "extract_with_state", &generic_receiver);
-    assert_eq!(generic_row.status.status, CallStatusKind::Resolved);
-    assert_eq!(
-        generic_row.status.resolution,
-        Some(CallResolutionKind::LocalExact)
+    assert_resolved_target(
+        generic_row,
+        target_owner,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
     );
-    assert_eq!(generic_row.targets.len(), 1);
-    assert_eq!(generic_row.targets[0].target_id, target_owner);
-    assert_eq!(generic_row.targets[0].relation, CallRelationKind::Method);
-    assert_eq!(generic_row.targets[0].source_kind, CallSiteKind::Method);
-    assert_eq!(generic_row.targets[0].target_kind, CallTargetKind::Method);
     assert_eq!(
         generic_row.site.generic_arg_count,
         Some(2),
@@ -553,12 +555,6 @@ fn axum_real_target_turbofish_method_receiver_rows_preserve_current_shapes() -> 
         "request_parts.rs:164 proof context should expose the resolved call_resolution row: {proof_rows:#?}"
     );
 
-    // Source chain:
-    //   axum-core/src/ext_traits/request_parts.rs:186 calls
-    //   `parts.extract_with_state(state)`.
-    // The local-binding receiver has parameter type `&mut Parts`; the resolver
-    // now matches that imported external receiver type to the local extension
-    // trait impl `impl RequestPartsExt for Parts`.
     let owner = method_id_by_name_body_and_file_suffix(
         &db,
         "from_request_parts",
@@ -573,13 +569,13 @@ fn axum_real_target_turbofish_method_receiver_rows_preserve_current_shapes() -> 
             name: "parts".to_string(),
         },
     );
-    assert_eq!(row.status.status, CallStatusKind::Resolved);
-    assert_eq!(row.status.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(row.targets.len(), 1);
-    assert_eq!(row.targets[0].target_id, target_owner);
-    assert_eq!(row.targets[0].relation, CallRelationKind::Method);
-    assert_eq!(row.targets[0].source_kind, CallSiteKind::Method);
-    assert_eq!(row.targets[0].target_kind, CallTargetKind::Method);
+    assert_resolved_target(
+        row,
+        target_owner,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
+    );
     assert_one_edge_traversal(
         &db,
         TraversalExpectation {
@@ -639,21 +635,13 @@ fn axum_real_target_turbofish_method_receiver_rows_preserve_current_shapes() -> 
 fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: service forwarding receiver rows.
-    // Source chain:
-    //   axum/src/extension.rs:180 calls `self.inner.poll_ready(cx)`.
-    //   Other service wrappers use the same `SelfField` forwarding shape, and
-    //   tuple wrappers project as `self.0.poll_ready(...)`.
-    // Current model boundary: external trait receiver dispatch is visible as
-    // targetless external frontier rows. The resolver does not fabricate a
-    // concrete `tower_service::Service` target.
+    // All self.inner/self.0 poll_ready forwarding rows retain exact external targetless
+    // fanout; tower Service dispatch must not fabricate a concrete local target.
     let inner_receiver = CallReceiver::SelfField {
         path: vec!["inner".to_string()],
     };
     let inner_cases = [
         (
-            // axum-core/src/extract/default_body_limit.rs:220
-            // `DefaultBodyLimitService::poll_ready` forwards to `S: Service`.
             "axum-core/src/extract/default_body_limit.rs:220",
             method_id_by_name_body_and_file_suffix(
                 &db,
@@ -663,8 +651,6 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
             )?,
         ),
         (
-            // axum/src/extension.rs:180
-            // `AddExtension::poll_ready` forwards through `self.inner`.
             "axum/src/extension.rs:180",
             method_id_by_name_body_and_file_suffix(
                 &db,
@@ -674,8 +660,6 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
             )?,
         ),
         (
-            // axum/src/extract/nested_path.rs:91
-            // `SetNestedPath::poll_ready` forwards through `self.inner`.
             "axum/src/extract/nested_path.rs:91",
             method_id_by_name_body_and_file_suffix(
                 &db,
@@ -685,8 +669,6 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
             )?,
         ),
         (
-            // axum/src/middleware/from_extractor.rs:212
-            // `FromExtractor::poll_ready` forwards through `self.inner`.
             "axum/src/middleware/from_extractor.rs:212",
             method_id_by_name_body_and_file_suffix(
                 &db,
@@ -696,9 +678,6 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
             )?,
         ),
         (
-            // axum/src/middleware/from_fn.rs:280 / :358
-            // The current fixture projects one `self.inner.poll_ready(cx)`
-            // owner from this file; it remains external-trait targetless.
             "axum/src/middleware/from_fn.rs:280 or :358 projected owner",
             method_id_by_name_body_and_file_suffix(
                 &db,
@@ -708,8 +687,6 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
             )?,
         ),
         (
-            // axum/src/routing/strip_prefix.rs:36
-            // `StripPrefix::poll_ready` forwards through `self.inner`.
             "axum/src/routing/strip_prefix.rs:36",
             method_id_by_name_body_and_file_suffix(
                 &db,
@@ -719,8 +696,6 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
             )?,
         ),
         (
-            // axum/src/util.rs:69
-            // `MapFuture::poll_ready` forwards through `self.inner`.
             "axum/src/util.rs:69",
             method_id_by_name_body_and_file_suffix(
                 &db,
@@ -758,14 +733,11 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
         &tuple_receiver,
         CallStatusKind::External,
         1,
-        // axum/src/middleware/response_axum_body.rs:45
         "axum/src/middleware/response_axum_body.rs:45",
     )?;
 
     let tuple_function_cases = [
         (
-            // axum/src/routing/tests/mod.rs:703
-            // Local `CountMiddleware<S>(S)` impl inside the test function.
             "axum/src/routing/tests/mod.rs:703",
             local_item_owner_for_parent_with_label(
                 &db,
@@ -778,8 +750,6 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
             )?,
         ),
         (
-            // axum/src/routing/tests/nest.rs:258
-            // Local `SetUriExtension<S>(S)` impl inside the test function.
             "axum/src/routing/tests/nest.rs:258",
             local_item_owner_for_parent_with_label(
                 &db,
@@ -828,34 +798,13 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
         Some(&["inner"]),
         CallStatusKind::External,
         &[
-            SourceLineFanout {
-                file_suffix: "axum-core/src/extract/default_body_limit.rs",
-                lines: &[220],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/extension.rs",
-                lines: &[180],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/extract/nested_path.rs",
-                lines: &[91],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/middleware/from_extractor.rs",
-                lines: &[212],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/middleware/from_fn.rs",
-                lines: &[358],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/strip_prefix.rs",
-                lines: &[36],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/util.rs",
-                lines: &[69],
-            },
+            fanout("axum-core/src/extract/default_body_limit.rs", &[220]),
+            fanout("axum/src/extension.rs", &[180]),
+            fanout("axum/src/extract/nested_path.rs", &[91]),
+            fanout("axum/src/middleware/from_extractor.rs", &[212]),
+            fanout("axum/src/middleware/from_fn.rs", &[358]),
+            fanout("axum/src/routing/strip_prefix.rs", &[36]),
+            fanout("axum/src/util.rs", &[69]),
         ],
     )?;
     assert_targetless_method_line_fanout(
@@ -865,10 +814,7 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
         "SelfField",
         Some(&["0"]),
         CallStatusKind::External,
-        &[SourceLineFanout {
-            file_suffix: "axum/src/middleware/response_axum_body.rs",
-            lines: &[45],
-        }],
+        &[fanout("axum/src/middleware/response_axum_body.rs", &[45])],
     )?;
     assert_targetless_method_owner_kind_line_fanout(
         &db,
@@ -879,14 +825,8 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
         CallStatusKind::External,
         "LocalItem",
         &[
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/mod.rs",
-                lines: &[559],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/nest.rs",
-                lines: &[258],
-            },
+            fanout("axum/src/routing/tests/mod.rs", &[559]),
+            fanout("axum/src/routing/tests/nest.rs", &[258]),
         ],
     )
 }
@@ -895,36 +835,10 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
 fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: `Router::new` / typed `router.clone`.
-    // Source chain:
-    //   axum/src/routing/mod.rs:162 defines `Router::new`.
-    //   axum/src/routing/mod.rs:109 calls `Self::new()` from
-    //   `Default for Router`.
-    //   axum/src/serve/mod.rs:756 calls `Router::new()`.
-    //   axum/src/routing/method_routing.rs:1494 calls
-    //   `crate::Router::new()`.
-    //   axum-core/src/extract/request_parts.rs:193 calls `Router::new()`
-    //   through the `axum::Router` workspace dependency import.
-    //   serve/mod.rs calls `router.clone...` in the router examples and
-    //   local-address tests. `boxed.rs:134` and `routing/mod.rs:673` call
-    //   `self.router.clone()` from local wrapper clone impls.
-    //   routing/tests/mod.rs also contributes method-result local-binding
-    //   clone rows from chained router builders such as `one.route(...).clone()`
-    //   and `bar_or_baz.merge(...).clone()`.
-    // Expected traversal: the current caller API exposes 308 resolved
-    // `Router::new` rows, one explicit `crate::Router::new` row, and one
-    // `Self::new` row, while target expansion traverses 204 incoming candidates
-    // for the same target. Typed, self-field, and method-result router clone
-    // receiver rows now reach the local `impl<S> Clone for Router<S>` method
-    // at routing/mod.rs:90.
+    // Preserve Router::new's exact 308/1/1 path split and 204 incoming candidates, plus all
+    // 26 typed-local/self-field/method-result Router::clone callers and their raw edges.
     let target = method_id_by_name_and_body_substring(&db, "new", "default_fallback: true")?;
-    let callers = db.callers_for_target(target)?;
-    assert_eq!(
-        callers.len(),
-        310,
-        "Router::new should expose the current resolved corpus subset: {callers:#?}"
-    );
-    assert_sites_match_callers(&db, target, &callers, "Router::new resolved corpus subset")?;
+    let callers = exact_callers(&db, target, 310, "Router::new resolved corpus subset")?;
     let mut path_counts = std::collections::BTreeMap::new();
     for caller in &callers {
         *path_counts
@@ -936,14 +850,14 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
                     .expect("Router::new caller should carry a path"),
             )
             .or_insert(0usize) += 1;
-        assert_eq!(caller.status.status, CallStatusKind::Resolved);
-        assert_eq!(
-            caller.status.resolution,
-            Some(CallResolutionKind::LocalExact)
+        assert_caller_shape(
+            caller,
+            target,
+            CallRelationKind::AssociatedFunction,
+            CallSiteKind::Path,
+            CallTargetKind::Method,
+            "Router::new caller",
         );
-        assert_eq!(caller.target.relation, CallRelationKind::AssociatedFunction);
-        assert_eq!(caller.target.source_kind, CallSiteKind::Path);
-        assert_eq!(caller.target.target_kind, CallTargetKind::Method);
     }
     assert_eq!(
         path_counts,
@@ -961,23 +875,15 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
         "if_it_compiles_it_works",
     )?;
     let compile_context = db.call_context_for_owner(compile_owner)?;
-    let router_new = row_by_path(&compile_context, &["Router", "new"]);
-    assert_resolved_target(
-        router_new,
-        target,
-        CallRelationKind::AssociatedFunction,
-        CallSiteKind::Path,
-        CallTargetKind::Method,
-    );
-    assert_one_edge_traversal(
+    assert_path_edge(
         &db,
-        TraversalExpectation {
-            label: "axum/src/serve/mod.rs:756 Router::new",
-            owner: compile_owner,
-            target,
-            site_id: router_new.site.id,
-            expected_edge_count: 1,
-        },
+        &compile_context,
+        compile_owner,
+        target,
+        &["Router", "new"],
+        CallRelationKind::AssociatedFunction,
+        CallTargetKind::Method,
+        "axum/src/serve/mod.rs:756 Router::new",
     )?;
 
     let complex_owner = function_id_by_name_in_module(
@@ -986,23 +892,15 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
         "building_complex_router",
     )?;
     let complex_context = db.call_context_for_owner(complex_owner)?;
-    let crate_router_new = row_by_path(&complex_context, &["crate", "Router", "new"]);
-    assert_resolved_target(
-        crate_router_new,
-        target,
-        CallRelationKind::AssociatedFunction,
-        CallSiteKind::Path,
-        CallTargetKind::Method,
-    );
-    assert_one_edge_traversal(
+    assert_path_edge(
         &db,
-        TraversalExpectation {
-            label: "axum/src/routing/method_routing.rs:1494 crate::Router::new",
-            owner: complex_owner,
-            target,
-            site_id: crate_router_new.site.id,
-            expected_edge_count: 1,
-        },
+        &complex_context,
+        complex_owner,
+        target,
+        &["crate", "Router", "new"],
+        CallRelationKind::AssociatedFunction,
+        CallTargetKind::Method,
+        "axum/src/routing/method_routing.rs:1494 crate::Router::new",
     )?;
 
     let axum_core_owner = function_id_by_name_in_module(
@@ -1011,30 +909,22 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
         "extract_request_parts",
     )?;
     let axum_core_context = db.call_context_for_owner(axum_core_owner)?;
-    let axum_core_router_new = row_by_path(&axum_core_context, &["Router", "new"]);
-    assert_resolved_target(
-        axum_core_router_new,
-        target,
-        CallRelationKind::AssociatedFunction,
-        CallSiteKind::Path,
-        CallTargetKind::Method,
-    );
-    assert_one_edge_traversal(
+    let axum_core_site = assert_path_edge(
         &db,
-        TraversalExpectation {
-            label: "axum-core/src/extract/request_parts.rs:193 workspace-import Router::new",
-            owner: axum_core_owner,
-            target,
-            site_id: axum_core_router_new.site.id,
-            expected_edge_count: 1,
-        },
+        &axum_core_context,
+        axum_core_owner,
+        target,
+        &["Router", "new"],
+        CallRelationKind::AssociatedFunction,
+        CallTargetKind::Method,
+        "axum-core/src/extract/request_parts.rs:193 workspace-import Router::new",
     )?;
 
     let domain_id = "bd:corpus-axum-call-graph";
     let mut records = axum_domain_records(domain_id);
     records.push(ploke_test_utils::axum_router_new_dependency_record(
         domain_id,
-        axum_core_router_new.site.id,
+        axum_core_site,
         axum_core_owner,
         target,
     ));
@@ -1043,7 +933,7 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     let proof_rows = db.proof_symbol_lookup(&target.to_string())?;
     assert_router_new_dependency_root_proof(
         &proof_rows,
-        axum_core_router_new.site.id,
+        axum_core_site,
         axum_core_owner,
         target,
         "axum-core/src/extract/request_parts.rs:193 workspace-import Router::new",
@@ -1056,22 +946,17 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
         "axum/src/routing/mod.rs",
     )?;
 
-    // Matrix source: axum/src/serve/mod.rs:769,770,772,776,780,785,791,797
-    // call `router.clone...` from the same typed local binding.
     let router_receiver = CallReceiver::TypedLocalBinding {
         name: "router".to_string(),
         type_path: path(&["Router"]),
     };
     let router_clone_cases = [
         (
-            // axum/src/serve/mod.rs:769,770,772,776,780,785,791,797
-            // `if_it_compiles_it_works` projects eight `router.clone` rows.
             "axum/src/serve/mod.rs:769,770,772,776,780,785,791,797",
             compile_owner,
             8,
         ),
         (
-            // axum/src/serve/mod.rs:692
             "axum/src/serve/mod.rs:692",
             function_id_by_name_in_module(
                 &db,
@@ -1081,7 +966,6 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
             1,
         ),
         (
-            // axum/src/serve/mod.rs:704
             "axum/src/serve/mod.rs:704",
             function_id_by_name_in_module(
                 &db,
@@ -1109,18 +993,7 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
             "{label} should expose exactly {count} resolved Router::clone method row(s): {context:#?}"
         );
         for row in rows {
-            assert_resolved_target(
-                row,
-                clone_target,
-                CallRelationKind::Method,
-                CallSiteKind::Method,
-                CallTargetKind::Method,
-            );
-            assert_eq!(
-                relations_for_site(&db, row.site.id)?.rows.len(),
-                1,
-                "{label} should preserve exactly one raw call_relation edge per Router::clone site"
-            );
+            assert_method_row(&db, row, clone_target, label)?;
             clone_sites.insert(row.site.id);
             clone_owners.insert(owner);
         }
@@ -1137,18 +1010,12 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     };
     let app_context = db.call_context_for_owner(app_owner)?;
     let app_clone = row_by_method_receiver(&app_context, "clone", &app_receiver);
-    assert_resolved_target(
+    assert_method_row(
+        &db,
         app_clone,
         clone_target,
-        CallRelationKind::Method,
-        CallSiteKind::Method,
-        CallTargetKind::Method,
-    );
-    assert_eq!(
-        relations_for_site(&db, app_clone.site.id)?.rows.len(),
-        1,
-        "axum/src/routing/tests/mod.rs:804 should preserve exactly one raw call_relation edge for Router::clone"
-    );
+        "axum/src/routing/tests/mod.rs:804",
+    )?;
     clone_sites.insert(app_clone.site.id);
     clone_owners.insert(app_owner);
 
@@ -1157,7 +1024,6 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     };
     for (label, owner) in [
         (
-            // axum/src/boxed.rs:134
             "axum/src/boxed.rs:134",
             method_id_by_name_body_and_file_suffix(
                 &db,
@@ -1167,7 +1033,6 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
             )?,
         ),
         (
-            // axum/src/routing/mod.rs:673
             "axum/src/routing/mod.rs:673",
             method_id_by_name_body_and_file_suffix(
                 &db,
@@ -1179,28 +1044,13 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     ] {
         let context = db.call_context_for_owner(owner)?;
         let row = row_by_method_receiver(&context, "clone", &self_router_receiver);
-        assert_resolved_target(
-            row,
-            clone_target,
-            CallRelationKind::Method,
-            CallSiteKind::Method,
-            CallTargetKind::Method,
-        );
-        assert_eq!(
-            relations_for_site(&db, row.site.id)?.rows.len(),
-            1,
-            "{label} should preserve exactly one raw call_relation edge for Router::clone"
-        );
+        assert_method_row(&db, row, clone_target, label)?;
         clone_sites.insert(row.site.id);
         clone_owners.insert(owner);
     }
 
     let method_result_clone_cases = [
         (
-            // axum/src/routing/tests/merge.rs:38-56
-            // `multiple_ors_balanced_differently` clones intermediate router
-            // results from `one.route(...)`, `two.route(...)`,
-            // `three.route(...)`, and `four.route(...)`.
             "axum/src/routing/tests/merge.rs:38-56",
             function_id_by_name_in_module(
                 &db,
@@ -1210,8 +1060,6 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
             12,
         ),
         (
-            // axum/src/routing/tests/merge.rs:81
-            // `nested_or` clones `bar_or_baz` after `bar.merge(baz)`.
             "axum/src/routing/tests/merge.rs:81",
             function_id_by_name_in_module(
                 &db,
@@ -1240,18 +1088,7 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
             "{label} should expose exactly {count} resolved Router::clone method-result row(s): {context:#?}"
         );
         for row in rows {
-            assert_resolved_target(
-                row,
-                clone_target,
-                CallRelationKind::Method,
-                CallSiteKind::Method,
-                CallTargetKind::Method,
-            );
-            assert_eq!(
-                relations_for_site(&db, row.site.id)?.rows.len(),
-                1,
-                "{label} should preserve exactly one raw call_relation edge per method-result Router::clone site"
-            );
+            assert_method_row(&db, row, clone_target, label)?;
             clone_sites.insert(row.site.id);
             clone_owners.insert(owner);
         }
@@ -1284,12 +1121,7 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     }
 
     assert_targetless_path_rows(&db, &["Router", "new"], CallStatusKind::Unsupported, 0)?;
-    let clone_callers = db.callers_for_target(clone_target)?;
-    assert_eq!(
-        clone_callers.len(),
-        26,
-        "Router::clone should expose the projected typed-local, self-field, and method-result caller rows: {clone_callers:#?}"
-    );
+    let clone_callers = exact_callers(&db, clone_target, 26, "Router::clone callers")?;
     assert_eq!(
         clone_callers
             .iter()
@@ -1320,12 +1152,6 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
         13,
         "Router::clone should expose the method-result local-binding caller rows: {clone_callers:#?}"
     );
-    assert_sites_match_callers(
-        &db,
-        clone_target,
-        &clone_callers,
-        "Router::clone typed-local callers",
-    )?;
     let caller_sites = clone_callers
         .iter()
         .map(|row| row.site.id)
@@ -1335,15 +1161,14 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
         "target-centered Router::clone callers should match the owner-scoped source oracle"
     );
     for caller in clone_callers {
-        assert_eq!(caller.status.status, CallStatusKind::Resolved);
-        assert_eq!(
-            caller.status.resolution,
-            Some(CallResolutionKind::LocalExact)
+        assert_caller_shape(
+            &caller,
+            clone_target,
+            CallRelationKind::Method,
+            CallSiteKind::Method,
+            CallTargetKind::Method,
+            "Router::clone caller",
         );
-        assert_eq!(caller.target.target_id, clone_target);
-        assert_eq!(caller.target.relation, CallRelationKind::Method);
-        assert_eq!(caller.target.source_kind, CallSiteKind::Method);
-        assert_eq!(caller.target.target_kind, CallTargetKind::Method);
     }
 
     let clone_incoming = db.expand_call_context(
@@ -1400,20 +1225,8 @@ fn assert_router_new_dependency_root_proof(
 fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: result receiver chains.
-    // Source chains:
-    //   axum/src/middleware/from_fn.rs:411 calls
-    //   `Request::builder().uri(\"/\").body(Body::empty()).unwrap()`.
-    //   axum/src/routing/route.rs:51 calls
-    //   `self.0.clone().oneshot(req)`.
-    // Current model split: path-call and method-call result receivers are
-    // structurally projected but remain targetless unless the nested local
-    // associated function is already in the resolved subset. `Request::builder`
-    // rows whose `Request` segment resolves to the axum-core
-    // `Request = http::Request` alias are external frontiers with no local
-    // traversal target. Route `oneshot` receiver rows are also external
-    // frontiers because the receiver type and `tower::ServiceExt` import are
-    // source-visible, but concrete tower dispatch is still not traversed.
+    // Result receivers retain their precise shape while Request::builder and tower
+    // dispatch remain targetless external frontiers.
     let route_owner = method_id_by_name_body_and_file_suffix(
         &db,
         "oneshot_inner",
@@ -1443,120 +1256,96 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
             path: vec!["0".to_string()],
         },
         CallStatusKind::External,
-        // axum/src/routing/route.rs:57
         "axum/src/routing/route.rs:57",
     )?;
 
     struct RequestBuilderCase {
         label: &'static str,
-        module_path: &'static [&'static str],
+        module: &'static [&'static str],
         owner: &'static str,
-        status: CallStatusKind,
     }
 
     let builder_cases = [
         RequestBuilderCase {
-            // axum/src/extract/query.rs:104
             label: "axum/src/extract/query.rs:104",
-            module_path: &["crate", "extract", "query", "tests"],
+            module: &["crate", "extract", "query", "tests"],
             owner: "check",
-            status: CallStatusKind::External,
         },
         RequestBuilderCase {
-            // axum/src/extract/raw_form.rs:65
             label: "axum/src/extract/raw_form.rs:65",
-            module_path: &["crate", "extract", "raw_form", "tests"],
+            module: &["crate", "extract", "raw_form", "tests"],
             owner: "check_query",
-            status: CallStatusKind::External,
         },
         RequestBuilderCase {
-            // axum/src/form.rs:156
             label: "axum/src/form.rs:156",
-            module_path: &["crate", "form", "tests"],
+            module: &["crate", "form", "tests"],
             owner: "check_query",
-            status: CallStatusKind::External,
         },
         RequestBuilderCase {
-            // axum/src/form.rs:164
             label: "axum/src/form.rs:164",
-            module_path: &["crate", "form", "tests"],
+            module: &["crate", "form", "tests"],
             owner: "check_body",
-            status: CallStatusKind::External,
         },
         RequestBuilderCase {
-            // axum/src/form.rs:226
             label: "axum/src/form.rs:226",
-            module_path: &["crate", "form", "tests"],
+            module: &["crate", "form", "tests"],
             owner: "test_incorrect_content_type",
-            status: CallStatusKind::External,
         },
         RequestBuilderCase {
-            // axum/src/routing/tests/mod.rs:1129
             label: "axum/src/routing/tests/mod.rs:1129",
-            module_path: &["crate", "routing", "tests"],
+            module: &["crate", "routing", "tests"],
             owner: "connect_going_to_custom_fallback",
-            status: CallStatusKind::External,
         },
         RequestBuilderCase {
-            // axum/src/routing/tests/mod.rs:1147
             label: "axum/src/routing/tests/mod.rs:1147",
-            module_path: &["crate", "routing", "tests"],
+            module: &["crate", "routing", "tests"],
             owner: "connect_going_to_default_fallback",
-            status: CallStatusKind::External,
         },
         RequestBuilderCase {
-            // axum/src/serve/mod.rs:799
             label: "axum/src/serve/mod.rs:799",
-            module_path: &["crate", "serve", "tests"],
+            module: &["crate", "serve", "tests"],
             owner: "serving_on_custom_io_type",
-            status: CallStatusKind::External,
         },
         RequestBuilderCase {
-            // axum-core/src/ext_traits/request.rs:375
             label: "axum-core/src/ext_traits/request.rs:375",
-            module_path: &["crate", "ext_traits", "request", "tests"],
+            module: &["crate", "ext_traits", "request", "tests"],
             owner: "extract_parts_without_state",
-            status: CallStatusKind::External,
         },
         RequestBuilderCase {
-            // axum-core/src/ext_traits/request.rs:388
             label: "axum-core/src/ext_traits/request.rs:388",
-            module_path: &["crate", "ext_traits", "request", "tests"],
+            module: &["crate", "ext_traits", "request", "tests"],
             owner: "extract_parts_with_state",
-            status: CallStatusKind::External,
         },
         RequestBuilderCase {
-            // axum/src/middleware/from_fn.rs:411
             label: "axum/src/middleware/from_fn.rs:411",
-            module_path: &["crate", "middleware", "from_fn", "tests"],
+            module: &["crate", "middleware", "from_fn", "tests"],
             owner: "basic",
-            status: CallStatusKind::External,
         },
         RequestBuilderCase {
-            // axum/src/routing/method_routing.rs:1697
             label: "axum/src/routing/method_routing.rs:1697",
-            module_path: &["crate", "routing", "method_routing", "tests"],
+            module: &["crate", "routing", "method_routing", "tests"],
             owner: "call",
-            status: CallStatusKind::External,
         },
         RequestBuilderCase {
-            // axum/src/routing/tests/get_to_head.rs:22
             label: "axum/src/routing/tests/get_to_head.rs:22",
-            module_path: &["crate", "routing", "tests", "get_to_head", "for_handlers"],
+            module: &["crate", "routing", "tests", "get_to_head", "for_handlers"],
             owner: "get_handles_head",
-            status: CallStatusKind::External,
         },
         RequestBuilderCase {
-            // axum/src/routing/tests/get_to_head.rs:56
             label: "axum/src/routing/tests/get_to_head.rs:56",
-            module_path: &["crate", "routing", "tests", "get_to_head", "for_services"],
+            module: &["crate", "routing", "tests", "get_to_head", "for_services"],
             owner: "get_handles_head",
-            status: CallStatusKind::External,
         },
     ];
     for case in builder_cases {
-        let owner = function_id_by_name_in_module(&db, case.module_path, case.owner)?;
-        assert_owner_path_targetless(&db, owner, &["Request", "builder"], case.status, case.label)?;
+        let owner = function_id_by_name_in_module(&db, case.module, case.owner)?;
+        assert_owner_path_targetless(
+            &db,
+            owner,
+            &["Request", "builder"],
+            CallStatusKind::External,
+            case.label,
+        )?;
     }
 
     let from_fn_owner =
@@ -1645,42 +1434,15 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         &["Request", "builder"],
         CallStatusKind::External,
         &[
-            SourceLineFanout {
-                file_suffix: "axum/src/extract/query.rs",
-                lines: &[104],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/extract/raw_form.rs",
-                lines: &[65],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/form.rs",
-                lines: &[156, 164, 226],
-            },
-            SourceLineFanout {
-                file_suffix: "axum-core/src/ext_traits/request.rs",
-                lines: &[375, 388],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/middleware/from_fn.rs",
-                lines: &[411],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/method_routing.rs",
-                lines: &[1697],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/get_to_head.rs",
-                lines: &[22, 56],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/mod.rs",
-                lines: &[1129, 1147],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/serve/mod.rs",
-                lines: &[799],
-            },
+            fanout("axum/src/extract/query.rs", &[104]),
+            fanout("axum/src/extract/raw_form.rs", &[65]),
+            fanout("axum/src/form.rs", &[156, 164, 226]),
+            fanout("axum-core/src/ext_traits/request.rs", &[375, 388]),
+            fanout("axum/src/middleware/from_fn.rs", &[411]),
+            fanout("axum/src/routing/method_routing.rs", &[1697]),
+            fanout("axum/src/routing/tests/get_to_head.rs", &[22, 56]),
+            fanout("axum/src/routing/tests/mod.rs", &[1129, 1147]),
+            fanout("axum/src/serve/mod.rs", &[799]),
         ],
     )?;
     assert_targetless_path_line_fanout(
@@ -1712,10 +1474,7 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         "clone",
         &["0"],
         CallStatusKind::External,
-        &[SourceLineFanout {
-            file_suffix: "axum/src/routing/route.rs",
-            lines: &[51],
-        }],
+        &[fanout("axum/src/routing/route.rs", &[51])],
     )?;
     assert_targetless_method_rows(
         &db,
@@ -1732,10 +1491,7 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         "SelfField",
         Some(&["0"]),
         CallStatusKind::External,
-        &[SourceLineFanout {
-            file_suffix: "axum/src/routing/route.rs",
-            lines: &[57],
-        }],
+        &[fanout("axum/src/routing/route.rs", &[57])],
     )?;
     assert_targetless_method_rows(
         &db,
@@ -1753,46 +1509,16 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         Some(&["body"]),
         CallStatusKind::Unsupported,
         &[
-            SourceLineFanout {
-                file_suffix: "axum-core/src/ext_traits/request.rs",
-                lines: &[375, 388],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/extract/query.rs",
-                lines: &[104],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/extract/raw_form.rs",
-                lines: &[65, 71, 95],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/form.rs",
-                lines: &[156, 164, 226],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/middleware/from_fn.rs",
-                lines: &[411],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/response/mod.rs",
-                lines: &[450],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/method_routing.rs",
-                lines: &[1697],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/get_to_head.rs",
-                lines: &[22, 56],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/mod.rs",
-                lines: &[1129, 1147],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/serve/mod.rs",
-                lines: &[799],
-            },
+            fanout("axum-core/src/ext_traits/request.rs", &[375, 388]),
+            fanout("axum/src/extract/query.rs", &[104]),
+            fanout("axum/src/extract/raw_form.rs", &[65, 71, 95]),
+            fanout("axum/src/form.rs", &[156, 164, 226]),
+            fanout("axum/src/middleware/from_fn.rs", &[411]),
+            fanout("axum/src/response/mod.rs", &[450]),
+            fanout("axum/src/routing/method_routing.rs", &[1697]),
+            fanout("axum/src/routing/tests/get_to_head.rs", &[22, 56]),
+            fanout("axum/src/routing/tests/mod.rs", &[1129, 1147]),
+            fanout("axum/src/serve/mod.rs", &[799]),
         ],
         "body",
     )
@@ -1802,20 +1528,8 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
 fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: await result receiver rows.
-    // Source chain:
-    //   axum/src/test_helpers/test_client.rs:134 calls
-    //   `self.builder.send().await.unwrap()` inside an async block.
-    //   axum/src/serve/listener.rs:143 calls
-    //   `self.sem.clone().acquire_owned().await.unwrap()`.
-    // Current contract: awaited-result receiver shapes are visible in the
-    // corpus and stay targetless unless a direct inner call gives enough proof
-    // to classify the row as an external frontier. The listener row proves
-    // `self.sem` is an external `Arc<Semaphore>`, so the
-    // `clone().acquire_owned().await.unwrap()` chain is external but still has
-    // no local traversal edge. The test-client async-block `unwrap()` row is
-    // owned by the nested async executable instead of being flattened into the
-    // enclosing method owner.
+    // Awaited receiver shapes remain targetless; the nested async-block unwrap is
+    // not flattened into its enclosing method owner.
     let listener_owner = method_id_by_name_body_and_file_suffix(
         &db,
         "accept",
@@ -1855,21 +1569,6 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
         CallStatusKind::Unsupported,
         2,
     )?;
-    // Matrix: awaited-result receiver rows from
-    // `docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md`.
-    // Source chain examples:
-    //   axum/src/serve/listener.rs:143
-    //     `self.sem.clone().acquire_owned().await.unwrap()`
-    //   axum/src/test_helpers/test_client.rs:134
-    //     `self.builder.send().await.unwrap()` is represented by a nested
-    //     async-block owner, not by the enclosing method owner.
-    // Coarse `AwaitResult` rows are targetless: the receiver value is the
-    // result of an awaited expression, so the call graph must not fabricate a
-    // concrete callee edge. Awaited method-call receivers preserve the inner
-    // method name as proof payload instead of collapsing into this coarse
-    // bucket. Rows whose inner method target is visible but not exact stay
-    // targetless `Unresolved`; rows without enough receiver proof stay
-    // targetless `Unsupported`.
     assert_targetless_method_line_fanout(
         &db,
         &CORPUS_AXUM_CALL_GRAPH,
@@ -1877,10 +1576,7 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
         "AwaitResult",
         None,
         CallStatusKind::Unsupported,
-        &[SourceLineFanout {
-            file_suffix: "axum/src/extract/connect_info.rs",
-            lines: &[326, 367],
-        }],
+        &[fanout("axum/src/extract/connect_info.rs", &[326, 367])],
     )?;
 
     assert_targetless_method_rows(
@@ -1944,9 +1640,6 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
         "MethodCallResult",
         Some(&["get"]),
         CallStatusKind::Unsupported,
-        &[SourceLineFanout {
-            file_suffix: "axum/src/extract/connect_info.rs",
-            lines: &[330, 371, 416],
-        }],
+        &[fanout("axum/src/extract/connect_info.rs", &[330, 371, 416])],
     )
 }

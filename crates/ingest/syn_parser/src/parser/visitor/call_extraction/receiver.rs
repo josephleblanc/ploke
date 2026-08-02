@@ -223,7 +223,7 @@ fn self_field_method_result_receiver(call: &syn::ExprMethodCall) -> Option<Metho
         return None;
     }
     let byte_range = call.span().byte_range();
-    Some(MethodCallReceiver::MethodResultField {
+    Some(MethodCallReceiver::SelfFieldMethodResult {
         method_name: call.method.to_string(),
         method_span: (byte_range.start, byte_range.end),
         field_path,
@@ -245,6 +245,34 @@ fn method_result_field_path(receiver: &syn::Expr) -> Option<(&syn::ExprMethodCal
             Some((call, field_path))
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn distinguishes_self_field_results_from_post_result_fields() {
+        let direct: syn::Expr = syn::parse_quote!(self.foo.make());
+        let projected: syn::Expr = syn::parse_quote!(self.foo.make().foo);
+
+        assert!(matches!(
+            classify_method_receiver(&direct, &[], &[]),
+            MethodCallReceiver::SelfFieldMethodResult {
+                ref method_name,
+                ref field_path,
+                ..
+            } if method_name == "make" && field_path == &["foo"]
+        ));
+        assert!(matches!(
+            classify_method_receiver(&projected, &[], &[]),
+            MethodCallReceiver::MethodResultField {
+                ref method_name,
+                ref field_path,
+                ..
+            } if method_name == "make" && field_path == &["foo"]
+        ));
     }
 }
 

@@ -52,49 +52,115 @@ fn owner_effect_policy(
     })
 }
 
+struct RequestChain {
+    db: Database,
+    start: Uuid,
+    intermediate: Uuid,
+    target: Uuid,
+}
+
+impl RequestChain {
+    fn load() -> Result<Self, DbError> {
+        let db = setup_axum_call_graph_db()?;
+        let start = method_id_by_name_body_and_file_suffix(
+            &db,
+            "extract",
+            "self.extract_with_state(&())",
+            "axum-core/src/ext_traits/request.rs",
+        )?;
+        let intermediate = method_id_by_name_body_and_file_suffix(
+            &db,
+            "extract_with_state",
+            "E::from_request(self, state)",
+            "axum-core/src/ext_traits/request.rs",
+        )?;
+        let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+        Ok(Self {
+            db,
+            start,
+            intermediate,
+            target,
+        })
+    }
+}
+
+struct BodyEmpty {
+    db: Database,
+    owner: Uuid,
+    target: Uuid,
+}
+
+impl BodyEmpty {
+    fn load() -> Result<Self, DbError> {
+        let db = setup_axum_call_graph_db()?;
+        let owner = function_id_by_name_in_module(
+            &db,
+            &["crate", "middleware", "from_fn", "tests"],
+            "basic",
+        )?;
+        let target = method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?;
+        Ok(Self { db, owner, target })
+    }
+}
+
+const fn path_options(max_depth: u32, max_paths: usize) -> CallPathOptions {
+    CallPathOptions {
+        max_depth,
+        max_paths,
+    }
+}
+
+fn assert_request_edge(edge: &ploke_db::CallPathEdge, caller: Uuid, callee: Uuid, label: &str) {
+    assert_eq!(
+        (
+            edge.caller_id,
+            edge.callee_id,
+            edge.relation,
+            edge.source_kind,
+        ),
+        (
+            caller,
+            callee,
+            CallRelationKind::AssociatedFunction,
+            CallSiteKind::Path,
+        ),
+        "{label}: {edge:#?}"
+    );
+}
+
+fn assert_request_site(row: &CallContextRow, owner: Uuid, target: Uuid, label: &str) {
+    assert_eq!(
+        (
+            row.site.owner_id,
+            row.site.path.as_ref(),
+            row.site.arg_count,
+            row.status.status,
+        ),
+        (
+            owner,
+            Some(&path(&["E", "from_request"])),
+            Some(2),
+            CallStatusKind::Resolved,
+        ),
+        "{label}: {row:#?}"
+    );
+    assert!(
+        row.targets.iter().any(|row| row.target_id == target),
+        "{label}: {row:#?}"
+    );
+}
+
 #[test]
 fn axum_usage_questions_have_multi_hop_navigation_and_impact_answers() -> Result<(), DbError> {
-    let db = setup_axum_call_graph_db()?;
+    let RequestChain {
+        db,
+        start,
+        intermediate,
+        target,
+    } = RequestChain::load()?;
 
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Navigation:
-    //   "From this owner function, which local callees can I traverse to in
-    //   the persisted graph?"
-    // Impact analysis:
-    //   "Which callers eventually reach this function?"
-    //
-    // Source-oracle chain:
-    //   axum-core/src/ext_traits/request.rs:268
-    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
-    //   axum-core/src/ext_traits/request.rs:279
-    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
-    //   axum/src/handler/mod.rs:250 also contributes generated
-    //     `Tn::from_request(req, &state)` direct callsites through
-    //     `all_the_tuples!(impl_handler)`.
-    //   axum-core/src/extract/tuple.rs:68 also contributes generated
-    //     `Tn::from_request(req, state)` direct callsites through
-    //     `all_the_tuples!(impl_from_request)`.
-    //   axum-core/src/extract/mod.rs:85
-    //     defines the `FromRequest::from_request` trait method binding.
-    let start = method_id_by_name_body_and_file_suffix(
-        &db,
-        "extract",
-        "self.extract_with_state(&())",
-        "axum-core/src/ext_traits/request.rs",
-    )?;
-    let intermediate = method_id_by_name_body_and_file_suffix(
-        &db,
-        "extract_with_state",
-        "E::from_request(self, state)",
-        "axum-core/src/ext_traits/request.rs",
-    )?;
-    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
-    let options = CallPathOptions {
-        max_depth: 2,
-        max_paths: 128,
-    };
+    // Navigation/impact: traverse the exact two-hop RequestExt chain in both directions.
+    let options = path_options(2, 128);
 
     let outgoing = db.call_paths_from_owner(start, options)?;
     assert_path_depths(
@@ -146,57 +212,22 @@ fn axum_usage_questions_have_multi_hop_navigation_and_impact_answers() -> Result
 
 #[test]
 fn axum_usage_questions_answer_direct_reachability_between_known_symbols() -> Result<(), DbError> {
-    let db = setup_axum_call_graph_db()?;
-
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Security analysis / Performance work / Debugging:
-    //   "Can this entrypoint reach this sink/helper/error-producing function?"
-    //   "What ordered call path connects the two known symbols?"
-    //
-    // Source-oracle chain:
-    //   axum-core/src/ext_traits/request.rs:268
-    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
-    //   axum-core/src/ext_traits/request.rs:279
-    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
-    //   axum-core/src/extract/mod.rs:85
-    //     defines the `FromRequest::from_request` trait method binding.
-    let start = method_id_by_name_body_and_file_suffix(
-        &db,
-        "extract",
-        "self.extract_with_state(&())",
-        "axum-core/src/ext_traits/request.rs",
-    )?;
-    let intermediate = method_id_by_name_body_and_file_suffix(
-        &db,
-        "extract_with_state",
-        "E::from_request(self, state)",
-        "axum-core/src/ext_traits/request.rs",
-    )?;
-    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
-
-    let one_hop = db.call_paths_between(
+    let RequestChain {
+        db,
         start,
+        intermediate,
         target,
-        CallPathOptions {
-            max_depth: 1,
-            max_paths: 16,
-        },
-    )?;
+    } = RequestChain::load()?;
+
+    // Reachability: preserve the depth bound and exact ordered edge chain.
+
+    let one_hop = db.call_paths_between(start, target, path_options(1, 16))?;
     assert!(
         one_hop.is_empty(),
         "direct reachability must not collapse the intermediate method: {one_hop:#?}"
     );
 
-    let paths = db.call_paths_between(
-        start,
-        target,
-        CallPathOptions {
-            max_depth: 2,
-            max_paths: 16,
-        },
-    )?;
+    let paths = db.call_paths_between(start, target, path_options(2, 16))?;
     let path = paths
         .iter()
         .find(|path| path.start_id == start && path.end_id == target && path.depth == 2)
@@ -206,10 +237,13 @@ fn axum_usage_questions_answer_direct_reachability_between_known_symbols() -> Re
             )
         });
     assert_eq!(path.edges.len(), 2);
-    assert_eq!(path.edges[0].caller_id, start);
-    assert_eq!(path.edges[0].callee_id, intermediate);
-    assert_eq!(path.edges[1].caller_id, intermediate);
-    assert_eq!(path.edges[1].callee_id, target);
+    assert_eq!(
+        path.edges
+            .iter()
+            .map(|edge| (edge.caller_id, edge.callee_id))
+            .collect::<Vec<_>>(),
+        [(start, intermediate), (intermediate, target)]
+    );
     assert_path_edge_span_matches_site(
         &db,
         start,
@@ -230,56 +264,27 @@ fn axum_usage_questions_answer_direct_reachability_between_known_symbols() -> Re
 
 #[test]
 fn axum_usage_questions_classify_guarded_and_unguarded_call_paths() -> Result<(), DbError> {
-    let db = setup_axum_call_graph_db()?;
+    let RequestChain {
+        db,
+        start,
+        intermediate,
+        target,
+    } = RequestChain::load()?;
 
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Security analysis / Architecture review:
-    //   "Are authorization checks always called before protected state
-    //   mutations?"
-    //   "Do any call chains bypass the intended abstraction layer?"
-    //
-    // Source-oracle chain:
-    //   axum-core/src/ext_traits/request.rs:268
-    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
-    //   axum-core/src/ext_traits/request.rs:279
-    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
-    //   axum-core/src/extract/mod.rs:85
-    //     defines the `FromRequest::from_request` trait method binding.
-    //
-    // `extract_with_state` is used here as the required guard/intermediate:
-    // every resolved path from `extract` to `FromRequest::from_request` must
-    // pass through it before reaching the trait method binding.
-    let start = method_id_by_name_body_and_file_suffix(
-        &db,
-        "extract",
-        "self.extract_with_state(&())",
-        "axum-core/src/ext_traits/request.rs",
-    )?;
-    let intermediate = method_id_by_name_body_and_file_suffix(
-        &db,
-        "extract_with_state",
-        "E::from_request(self, state)",
-        "axum-core/src/ext_traits/request.rs",
-    )?;
-    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
-    let options = CallPathOptions {
-        max_depth: 2,
-        max_paths: 16,
-    };
+    // Guard analysis: the real intermediate guards every two-hop path; an unrelated node does not.
+    let options = path_options(2, 16);
 
     let guarded = db.call_guard_report_between(start, target, intermediate, options)?;
-    assert_eq!(guarded.source.id, start);
-    assert_eq!(guarded.target.id, target);
-    assert_eq!(guarded.guard.id, intermediate);
-    assert!(
-        guarded.guarded,
-        "expected all paths to pass guard: {guarded:#?}"
-    );
-    assert!(
-        guarded.violations.is_empty(),
-        "guarded path report should not include violating paths: {guarded:#?}"
+    assert_eq!(
+        (
+            guarded.source.id,
+            guarded.target.id,
+            guarded.guard.id,
+            guarded.guarded,
+            guarded.violations.len(),
+        ),
+        (start, target, intermediate, true, 0),
+        "guarded RequestExt path report: {guarded:#?}"
     );
     assert_path_depths(
         &guarded
@@ -323,47 +328,16 @@ fn axum_usage_questions_classify_guarded_and_unguarded_call_paths() -> Result<()
 
 #[test]
 fn axum_usage_questions_summarize_owner_reach_for_navigation() -> Result<(), DbError> {
-    let db = setup_axum_call_graph_db()?;
-
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Navigation:
-    //   "What functions does this request handler call directly?"
-    //   "From this owner function, which local callees can I traverse to in
-    //   the persisted graph?"
-    // Security analysis / Performance work:
-    //   "Which external dependency calls are made from this user-facing
-    //   entrypoint?" and "What call chains reach a known sink/helper?"
-    //
-    // Source-oracle chain:
-    //   axum-core/src/ext_traits/request.rs:268
-    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
-    //   axum-core/src/ext_traits/request.rs:279
-    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
-    //   axum-core/src/extract/mod.rs:85
-    //     defines the `FromRequest::from_request` trait method binding.
-    let start = method_id_by_name_body_and_file_suffix(
-        &db,
-        "extract",
-        "self.extract_with_state(&())",
-        "axum-core/src/ext_traits/request.rs",
-    )?;
-    let intermediate = method_id_by_name_body_and_file_suffix(
-        &db,
-        "extract_with_state",
-        "E::from_request(self, state)",
-        "axum-core/src/ext_traits/request.rs",
-    )?;
-    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
-
-    let report = db.call_reach_for_owner(
+    let RequestChain {
+        db,
         start,
-        CallPathOptions {
-            max_depth: 2,
-            max_paths: 16,
-        },
-    )?;
+        intermediate,
+        target,
+    } = RequestChain::load()?;
+
+    // Owner reach: retain direct/eventual callees, boundary metadata, and source provenance.
+
+    let report = db.call_reach_for_owner(start, path_options(2, 16))?;
     assert_eq!(report.owner.id, start);
     assert_eq!(report.owner.kind, CallNodeKind::Method);
     assert_eq!(report.owner.name, "extract");
@@ -408,7 +382,7 @@ fn axum_usage_questions_summarize_owner_reach_for_navigation() -> Result<(), DbE
             panic!(
                 "RequestExt::extract reach report should include the extract_with_state callsite row: {report:#?}"
             )
-    });
+        });
     assert_eq!(direct_site.status.status, CallStatusKind::Resolved);
     assert_eq!(
         direct_site.site.arg_count,
@@ -454,36 +428,14 @@ fn axum_usage_questions_summarize_owner_reach_for_navigation() -> Result<(), DbE
         "RequestExt::extract reach report source modules",
     );
 
-    let boundary_report = db.call_reach_for_owner(
-        intermediate,
-        CallPathOptions {
-            max_depth: 1,
-            max_paths: 16,
-        },
-    )?;
+    let boundary_report = db.call_reach_for_owner(intermediate, path_options(1, 16))?;
     assert_eq!(
         boundary_report.boundary_call_sites.len(),
         1,
         "RequestExt::extract_with_state should expose its direct cross-module FromRequest callsite: {boundary_report:#?}"
     );
     let boundary = &boundary_report.boundary_call_sites[0];
-    assert_eq!(boundary.site.owner_id, intermediate);
-    assert_eq!(
-        boundary.site.path.as_ref(),
-        Some(&path(&["E", "from_request"]))
-    );
-    assert_eq!(
-        boundary.site.arg_count,
-        Some(2),
-        "E::from_request should preserve the two explicit source arguments: {boundary:#?}"
-    );
-    assert!(
-        boundary
-            .targets
-            .iter()
-            .any(|target_row| target_row.target_id == target),
-        "module-boundary row should target FromRequest::from_request: {boundary_report:#?}"
-    );
+    assert_request_site(boundary, intermediate, target, "RequestExt module boundary");
 
     Ok(())
 }
@@ -491,42 +443,15 @@ fn axum_usage_questions_summarize_owner_reach_for_navigation() -> Result<(), DbE
 #[test]
 fn axum_usage_questions_list_module_boundary_edges_for_architecture_review() -> Result<(), DbError>
 {
-    let db = setup_axum_call_graph_db()?;
+    let RequestChain {
+        db,
+        start,
+        intermediate,
+        target,
+    } = RequestChain::load()?;
 
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Architecture review:
-    //   "Which modules call across a boundary that should be one-way?"
-    //   "Do any call chains bypass the intended abstraction layer?"
-    //
-    // Source-oracle chain:
-    //   axum-core/src/ext_traits/request.rs:268
-    //     `RequestExt::extract` calls `self.extract_with_state(&())` inside
-    //     the same `crate::ext_traits::request` module.
-    //   axum-core/src/ext_traits/request.rs:279
-    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
-    //   axum-core/src/extract/mod.rs:85
-    //     defines the `FromRequest::from_request` trait method binding in the
-    //     separate `crate::extract` module.
-    let start = method_id_by_name_body_and_file_suffix(
-        &db,
-        "extract",
-        "self.extract_with_state(&())",
-        "axum-core/src/ext_traits/request.rs",
-    )?;
-    let intermediate = method_id_by_name_body_and_file_suffix(
-        &db,
-        "extract_with_state",
-        "E::from_request(self, state)",
-        "axum-core/src/ext_traits/request.rs",
-    )?;
-    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
-
-    let options = CallPathOptions {
-        max_depth: 2,
-        max_paths: 16,
-    };
+    // Architecture review: return only the transitive cross-module edge, never the same-module hop.
+    let options = path_options(2, 16);
     let boundaries = db.module_boundary_edges_from_owner(start, options)?;
     assert!(
         boundaries
@@ -542,18 +467,26 @@ fn axum_usage_questions_list_module_boundary_edges_for_architecture_review() -> 
                 "architecture boundary query should expose RequestExt::extract_with_state -> FromRequest::from_request: {boundaries:#?}"
             )
         });
-    assert_eq!(
-        boundary.caller.module_path,
-        path(&["crate", "ext_traits", "request"])
+    assert_request_edge(
+        &boundary.edge,
+        intermediate,
+        target,
+        "RequestExt module boundary",
     );
-    assert_eq!(boundary.callee.module_path, path(&["crate", "extract"]));
-    assert_eq!(boundary.edge.relation, CallRelationKind::AssociatedFunction);
-    assert_eq!(boundary.edge.source_kind, CallSiteKind::Path);
     assert_eq!(
-        boundary.site.path.as_ref(),
-        Some(&path(&["E", "from_request"]))
+        (
+            boundary.caller.module_path.as_slice(),
+            boundary.callee.module_path.as_slice(),
+            boundary.site.path.as_ref(),
+            boundary.site.arg_count,
+        ),
+        (
+            path(&["crate", "ext_traits", "request"]).as_slice(),
+            path(&["crate", "extract"]).as_slice(),
+            Some(&path(&["E", "from_request"])),
+            Some(2),
+        )
     );
-    assert_eq!(boundary.site.arg_count, Some(2));
     assert!(
         !boundaries
             .iter()
@@ -575,31 +508,10 @@ fn axum_usage_questions_list_module_boundary_edges_for_architecture_review() -> 
 
 #[test]
 fn axum_usage_questions_list_crate_boundary_edges_for_component_review() -> Result<(), DbError> {
-    let db = setup_axum_call_graph_db()?;
+    let BodyEmpty { db, owner, target } = BodyEmpty::load()?;
 
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Architecture review:
-    //   "Are lower-level crates depending on higher-level application code?"
-    // Build or deployment optimization:
-    //   "Which crates or binaries need rebuilding after this internal function changes?"
-    //
-    // Source oracle:
-    //   axum/src/middleware/from_fn.rs:411 in the `axum` crate calls
-    //     `Body::empty()`.
-    //   axum-core/src/body.rs:52 defines `Body::empty` in the `axum-core`
-    //     crate.
-    // Expected contract: the resolved direct edge is visible as a cross-crate
-    // edge, while same-crate resolved edges in the same owner are not reported
-    // as crate-boundary crossings.
-    let owner =
-        function_id_by_name_in_module(&db, &["crate", "middleware", "from_fn", "tests"], "basic")?;
-    let target = method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?;
-    let options = CallPathOptions {
-        max_depth: 1,
-        max_paths: 64,
-    };
+    // Component review: isolate the direct axum -> axum-core Body::empty crossing.
+    let options = path_options(1, 64);
 
     let edges = db.crate_boundary_edges_from_owner(owner, options)?;
     assert!(
@@ -616,17 +528,27 @@ fn axum_usage_questions_list_crate_boundary_edges_for_component_review() -> Resu
                 "crate-boundary query should expose axum::middleware::from_fn::tests::basic -> axum_core::Body::empty: {edges:#?}"
             )
         });
-    assert_eq!(boundary.caller_crate, "axum");
-    assert_eq!(boundary.callee_crate, "axum-core");
     assert_eq!(
-        boundary.caller.module_path,
-        path(&["crate", "middleware", "from_fn"]),
-        "call node metadata uses the existing shortest stable module path for nested test owners"
+        (
+            boundary.caller_crate.as_str(),
+            boundary.callee_crate.as_str(),
+            boundary.caller.module_path.as_slice(),
+            boundary.callee.module_path.as_slice(),
+            boundary.edge.relation,
+            boundary.edge.source_kind,
+            boundary.site.path.as_ref(),
+        ),
+        (
+            "axum",
+            "axum-core",
+            path(&["crate", "middleware", "from_fn"]).as_slice(),
+            path(&["crate", "body"]).as_slice(),
+            CallRelationKind::AssociatedFunction,
+            CallSiteKind::Path,
+            Some(&path(&["Body", "empty"])),
+        ),
+        "Body::empty crate-boundary metadata: {boundary:#?}"
     );
-    assert_eq!(boundary.callee.module_path, path(&["crate", "body"]));
-    assert_eq!(boundary.edge.relation, CallRelationKind::AssociatedFunction);
-    assert_eq!(boundary.edge.source_kind, CallSiteKind::Path);
-    assert_eq!(boundary.site.path.as_ref(), Some(&path(&["Body", "empty"])));
     assert!(
         db.call_paths_from_owner(owner, options)?
             .iter()
@@ -640,30 +562,10 @@ fn axum_usage_questions_list_crate_boundary_edges_for_component_review() -> Resu
 
 #[test]
 fn axum_usage_questions_report_crate_boundary_policy_violations() -> Result<(), DbError> {
-    let db = setup_axum_call_graph_db()?;
+    let BodyEmpty { db, owner, target } = BodyEmpty::load()?;
 
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Architecture review:
-    //   "Are lower-level crates depending on higher-level application code?"
-    //   "Which crate-boundary calls violate the intended dependency direction?"
-    //
-    // Source oracle:
-    //   axum/src/middleware/from_fn.rs:411 in the `axum` crate calls
-    //     `Body::empty()`.
-    //   axum-core/src/body.rs:52 defines `Body::empty` in the `axum-core`
-    //     crate.
-    // Expected policy contract: a caller-supplied forbidden dependency rule
-    // reports the resolved `axum -> axum-core` edge without inventing policy
-    // evidence for same-crate calls or targetless dependency frontiers.
-    let owner =
-        function_id_by_name_in_module(&db, &["crate", "middleware", "from_fn", "tests"], "basic")?;
-    let target = method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?;
-    let options = CallPathOptions {
-        max_depth: 1,
-        max_paths: 64,
-    };
+    // Policy review: forbid axum -> axum-core only; preserve inverse and invalid-rule negatives.
+    let options = path_options(1, 64);
 
     let violations = db.crate_boundary_policy_violations_from_owner(
         owner,
@@ -680,14 +582,24 @@ fn axum_usage_questions_report_crate_boundary_policy_violations() -> Result<(), 
         "crate policy should flag exactly the inspected cross-crate edge: {violations:#?}"
     );
     let violation = &violations[0];
-    assert_eq!(violation.rule_id, "axum-must-not-call-axum-core");
-    assert_eq!(violation.edge.edge.caller_id, owner);
-    assert_eq!(violation.edge.edge.callee_id, target);
-    assert_eq!(violation.edge.caller_crate, "axum");
-    assert_eq!(violation.edge.callee_crate, "axum-core");
     assert_eq!(
-        violation.edge.site.path.as_ref(),
-        Some(&path(&["Body", "empty"]))
+        (
+            violation.rule_id.as_str(),
+            violation.edge.edge.caller_id,
+            violation.edge.edge.callee_id,
+            violation.edge.caller_crate.as_str(),
+            violation.edge.callee_crate.as_str(),
+            violation.edge.site.path.as_ref(),
+        ),
+        (
+            "axum-must-not-call-axum-core",
+            owner,
+            target,
+            "axum",
+            "axum-core",
+            Some(&path(&["Body", "empty"])),
+        ),
+        "Body::empty crate-policy violation: {violation:#?}"
     );
 
     let allowed = db.crate_boundary_policy_violations_from_owner(
@@ -725,43 +637,15 @@ fn axum_usage_questions_report_crate_boundary_policy_violations() -> Result<(), 
 
 #[test]
 fn axum_usage_questions_report_module_boundary_policy_violations() -> Result<(), DbError> {
-    let db = setup_axum_call_graph_db()?;
+    let RequestChain {
+        db,
+        start,
+        intermediate,
+        target,
+    } = RequestChain::load()?;
 
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Architecture review:
-    //   "Which modules call across a boundary that should be one-way?"
-    //   "Do any call chains bypass the intended abstraction layer?"
-    //
-    // Source-oracle chain:
-    //   axum-core/src/ext_traits/request.rs:268
-    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
-    //   axum-core/src/ext_traits/request.rs:279
-    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
-    //   axum-core/src/extract/mod.rs:85
-    //     defines the `FromRequest::from_request` trait method in the
-    //     separate `crate::extract` module.
-    // Expected policy contract: a caller-supplied forbidden boundary rule
-    // reports the resolved `ext_traits::request -> extract` edge without
-    // inventing edges for same-module calls or targetless frontiers.
-    let start = method_id_by_name_body_and_file_suffix(
-        &db,
-        "extract",
-        "self.extract_with_state(&())",
-        "axum-core/src/ext_traits/request.rs",
-    )?;
-    let intermediate = method_id_by_name_body_and_file_suffix(
-        &db,
-        "extract_with_state",
-        "E::from_request(self, state)",
-        "axum-core/src/ext_traits/request.rs",
-    )?;
-    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
-    let options = CallPathOptions {
-        max_depth: 2,
-        max_paths: 16,
-    };
+    // Policy review: forbid only ext_traits -> extract, retain inverse and invalid-rule negatives.
+    let options = path_options(2, 16);
 
     let violations = db.module_boundary_policy_violations_from_owner(
         start,
@@ -778,20 +662,25 @@ fn axum_usage_questions_report_module_boundary_policy_violations() -> Result<(),
         "policy should flag exactly the inspected cross-module edge: {violations:#?}"
     );
     let violation = &violations[0];
-    assert_eq!(violation.rule_id, "ext-traits-must-not-call-extract");
-    assert_eq!(violation.edge.edge.caller_id, intermediate);
-    assert_eq!(violation.edge.edge.callee_id, target);
-    assert_eq!(
-        violation.edge.caller.module_path,
-        path(&["crate", "ext_traits", "request"])
+    assert_request_edge(
+        &violation.edge.edge,
+        intermediate,
+        target,
+        "RequestExt module policy violation",
     );
     assert_eq!(
-        violation.edge.callee.module_path,
-        path(&["crate", "extract"])
-    );
-    assert_eq!(
-        violation.edge.site.path.as_ref(),
-        Some(&path(&["E", "from_request"]))
+        (
+            violation.rule_id.as_str(),
+            violation.edge.caller.module_path.as_slice(),
+            violation.edge.callee.module_path.as_slice(),
+            violation.edge.site.path.as_ref(),
+        ),
+        (
+            "ext-traits-must-not-call-extract",
+            path(&["crate", "ext_traits", "request"]).as_slice(),
+            path(&["crate", "extract"]).as_slice(),
+            Some(&path(&["E", "from_request"])),
+        )
     );
 
     let allowed = db.module_boundary_policy_violations_from_owner(
@@ -833,99 +722,43 @@ fn axum_usage_questions_report_module_boundary_policy_violations() -> Result<(),
 fn axum_usage_questions_surface_external_frontier_for_dependency_calls() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Security analysis:
-    //   "Which external dependency calls are made from this user-facing
-    //   entrypoint?"
-    // Performance work:
-    //   "Which callers trigger repeated parsing, cloning, serialization, or
-    //   database work?"
-    // Debugging:
-    //   "What source callsite corresponds to this persisted call edge or proof
-    //   blocker?"
-    //
-    // Source oracle:
-    //   axum/src/json.rs:164 defines `Json::from_bytes`.
-    //   axum/src/json.rs:184 calls
-    //     `serde_json::Deserializer::from_slice(bytes)`.
-    //   axum/src/lib.rs:488-489 gates the file module with
-    //     `#[cfg(feature = "json")] mod json;`.
-    // Current contract: dependency-root path calls are visible as external
-    // frontier rows but do not become local traversal edges. The owner reach
-    // query must still preserve the feature gate so build/deployment reviews
-    // can separate feature-specific call paths.
+    // json.rs:184: preserve the feature-gated serde_json frontier without local edges.
     let owner = method_id_by_name_body_and_file_suffix(
         &db,
         "from_bytes",
         "serde_json::Deserializer::from_slice(bytes)",
         "axum/src/json.rs",
     )?;
-    let report = db.call_reach_for_owner(
-        owner,
-        CallPathOptions {
-            max_depth: 2,
-            max_paths: 16,
-        },
-    )?;
+    let report = db.call_reach_for_owner(owner, path_options(2, 16))?;
 
-    assert_eq!(report.owner.id, owner);
-    assert_eq!(report.owner.name, "from_bytes");
-    assert!(
-        report.paths.is_empty() && report.callees.is_empty(),
-        "external dependency calls should not fabricate local reach edges: {report:#?}"
+    let cfg = r#"feature = "json""#;
+    assert_eq!(
+        (
+            report.owner.id,
+            report.owner.name.as_str(),
+            report.paths.len(),
+            report.callees.len(),
+            report.source_cfgs.iter().any(|value| value == cfg),
+        ),
+        (owner, "from_bytes", 0, 0, true),
+        "Json::from_bytes external reach summary: {report:#?}"
     );
-    assert!(
-        report
-            .source_cfgs
+    let expected_path = path(&["serde_json", "Deserializer", "from_slice"]);
+    for (rows, label) in [
+        (&report.frontier_calls[..], "frontier"),
+        (&report.external_frontier_calls[..], "external frontier"),
+    ] {
+        let row = rows
             .iter()
-            .any(|cfg| cfg == r#"feature = "json""#),
-        "Json::from_bytes reach report should preserve the json feature cfg: {report:#?}"
-    );
-
-    let frontier = report
-        .frontier_calls
-        .iter()
-        .find(|row| {
-            row.site.path.as_ref() == Some(&path(&["serde_json", "Deserializer", "from_slice"]))
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "Json::from_bytes reach report should include serde_json frontier row: {report:#?}"
-            )
-        });
-    assert_external_targetless(frontier);
-    assert_eq!(frontier.site.owner_id, owner);
-    assert!(
-        frontier
-            .site
-            .cfgs
-            .iter()
-            .any(|cfg| cfg == r#"feature = "json""#),
-        "feature-gated reach summary should be backed by callsite cfg metadata: {frontier:#?}"
-    );
-    let external_frontier = report
-        .external_frontier_calls
-        .iter()
-        .find(|row| {
-            row.site.path.as_ref() == Some(&path(&["serde_json", "Deserializer", "from_slice"]))
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "Json::from_bytes reach report should include serde_json in external frontier rows: {report:#?}"
-            )
-    });
-    assert_external_targetless(external_frontier);
-    assert_eq!(external_frontier.site.owner_id, owner);
-    assert!(
-        external_frontier
-            .site
-            .cfgs
-            .iter()
-            .any(|cfg| cfg == r#"feature = "json""#),
-        "external frontier row should preserve the json feature cfg: {external_frontier:#?}"
-    );
+            .find(|row| row.site.path.as_ref() == Some(&expected_path))
+            .unwrap_or_else(|| panic!("missing serde_json {label}: {report:#?}"));
+        assert_external_targetless(row);
+        assert_eq!(row.site.owner_id, owner, "{label}: {row:#?}");
+        assert!(
+            row.site.cfgs.iter().any(|value| value == cfg),
+            "{label}: {row:#?}"
+        );
+    }
     assert_source_file(
         &report.source_files,
         "axum/src/json.rs",
@@ -1191,24 +1024,7 @@ fn axum_usage_questions_report_admitted_external_summary_as_reachable_effect() -
 fn axum_usage_questions_preserve_argument_shape_for_external_frontier() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // API understanding:
-    //   "What argument shapes do existing callers pass?"
-    // Build or deployment optimization:
-    //   "Are there feature-gated or platform-specific call paths that should
-    //   be checked separately?"
-    //
-    // Source oracle:
-    //   axum-macros/src/attr_parsing.rs:7 defines
-    //     `parse_parenthesized_attribute<K, T>(...)`.
-    //   axum-macros/src/attr_parsing.rs:22 calls
-    //     `std::any::type_name::<K>()`.
-    // Current contract: dependency-root calls stay external and targetless,
-    // but DB call context preserves the explicit source argument shape. This
-    // proves the persisted graph can answer the turbofish arity question
-    // without inventing a local traversal edge for `std::any::type_name`.
+    // attr_parsing.rs:22: preserve zero value args and one turbofish arg on type_name::<K>().
     let owner = function_id_by_name_in_module(
         &db,
         &["crate", "attr_parsing"],
@@ -1217,25 +1033,17 @@ fn axum_usage_questions_preserve_argument_shape_for_external_frontier() -> Resul
     let context = db.call_context_for_owner(owner)?;
     let row = row_by_path(&context, &["std", "any", "type_name"]);
     assert_external_targetless(row);
-    assert_eq!(row.site.owner_id, owner);
     assert_eq!(
-        row.site.arg_count,
-        Some(0),
-        "type_name::<K>() should preserve zero value arguments: {row:#?}"
-    );
-    assert_eq!(
-        row.site.generic_arg_count,
-        Some(1),
-        "type_name::<K>() should preserve one turbofish argument: {row:#?}"
+        (
+            row.site.owner_id,
+            row.site.arg_count,
+            row.site.generic_arg_count
+        ),
+        (owner, Some(0), Some(1)),
+        "type_name::<K>() argument shape: {row:#?}"
     );
 
-    let report = db.call_reach_for_owner(
-        owner,
-        CallPathOptions {
-            max_depth: 1,
-            max_paths: 16,
-        },
-    )?;
+    let report = db.call_reach_for_owner(owner, path_options(1, 16))?;
     let frontier = report
         .external_frontier_calls
         .iter()
@@ -1246,8 +1054,10 @@ fn axum_usage_questions_preserve_argument_shape_for_external_frontier() -> Resul
             )
         });
     assert_external_targetless(frontier);
-    assert_eq!(frontier.site.arg_count, Some(0));
-    assert_eq!(frontier.site.generic_arg_count, Some(1));
+    assert_eq!(
+        (frontier.site.arg_count, frontier.site.generic_arg_count),
+        (Some(0), Some(1))
+    );
 
     Ok(())
 }
@@ -1256,21 +1066,7 @@ fn axum_usage_questions_preserve_argument_shape_for_external_frontier() -> Resul
 fn axum_usage_questions_surface_platform_cfgs_for_listener_reach() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Build or deployment optimization:
-    //   "Are there feature-gated or platform-specific call paths that should
-    //   be checked separately?"
-    //
-    // Source oracle:
-    //   axum/src/serve/listener.rs:40-43 contains the non-gated
-    //   `TcpListener` impl.
-    //   axum/src/serve/listener.rs:55-63 contains the `#[cfg(unix)]`
-    //   `UnixListener` impl.
-    // Current contract: both `Self::accept(self).await` rows remain external
-    // and targetless, but owner reach summaries preserve the cfg metadata for
-    // the platform-gated row.
+    // listener.rs:40-63: both accept frontiers stay targetless; exactly one preserves `unix`.
     let owners = method_ids_by_name_body_and_file_suffix(
         &db,
         "accept",
@@ -1281,13 +1077,7 @@ fn axum_usage_questions_surface_platform_cfgs_for_listener_reach() -> Result<(),
 
     let mut gated_reports = 0;
     for owner in owners {
-        let report = db.call_reach_for_owner(
-            owner,
-            CallPathOptions {
-                max_depth: 1,
-                max_paths: 16,
-            },
-        )?;
+        let report = db.call_reach_for_owner(owner, path_options(1, 16))?;
         let frontier = report
             .external_frontier_calls
             .iter()
@@ -1317,27 +1107,7 @@ fn axum_usage_questions_surface_platform_cfgs_for_listener_reach() -> Result<(),
 fn axum_usage_questions_reach_generated_constructor_directly() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Debugging:
-    //   "What source callsite corresponds to this persisted generated-item
-    //   call edge?"
-    // Documentation and RAG:
-    //   "Which generated-source boundary was crossed to make this edge
-    //   traversable?"
-    //
-    // Source oracle:
-    //   axum/src/handler/future.rs:11-18 defines the generated future type.
-    //   axum/src/macros.rs:19-20 contains the macro template that would
-    //   generate the inherent `new` constructor after expansion.
-    //   axum/src/handler/service.rs:155 binds
-    //     `type Future = super::future::IntoServiceFuture<H::Future>`.
-    //   axum/src/handler/service.rs:174 calls
-    //     `super::future::IntoServiceFuture::new(future)`.
-    // Current contract: the bounded `opaque_future!` item invocation is
-    // modeled as a generated struct plus inherent `new` method, so the
-    // source callsite traverses directly to the generated constructor.
+    // handler/service.rs:174: the generated IntoServiceFuture::new edge is directly traversable.
     let owner =
         method_id_by_name_and_body_substring(&db, "call", "IntoServiceFuture::new(future)")?;
     let context = db.call_context_for_owner(owner)?;
@@ -1355,13 +1125,8 @@ fn axum_usage_questions_reach_generated_constructor_directly() -> Result<(), DbE
         CallTargetKind::Method,
     );
 
-    let paths = db.call_paths_from_owner(
-        owner,
-        CallPathOptions {
-            max_depth: 2,
-            max_paths: 128,
-        },
-    )?;
+    let options = path_options(2, 128);
+    let paths = db.call_paths_from_owner(owner, options)?;
     assert!(
         paths.iter().any(|path| path.end_id == target
             && path.edges.len() == 1
@@ -1369,13 +1134,7 @@ fn axum_usage_questions_reach_generated_constructor_directly() -> Result<(), DbE
         "generated constructor should appear as a one-hop path: {paths:#?}"
     );
 
-    let report = db.call_reach_for_owner(
-        owner,
-        CallPathOptions {
-            max_depth: 2,
-            max_paths: 128,
-        },
-    )?;
+    let report = db.call_reach_for_owner(owner, options)?;
     let direct = report
         .direct_call_sites
         .iter()
@@ -1409,49 +1168,24 @@ fn axum_usage_questions_reach_generated_constructor_directly() -> Result<(), DbE
 
 #[test]
 fn axum_usage_questions_summarize_eventual_callers_for_impact() -> Result<(), DbError> {
-    let db = setup_axum_call_graph_db()?;
-
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Impact analysis:
-    //   "Which callers eventually reach this function?"
-    // Dead code detection:
-    //   "Is this implementation truly unused, or is it only called through trait dispatch?"
-    // Refactoring support:
-    //   "Which callers need migration before this helper can be split or removed?"
-    //
-    // Source-oracle chain:
-    //   axum-core/src/ext_traits/request.rs:268
-    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
-    //   axum-core/src/ext_traits/request.rs:279
-    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
-    //   axum-core/src/extract/mod.rs:85
-    //     defines the `FromRequest::from_request` trait method binding.
-    let start = method_id_by_name_body_and_file_suffix(
-        &db,
-        "extract",
-        "self.extract_with_state(&())",
-        "axum-core/src/ext_traits/request.rs",
-    )?;
-    let intermediate = method_id_by_name_body_and_file_suffix(
-        &db,
-        "extract_with_state",
-        "E::from_request(self, state)",
-        "axum-core/src/ext_traits/request.rs",
-    )?;
-    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
-
-    let report = db.call_impact_for_target(
+    let RequestChain {
+        db,
+        start,
+        intermediate,
         target,
-        CallPathOptions {
-            max_depth: 2,
-            max_paths: 128,
-        },
-    )?;
-    assert_eq!(report.target.id, target);
-    assert_eq!(report.target.kind, CallNodeKind::Method);
-    assert_eq!(report.target.name, "from_request");
+    } = RequestChain::load()?;
+
+    // Impact: preserve exact direct/eventual callers, 34 source sites, buckets, and provenance.
+
+    let report = db.call_impact_for_target(target, path_options(2, 128))?;
+    assert_eq!(
+        (
+            report.target.id,
+            report.target.kind,
+            report.target.name.as_str()
+        ),
+        (target, CallNodeKind::Method, "from_request")
+    );
 
     assert_path_depths(
         &report
@@ -3114,35 +2848,16 @@ fn axum_usage_questions_list_future_poll_runtime_dispatch_needs() -> Result<(), 
 
 #[test]
 fn axum_usage_questions_report_architecture_boundary_edges() -> Result<(), DbError> {
-    let db = setup_axum_call_graph_db()?;
+    let RequestChain {
+        db,
+        intermediate: owner,
+        target,
+        ..
+    } = RequestChain::load()?;
 
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Architecture review:
-    //   "Which modules call across a boundary that should be one-way?"
-    //   "Do any call chains bypass the intended abstraction layer?"
-    //
-    // Source-oracle chain:
-    //   axum-core/src/ext_traits/request.rs:279
-    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
-    //   axum-core/src/extract/mod.rs:85
-    //     defines the `FromRequest::from_request` trait method binding.
-    let owner = method_id_by_name_body_and_file_suffix(
-        &db,
-        "extract_with_state",
-        "E::from_request(self, state)",
-        "axum-core/src/ext_traits/request.rs",
-    )?;
-    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+    // Architecture report: preserve the one direct boundary site and matching path edge.
 
-    let report = db.call_reach_for_owner(
-        owner,
-        CallPathOptions {
-            max_depth: 1,
-            max_paths: 16,
-        },
-    )?;
+    let report = db.call_reach_for_owner(owner, path_options(1, 16))?;
 
     assert_eq!(
         report.boundary_call_sites.len(),
@@ -3150,23 +2865,7 @@ fn axum_usage_questions_report_architecture_boundary_edges() -> Result<(), DbErr
         "architecture review should expose the direct cross-module callsite: {report:#?}"
     );
     let boundary_site = &report.boundary_call_sites[0];
-    assert_eq!(boundary_site.site.owner_id, owner);
-    assert_eq!(
-        boundary_site.site.path.as_ref(),
-        Some(&path(&["E", "from_request"]))
-    );
-    assert_eq!(
-        boundary_site.site.arg_count,
-        Some(2),
-        "architecture review should preserve the source argument shape for the boundary call: {boundary_site:#?}"
-    );
-    assert!(
-        boundary_site
-            .targets
-            .iter()
-            .any(|target_row| target_row.target_id == target),
-        "architecture review boundary callsite should target FromRequest::from_request: {report:#?}"
-    );
+    assert_request_site(boundary_site, owner, target, "architecture boundary site");
 
     assert_eq!(
         report.boundary_edges.len(),
@@ -3174,10 +2873,7 @@ fn axum_usage_questions_report_architecture_boundary_edges() -> Result<(), DbErr
         "architecture review should expose the same crossing as a path edge: {report:#?}"
     );
     let edge = report.boundary_edges[0];
-    assert_eq!(edge.caller_id, owner);
-    assert_eq!(edge.callee_id, target);
-    assert_eq!(edge.source_kind, CallSiteKind::Path);
-    assert_eq!(edge.relation, CallRelationKind::AssociatedFunction);
+    assert_request_edge(&edge, owner, target, "architecture boundary edge");
 
     let caller = db
         .call_node_info(edge.caller_id)?
@@ -3200,46 +2896,21 @@ fn axum_usage_questions_report_architecture_boundary_edges() -> Result<(), DbErr
 
 #[test]
 fn axum_usage_questions_report_body_empty_component_impact() -> Result<(), DbError> {
-    let db = setup_axum_call_graph_db()?;
+    let BodyEmpty { db, target, .. } = BodyEmpty::load()?;
 
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Build or deployment optimization:
-    //   "Which components are affected by a change to this API?"
-    //   "Which crates or binaries need rebuilding after this internal function changes?"
-    // API understanding:
-    //   "How is this library function used in real target code?"
-    //   "Which constructors are used directly, and which are only reached
-    //   through re-exports or aliases?"
-    //
-    // Source oracle:
-    //   axum-core/src/body.rs:52 defines `Body::empty`.
-    //   axum-core/src/body.rs:{110,116} calls `Self::empty()`.
-    //   axum-core, axum, closure-owned, and local-item rows call
-    //   `Body::empty()` through direct imports, re-exports, and inherited
-    //   glob imports.
-    let target = method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?;
-    let report = db.call_impact_for_target(
-        target,
-        CallPathOptions {
-            max_depth: 1,
-            max_paths: 64,
-        },
-    )?;
+    // Component impact: preserve all 23 Body::empty callers and their source buckets.
+    let report = db.call_impact_for_target(target, path_options(1, 64))?;
 
-    assert_eq!(report.target.id, target);
-    assert_eq!(report.target.kind, CallNodeKind::Method);
-    assert_eq!(report.target.name, "empty");
     assert_eq!(
-        report.paths.len(),
-        23,
-        "component impact should traverse every current Body::empty direct caller: {report:#?}"
-    );
-    assert_eq!(
-        report.direct_call_sites.len(),
-        23,
-        "component impact should expose every current Body::empty callsite: {report:#?}"
+        (
+            report.target.id,
+            report.target.kind,
+            report.target.name.as_str(),
+            report.paths.len(),
+            report.direct_call_sites.len(),
+        ),
+        (target, CallNodeKind::Method, "empty", 23, 23),
+        "Body::empty component impact identity/cardinality: {report:#?}"
     );
     assert!(
         !report.test_callers.is_empty() && !report.non_test_callers.is_empty(),
@@ -3322,24 +2993,7 @@ fn axum_usage_questions_report_body_empty_component_impact() -> Result<(), DbErr
 fn axum_usage_questions_surface_fail_closed_debugging_context() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Usage questions:
-    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
-    //
-    // Debugging:
-    //   "Which callers can pass this unsupported receiver shape into the
-    //   resolver?"
-    // Documentation and RAG:
-    //   "What fail-closed blocker should be shown when a callsite is visible
-    //   but targetless?"
-    //
-    // Source oracle:
-    //   axum/src/serve/listener.rs:142 owns `ConnLimiter<T>::accept`.
-    //   axum/src/serve/listener.rs:143 calls
-    //     `self.sem.clone().acquire_owned().await.unwrap()`.
-    // Current contract: the awaited-result `unwrap()` callsite is visible as
-    // an external frontier because the direct inner call chain is externally
-    // proven, but it has no fabricated callee and cannot become a local
-    // traversal edge.
+    // listener.rs:143: awaited-result unwrap remains an edge-free external frontier.
     let owner = method_id_by_name_body_and_file_suffix(
         &db,
         "accept",
@@ -3363,26 +3017,15 @@ fn axum_usage_questions_surface_fail_closed_debugging_context() -> Result<(), Db
         "axum/src/serve/listener.rs:143 awaited-result unwrap",
     )?;
 
-    let paths = db.call_paths_from_owner(
-        owner,
-        CallPathOptions {
-            max_depth: 2,
-            max_paths: 128,
-        },
-    )?;
+    let options = path_options(2, 128);
+    let paths = db.call_paths_from_owner(owner, options)?;
     assert!(
         paths
             .iter()
             .all(|path| path.edges.iter().all(|edge| edge.call_site_id != site_id)),
         "targetless awaited receiver rows must not appear in call paths: {paths:#?}"
     );
-    let report = db.call_reach_for_owner(
-        owner,
-        CallPathOptions {
-            max_depth: 2,
-            max_paths: 128,
-        },
-    )?;
+    let report = db.call_reach_for_owner(owner, options)?;
     let external = report
         .external_frontier_calls
         .iter()
@@ -3392,10 +3035,13 @@ fn axum_usage_questions_surface_fail_closed_debugging_context() -> Result<(), Db
                 "reach report should expose awaited-result unwrap in external frontier rows: {report:#?}"
             )
         });
-    assert_eq!(external.site.owner_id, owner);
-    assert_eq!(external.status.status, CallStatusKind::External);
-    assert!(
-        external.targets.is_empty(),
+    assert_eq!(
+        (
+            external.site.owner_id,
+            external.status.status,
+            external.targets.len(),
+        ),
+        (owner, CallStatusKind::External, 0),
         "external frontier call should remain targetless: {external:#?}"
     );
 

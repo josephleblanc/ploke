@@ -50,149 +50,13 @@ pub(crate) enum CallableBlockerShape {
 }
 
 impl CallableBlockerFixture {
-    pub(crate) async fn function_pointer_param() -> Self {
-        Self::new_for_owner(
-            "call_function_pointer_param",
-            &["f"],
-            CallableBlockerShape::Path,
-            2,
-        )
-        .await
-    }
-
-    pub(crate) async fn multi_conflicting_function_pointer_param() -> Self {
-        Self::new_for_owner(
-            "call_multi_conflicting_function_pointer_param",
-            &["f"],
-            CallableBlockerShape::AmbiguousPath,
-            8,
-        )
-        .await
-    }
-
-    pub(crate) async fn forwarded_conflicting_function_pointer_leaf() -> Self {
-        Self::new_for_owner(
-            "call_forwarded_conflicting_function_pointer_leaf",
-            &["f"],
-            CallableBlockerShape::AmbiguousPath,
-            5,
-        )
-        .await
-    }
-
-    pub(crate) async fn returned_conflicting_function_pointer_local() -> Self {
-        Self::returned_conflicting_function_pointer(
-            "call_returned_conflicting_forwarded_function_pointer_param_with_local_target",
-        )
-        .await
-    }
-
-    pub(crate) async fn returned_conflicting_function_pointer_other() -> Self {
-        Self::returned_conflicting_function_pointer(
-            "call_returned_conflicting_forwarded_function_pointer_param_with_other_target",
-        )
-        .await
-    }
-
-    async fn returned_conflicting_function_pointer(owner_name: &'static str) -> Self {
-        Self::new_for_owner(
-            owner_name,
-            &["return_conflicting_forwarded_function_pointer"],
-            CallableBlockerShape::AmbiguousDynamic,
-            5,
-        )
-        .await
-    }
-
-    pub(crate) async fn forwarded_conflicting_named_field_leaf() -> Self {
-        Self::new_for_owner(
-            "call_forwarded_conflicting_named_field_leaf",
-            &["holder", "callback"],
-            CallableBlockerShape::AmbiguousDynamic,
-            5,
-        )
-        .await
-    }
-
-    pub(crate) async fn generic_fn_once_value_binding() -> Self {
-        Self::new_for_owner(
-            "call_generic_fn_once_value_binding",
-            &["generic_f"],
-            CallableBlockerShape::Path,
-            2,
-        )
-        .await
-    }
-
-    pub(crate) async fn multi_conflicting_generic_fn_once_param() -> Self {
-        Self::new_for_owner(
-            "call_multi_conflicting_generic_fn_once_param",
-            &["generic_f"],
-            CallableBlockerShape::AmbiguousPath,
-            8,
-        )
-        .await
-    }
-
-    pub(crate) async fn multi_conflicting_named_field_function_param() -> Self {
-        Self::new_for_owner(
-            "call_multi_conflicting_named_field_function_param",
-            &["holder", "callback"],
-            CallableBlockerShape::AmbiguousDynamic,
-            8,
-        )
-        .await
-    }
-
-    pub(crate) async fn field_function_param() -> Self {
-        Self::new_for_owner(
-            "call_field_function_param",
-            &["holder", "callback"],
-            CallableBlockerShape::Dynamic,
-            2,
-        )
-        .await
-    }
-
-    pub(crate) async fn indexed_function_pointer() -> Self {
-        Self::new_for_owner(
-            "call_indexed_function_pointer",
-            &["funcs", "0"],
-            CallableBlockerShape::Dynamic,
-            2,
-        )
-        .await
-    }
-
-    pub(crate) async fn indexed_field_function_param() -> Self {
-        Self::new_for_owner(
-            "call_indexed_field_function_param",
-            &["holder", "callbacks", "0"],
-            CallableBlockerShape::Dynamic,
-            2,
-        )
-        .await
-    }
-
-    pub(crate) async fn indexed_tuple_field_function_param() -> Self {
-        Self::new_for_owner(
-            "call_indexed_tuple_field_function_param",
-            &["holder", "0", "0"],
-            CallableBlockerShape::Dynamic,
-            2,
-        )
-        .await
-    }
-
-    async fn new_for_owner(
+    pub(crate) async fn with_db(
+        db: Arc<Database>,
         owner_name: &'static str,
         path: &[&str],
         shape: CallableBlockerShape,
         expected_projection_count: usize,
     ) -> Self {
-        let db = Arc::new(Database::new(
-            setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
-        ));
         let crate_root = workspace_root().join("tests/fixture_crates/fixture_call_graph");
         let module_path = vec!["crate".to_string()];
         let file_path = crate_root.join("src/lib.rs");
@@ -242,10 +106,6 @@ impl CallableBlockerFixture {
             shape,
         }
     }
-
-    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
-        ctx_for_state(&self.state, call_id)
-    }
 }
 
 fn function_id(
@@ -262,10 +122,7 @@ fn function_id(
 }
 
 impl DirectSelfFieldDispatchFixture {
-    pub(crate) async fn new() -> Self {
-        let db = Arc::new(Database::new(
-            setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
-        ));
+    pub(crate) async fn with_db(db: Arc<Database>) -> Self {
         let crate_root = workspace_root().join("tests/fixture_crates/fixture_call_graph");
         let module_path = vec!["crate".to_string()];
         let file_path = crate_root.join("src/lib.rs");
@@ -290,7 +147,7 @@ impl DirectSelfFieldDispatchFixture {
         assert_eq!(
             db.project_call_proof_facts_for_node(owner, "bd:fixture-call-graph")
                 .expect("project direct self-field dispatch proof facts"),
-            2,
+            3,
             "{owner_type}::{owner_name} should project candidate-only proof rows"
         );
 
@@ -306,10 +163,6 @@ impl DirectSelfFieldDispatchFixture {
             candidates,
             build_domain: "bd:fixture-call-graph",
         }
-    }
-
-    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
-        ctx_for_state(&self.state, call_id)
     }
 }
 
@@ -342,50 +195,12 @@ fn method_id_by_self_type(db: &Database, self_type: &str, method: &str) -> Uuid 
 }
 
 impl CallableParamResolvedFixture {
-    pub(crate) async fn multi_function_pointer_param() -> Self {
-        Self::new_for_owner("call_multi_function_pointer_param", &["f"], 9).await
-    }
-
-    pub(crate) async fn forwarded_function_pointer_leaf() -> Self {
-        Self::new_for_owner("call_forwarded_function_pointer_leaf", &["f"], 6).await
-    }
-
-    pub(crate) async fn two_hop_forwarded_function_pointer_leaf() -> Self {
-        Self::new_for_owner("call_two_hop_forwarded_function_pointer_leaf", &["f"], 6).await
-    }
-
-    pub(crate) async fn forwarded_referenced_dyn_fn_leaf() -> Self {
-        Self::new_for_owner("call_forwarded_referenced_dyn_fn_leaf", &["f"], 6).await
-    }
-
-    pub(crate) async fn two_hop_forwarded_referenced_dyn_fn_leaf() -> Self {
-        Self::new_for_owner("call_two_hop_forwarded_referenced_dyn_fn_leaf", &["f"], 6).await
-    }
-
-    pub(crate) async fn forwarded_boxed_dyn_fn_leaf() -> Self {
-        Self::new_for_owner("call_forwarded_boxed_dyn_fn_leaf", &["f"], 6).await
-    }
-
-    pub(crate) async fn two_hop_forwarded_boxed_dyn_fn_leaf() -> Self {
-        Self::new_for_owner("call_two_hop_forwarded_boxed_dyn_fn_leaf", &["f"], 6).await
-    }
-
-    pub(crate) async fn single_boxed_dyn_fn_param() -> Self {
-        Self::new_for_owner("call_single_boxed_dyn_fn_param", &["f"], 6).await
-    }
-
-    pub(crate) async fn multi_generic_fn_once_param() -> Self {
-        Self::new_for_owner("call_multi_generic_fn_once_param", &["generic_f"], 9).await
-    }
-
-    async fn new_for_owner(
+    pub(crate) async fn with_db(
+        db: Arc<Database>,
         owner_name: &'static str,
         path: &[&str],
         expected_projection_count: usize,
     ) -> Self {
-        let db = Arc::new(Database::new(
-            setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
-        ));
         let crate_root = workspace_root().join("tests/fixture_crates/fixture_call_graph");
         let module_path = vec!["crate".to_string()];
         let file_path = crate_root.join("src/lib.rs");
@@ -429,10 +244,6 @@ impl CallableParamResolvedFixture {
             path: path.iter().map(|part| (*part).to_string()).collect(),
             build_domain: "bd:fixture-call-graph",
         }
-    }
-
-    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
-        ctx_for_state(&self.state, call_id)
     }
 }
 

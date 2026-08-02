@@ -254,6 +254,7 @@ fn call_expansion_kind(relation: CallContextRelation) -> CallExpansionKind {
 fn record_call_expansion_candidate(
     expanded: &mut HashMap<Uuid, f32>,
     expanded_context: &mut HashMap<Uuid, CallExpansionInfo>,
+    context_scores: &mut HashMap<Uuid, f32>,
     scores: &HashMap<Uuid, f32>,
     seed_id: Uuid,
     seed_score: f32,
@@ -278,18 +279,22 @@ fn record_call_expansion_candidate(
         target_id: candidate.target_id,
         distance: candidate.distance,
     };
-    expanded_context
-        .entry(candidate_id)
-        .and_modify(|existing| {
-            if info.distance < existing.distance
-                || (info.distance == existing.distance
-                    && (info.relation, info.seed_id.as_u128())
-                        < (existing.relation, existing.seed_id.as_u128()))
-            {
-                *existing = info;
-            }
-        })
-        .or_insert(info);
+    let replace = expanded_context.get(&candidate_id).is_none_or(|existing| {
+        let existing_score = context_scores
+            .get(&candidate_id)
+            .copied()
+            .unwrap_or(f32::NEG_INFINITY);
+        info.distance < existing.distance
+            || (info.distance == existing.distance
+                && (derived > existing_score
+                    || (derived == existing_score
+                        && (info.relation, info.seed_id.as_u128())
+                            < (existing.relation, existing.seed_id.as_u128()))))
+    });
+    if replace {
+        expanded_context.insert(candidate_id, info);
+        context_scores.insert(candidate_id, derived);
+    }
 }
 fn row_to_call_context(
     row: CallContextRow,
@@ -2919,6 +2924,7 @@ impl RagService {
 
         let mut expanded: HashMap<Uuid, f32> = HashMap::new();
         let mut expanded_context: HashMap<Uuid, CallExpansionInfo> = HashMap::new();
+        let mut context_scores: HashMap<Uuid, f32> = HashMap::new();
         for &(seed_id, score) in hits.iter().take(cfg.max_owner_hits) {
             let seed_options = [
                 (
@@ -2944,6 +2950,7 @@ impl RagService {
                     record_call_expansion_candidate(
                         &mut expanded,
                         &mut expanded_context,
+                        &mut context_scores,
                         &scores,
                         seed_id,
                         score,
@@ -2966,6 +2973,7 @@ impl RagService {
                         record_call_expansion_candidate(
                             &mut expanded,
                             &mut expanded_context,
+                            &mut context_scores,
                             &scores,
                             seed_id,
                             score,

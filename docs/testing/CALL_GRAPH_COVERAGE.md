@@ -7,17 +7,8 @@ the same purpose as `TYPE_RESOLUTION_COVERAGE.md`: identify the source rows,
 fixtures, query layers, proof layers, and known boundaries that are actually
 covered by tests.
 
-Detailed active work records remain in `docs/active/agents/call-graph/`.
-The most useful companion documents are:
-
-- `2026-06-22_call-site-coverage-matrix.md`
-- `2026-06-25_call-graph-coverage-inventory.md`
-- `2026-06-28_real-corpus-call-site-case-matrix.md`
-- `2026-06-28_real-corpus-call-site-oracle-matrices.md`
-- `2026-07-01_call-graph-goal-coverage-matrix.md`
-- `2026-07-01_call-graph-larger-plan-map.md`
-- `2026-07-05_binding-type-aware-resolver-plan.md`
-- `2026-07-07_call-graph-usage-question-gap-audit.md`
+The detailed source oracle is
+[Real Corpus Call-Site Oracle Matrices](../active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md).
 
 ## Status Snapshot
 
@@ -110,128 +101,20 @@ These are intentionally not claimed as solved:
 - Source/sink, cost, layer, CI, and policy inference beyond explicit proof facts and usage-query carriers.
 - Search-seeded or live-provider TUI flows as proof of graph correctness.
 
-## Recent Verification Reference
+## Current Verification Commands
 
-On 2026-07-13 active call-graph fixtures were refreshed with
-`cargo run -p xtask --features call_graph -- fixtures regenerate --active`, then
-copied into the committed seed artifacts and verified with the registry-backed
-backup fixture checker. This refresh followed associated constructor receiver
-handling for path-call receiver chains such as
-`crate::tests::substring::Runner::new().fwd(...)`. The resolver now chains
-through associated constructor return types only when the constructor method is
-local to the current parsed graph; cross-crate associated constructor receiver
-chains remain unsupported until the resolver carries graph context for the
-foreign target method. Verification passed:
+Run the registry-backed fixture checks and the focused layer matrices before
+claiming call-graph coverage:
 
 - `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
 - `cargo run -p xtask --features call_graph -- verify-backup-dbs`
-- `cargo check -p syn_parser --features call_graph`
-- `cargo test -p ploke-db shared_call_shape_matrix_cases_match_registered_backups -- --nocapture`
-- `cargo test -p ploke-rag shared_call_shape_matrix_rows_reach_rag_call_context -- --nocapture`
 - `cargo test -p syn_parser --features call_graph call_sites`
-- `cargo test -p ploke-transform --features call_graph transform::tests`
-
-The refreshed memchr fixture resolves the inspected `Runner::new().fwd(...)`
-and `Runner::new().rev(...)` setter method rows where the receiver constructor
-path is local and visible. The `Runner::run` boxed `dyn FnMut` field bindings
-remain explicit targetless blockers because complete finite callable proof for
-all visible setter arguments is not established.
-
-Recent focused verification during the active call-graph goal included:
-
-- `cargo xtask fixtures regenerate --active`
-- `cargo xtask verify-backup-dbs`
-- `cargo test -p ploke-db axum_usage_questions_report_reachable_effect_seed_for_task_spawn -- --nocapture`
-- `cargo test -p ploke-rag call_effects_exact_reads_axum_task_spawn_seed -- --nocapture`
-- `cargo test -p ploke-tui --test integration code_item_lookup_returns_real_corpus_reachable_effects -- --nocapture`
-- `cargo test -p ploke-tui --test integration code_item_edges_returns_real_corpus_reachable_effects -- --nocapture`
-- `cargo test -p ploke-db axum_real_target_from_ref_dependency_root_bound_reaches_workspace_trait_method -- --nocapture`
-- `cargo test -p ploke-rag proof_context_exact_preserves_axum_supported_target_rows -- --nocapture`
-- `cargo test -p ploke-tui --test integration code_item_lookup_returns_trait_bound_remaining_real_corpus_callers -- --nocapture`
-- `cargo test -p ploke-tui --test integration code_item_edges_returns_trait_bound_remaining_real_corpus_callers -- --nocapture`
-- `cargo test -p ploke-db axum_real_target_turbofish_method_receiver_rows_preserve_current_shapes -- --nocapture`
-- `cargo test -p ploke-rag proof_context_collection_preserves_axum_request_parts_external_return_blocker -- --nocapture`
-- `cargo test -p ploke-tui --test integration code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_rows -- --nocapture`
-- `cargo test -p ploke-tui --test integration code_item_edges_returns_unsupported_receiver_targetless_real_corpus_rows -- --nocapture`
-
-On 2026-07-11 active fixtures were regenerated with no tracked fixture seed
-diffs, and caller-supplied module-boundary policy checks were added over
-resolved-only boundary edges:
-
-- `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
-- `cargo test -p ploke-db axum_usage_questions_report_module_boundary_policy_violations --test mod -- --nocapture`
-- `cargo test -p ploke-rag module_boundary_policy_exact_flags_axum_request_extract_boundary --lib -- --nocapture`
-- `cargo test -p ploke-tui --test integration code_item_boundary_policy_flags_real_corpus_request_extract_boundary -- --nocapture`
-
-On 2026-07-11 active fixtures were regenerated after adding the
-fixture-backed `MethodResultLocalBinding` positive receiver proof for
-`let cloned = value.clone_assoc(); cloned.instance_value()`. Verification
-passed:
-
-- `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
-- `cargo test -p syn_parser --features call_graph fixture_call_graph_call_method_result_binding_instance_method_resolves_returned_type_method_call_site -- --nocapture`
-- `cargo test -p ploke-db fixture_context_reads_projected_result_receiver_method_chains --test mod -- --nocapture`
-- `cargo test -p ploke-db fixture_projection_stores_real_result_and_field_receiver_method_call_proof_facts --test mod -- --nocapture`
-- `cargo test -p ploke-db fixture_projection_stores_real_target_centered_method_call_proof_facts --test mod -- --nocapture`
-- `cargo test -p ploke-rag call_context_collection_reads_real_result_field_receiver_rows --lib -- --nocapture`
-- `cargo test -p ploke-rag proof_context_collection_preserves_projected_result_field_receiver_rows --lib -- --nocapture`
-- `cargo test -p ploke-tui request_code_context_returns_result_field_receiver_call_context --lib -- --nocapture`
-- `cargo test -p ploke-tui request_code_context_returns_result_field_receiver_proof_context --lib -- --nocapture`
-
-On 2026-07-11 active fixtures were regenerated after adding the
-fixture-backed awaited local async method-result receiver proof for
-`source.ready_assoc().await.instance_value()`. Verification passed:
-
-- `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
-- `cargo test -p syn_parser --features call_graph fixture_call_graph_call_await_method_result_instance_method_resolves_awaited_method_receiver_call_site -- --nocapture`
-- `cargo test -p ploke-db fixture_context_reads_projected_result_receiver_method_chains --test mod -- --nocapture`
-- `cargo test -p ploke-db fixture_projection_stores_real_result_and_field_receiver_method_call_proof_facts --test mod -- --nocapture`
-- `cargo test -p ploke-db fixture_projection_stores_real_target_centered_method_call_proof_facts --test mod -- --nocapture`
-- `cargo test -p ploke-db fixture_callers_for_target_reads_method_and_associated_callers --test mod -- --nocapture`
-- `cargo test -p ploke-rag call_context_collection_reads_real_result_field_receiver_rows --lib -- --nocapture`
-- `cargo test -p ploke-rag proof_context_collection_preserves_projected_result_field_receiver_rows --lib -- --nocapture`
-- `cargo test -p ploke-tui request_code_context_returns_result_field_receiver_call_context --lib -- --nocapture`
-- `cargo test -p ploke-tui request_code_context_returns_result_field_receiver_proof_context --lib -- --nocapture`
-
-On 2026-07-11 the fixture-backed returned private callable-parameter proof
-reused the bounded complete-private-caller callable-parameter resolver for
-outer returned dynamic calls such as
-`return_forwarded_function_pointer(local_target)()`. The exact case resolves
-to `local_target`; the conflicting paired callers preserve `local_target` and
-`other_target` as ambiguous dynamic candidates without a resolved edge. Focused
-verification covered parser rows, DB context/proof rows, RAG call/proof
-context, and `request_code_context` call/proof payloads.
-
-On 2026-07-10 the call graph schema added `call_callee_evidence` to preserve
-typed parser callee evidence for async closure bindings. Active fixtures were
-regenerated and the real-corpus committed call-graph seeds were refreshed from
-the registry-backed shared snapshots. Verification passed:
-
-- `cargo test -p ploke-transform --features call_graph test_call_graph_projection_for_async_closure_callee_evidence -- --nocapture`
-- `cargo test -p ploke-db fixture_projection_attaches_non_awaited_async_closure_poll_resume_blockers_without_edges -- --nocapture`
-- `cargo test -p ploke-rag proof_context_collection_preserves_non_awaited_async_closure_poll_resume_blockers -- --nocapture`
-- `cargo test -p ploke-tui --test integration code_item_lookup_returns_non_awaited_async_closure_poll_resume_blockers -- --nocapture`
-- `cargo test -p ploke-tui --test integration code_item_edges_returns_non_awaited_async_closure_poll_resume_blockers -- --nocapture`
-- `cargo xtask fixtures regenerate --active`
-- `cargo xtask verify-backup-dbs`
-
-On 2026-07-08 `cargo xtask fixtures regenerate --all` completed with no
-tracked fixture drift, `cargo xtask verify-backup-dbs` passed, and the broader
-real-corpus checkpoints passed:
-
+- `cargo test -p ploke-transform --features call_graph transform::call_graph_tests`
 - `cargo test -p ploke-db real_target_matrix -- --nocapture`
 - `cargo test -p ploke-rag real_corpus -- --nocapture`
 - `cargo test -p ploke-tui --test integration real_corpus -- --nocapture`
+- `cargo test -p ploke-tui --test integration call_graph_tool_shared_matrix -- --nocapture`
+- `cargo test -p ploke-tui --test integration call_graph_tool_targetless_matrix -- --nocapture`
 
-The focused `axum_usage_questions_report_reachable_effect_seed_for_task_spawn`
-DB/RAG/TUI effect-propagation commands above were also rerun and passed.
-
-On 2026-07-09 `cargo xtask fixtures regenerate --all` completed again and
-`cargo xtask verify-backup-dbs` passed; the regeneration produced no tracked
-fixture seed diffs. A broad
-`cargo test --workspace --exclude ploke-eval --no-fail-fast` checkpoint also
-completed green after exercising the DB, RAG, TUI tool, transform, parser, and
-doctest surfaces.
-
-Before claiming a wider rollout boundary, rerun the relevant focused suites and
-a workspace checkpoint as described in the root call-graph plan.
+Historical refresh narratives and focused command transcripts are retained in
+Git history rather than accumulated in this coverage contract.

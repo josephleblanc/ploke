@@ -1058,92 +1058,62 @@ fn fixture_context_keeps_non_awaited_async_closure_future_binding_targetless() -
     Ok(())
 }
 
-#[test]
-fn fixture_context_resolves_awaited_async_closure_future_binding_to_executable_owner()
--> Result<(), DbError> {
-    assert_awaited_async_closure_future_path(
+macro_rules! awaited_future_cases {
+    ($(($test:ident, $owner:literal, $label:literal)),+ $(,)?) => {
+        $(
+            #[test]
+            fn $test() -> Result<(), DbError> {
+                assert_awaited_async_closure_future_path($owner, $label)
+            }
+        )+
+    };
+}
+
+awaited_future_cases!(
+    (
+        fixture_context_resolves_awaited_async_closure_future_binding_to_executable_owner,
         "call_awaited_async_closure_future_binding_with_body_call",
-        "awaited async-closure future binding",
-        "awaited async closure future binding",
-    )
-}
-
-#[test]
-fn fixture_context_resolves_awaited_async_closure_future_alias_to_executable_owner()
--> Result<(), DbError> {
-    assert_awaited_async_closure_future_path(
+        "awaited async-closure future binding"
+    ),
+    (
+        fixture_context_resolves_awaited_async_closure_future_alias_to_executable_owner,
         "call_awaited_async_closure_future_alias_with_body_call",
-        "awaited async-closure future alias",
-        "awaited async closure future alias",
-    )
-}
-
-#[test]
-fn fixture_context_resolves_awaited_async_closure_future_block_alias_to_executable_owner()
--> Result<(), DbError> {
-    assert_awaited_async_closure_future_path(
+        "awaited async-closure future alias"
+    ),
+    (
+        fixture_context_resolves_awaited_async_closure_future_block_alias_to_executable_owner,
         "call_awaited_async_closure_future_block_alias_with_body_call",
-        "awaited async-closure future block alias",
-        "awaited async closure future block alias",
-    )
-}
-
-#[test]
-fn fixture_context_resolves_awaited_async_closure_future_alias_chain_to_executable_owner()
--> Result<(), DbError> {
-    assert_awaited_async_closure_future_path(
+        "awaited async-closure future block alias"
+    ),
+    (
+        fixture_context_resolves_awaited_async_closure_future_alias_chain_to_executable_owner,
         "call_awaited_async_closure_future_alias_chain_with_body_call",
-        "awaited async-closure future alias chain",
-        "awaited async closure future alias chain",
-    )
-}
-
-#[test]
-fn fixture_context_resolves_awaited_async_closure_future_tuple_field_to_executable_owner()
--> Result<(), DbError> {
-    assert_awaited_async_closure_future_path(
+        "awaited async-closure future alias chain"
+    ),
+    (
+        fixture_context_resolves_awaited_async_closure_future_tuple_field_to_executable_owner,
         "call_awaited_async_closure_future_tuple_field_with_body_call",
-        "awaited async-closure future tuple field",
-        "awaited async closure future tuple field",
-    )
-}
-
-#[test]
-fn fixture_context_resolves_awaited_async_closure_future_named_field_to_executable_owner()
--> Result<(), DbError> {
-    assert_awaited_async_closure_future_path(
+        "awaited async-closure future tuple field"
+    ),
+    (
+        fixture_context_resolves_awaited_async_closure_future_named_field_to_executable_owner,
         "call_awaited_async_closure_future_named_field_with_body_call",
-        "awaited async-closure future named field",
-        "awaited async closure future named field",
-    )
-}
-
-#[test]
-fn fixture_context_resolves_awaited_async_closure_future_named_field_alias_to_executable_owner()
--> Result<(), DbError> {
-    assert_awaited_async_closure_future_path(
+        "awaited async-closure future named field"
+    ),
+    (
+        fixture_context_resolves_awaited_async_closure_future_named_field_alias_to_executable_owner,
         "call_awaited_async_closure_future_named_field_alias_with_body_call",
-        "awaited async-closure future named field alias",
-        "awaited async closure future named field alias",
-    )
-}
-
-#[test]
-fn fixture_context_resolves_awaited_async_closure_future_indexed_array_to_executable_owner()
--> Result<(), DbError> {
-    assert_awaited_async_closure_future_path(
+        "awaited async-closure future named field alias"
+    ),
+    (
+        fixture_context_resolves_awaited_async_closure_future_indexed_array_to_executable_owner,
         "call_awaited_async_closure_future_indexed_array_with_body_call",
-        "awaited async-closure future indexed array",
-        "awaited async closure future indexed array",
-    )
-}
+        "awaited async-closure future indexed array"
+    ),
+);
 
-fn assert_awaited_async_closure_future_path(
-    owner_name: &str,
-    body_label: &str,
-    path_label: &str,
-) -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+fn assert_awaited_async_closure_future_path(owner_name: &str, label: &str) -> Result<(), DbError> {
+    let db = shared_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
     let outer = function_id_by_name(&db, owner_name)?;
     let async_closure = async_closure_owner_for_parent(&db, outer)?;
@@ -1154,7 +1124,7 @@ fn assert_awaited_async_closure_future_path(
         outer_context
             .iter()
             .all(|row| row.site.path.as_ref() != Some(&local_target_path)),
-        "outer function should not absorb the {body_label} body call: {outer_context:#?}"
+        "outer function should not absorb the {label} body call: {outer_context:#?}"
     );
 
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:1716-1720:
@@ -1201,7 +1171,7 @@ fn assert_awaited_async_closure_future_path(
     let path = paths
         .iter()
         .find(|path| path.start_id == outer && path.end_id == target && path.depth == 2)
-        .unwrap_or_else(|| panic!("{path_label} should expose a two-hop path to local_target"));
+        .unwrap_or_else(|| panic!("{label} should expose a two-hop path to local_target"));
     assert_eq!(path.edges[0].caller_id, outer);
     assert_eq!(path.edges[0].callee_id, async_closure);
     assert_eq!(path.edges[0].relation, CallRelationKind::Closure);

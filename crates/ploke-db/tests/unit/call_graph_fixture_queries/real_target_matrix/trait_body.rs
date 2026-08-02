@@ -4,34 +4,87 @@ use super::source_lines::*;
 use ploke_test_utils::CORPUS_AXUM_CALL_GRAPH;
 use uuid::Uuid;
 
+const fn fanout(file_suffix: &'static str, lines: &'static [u32]) -> SourceLineFanout {
+    SourceLineFanout { file_suffix, lines }
+}
+
+fn assert_path_edge(
+    db: &Database,
+    context: &[CallContextRow],
+    owner: Uuid,
+    call_path: &[&str],
+    target: Uuid,
+    label: &'static str,
+) -> Result<Uuid, DbError> {
+    let row = row_by_path(context, call_path);
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
+    );
+    assert_one_edge_traversal(
+        db,
+        TraversalExpectation {
+            label,
+            owner,
+            target,
+            site_id: row.site.id,
+            expected_edge_count: 1,
+        },
+    )?;
+    Ok(row.site.id)
+}
+
+fn assert_generated_rows(
+    db: &Database,
+    context: &[CallContextRow],
+    owner: Uuid,
+    target: Uuid,
+    label: &str,
+) -> Result<Vec<Uuid>, DbError> {
+    let target_sites = db.call_sites_for_target(target)?;
+    let mut sites = Vec::new();
+    for index in 1..=16 {
+        let ty = format!("T{index}");
+        let expected = path(&[ty.as_str(), "from_request_parts"]);
+        let row = context
+            .iter()
+            .find(|row| {
+                row.site.kind == CallSiteKind::Path && row.site.path.as_ref() == Some(&expected)
+            })
+            .unwrap_or_else(|| {
+                panic!("{label} should expose {ty}::from_request_parts: {context:#?}")
+            });
+        assert_resolved_target(
+            row,
+            target,
+            CallRelationKind::AssociatedFunction,
+            CallSiteKind::Path,
+            CallTargetKind::Method,
+        );
+        assert_eq!(
+            relations_for_site(db, row.site.id)?.rows.len(),
+            1,
+            "{label} {ty}::from_request_parts should persist one call edge"
+        );
+        assert!(
+            target_sites
+                .iter()
+                .any(|site| site.owner_id == owner && site.id == row.site.id),
+            "target-centered sites should include {label} {ty}::from_request_parts: {target_sites:#?}"
+        );
+        sites.push(row.site.id);
+    }
+    Ok(sites)
+}
+
 #[test]
 fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: trait-associated extraction calls.
-    // Source chain:
-    //   axum-core/src/ext_traits/request.rs:279 calls `E::from_request`.
-    //   axum-core/src/extract/mod.rs:127 calls `T::from_request`.
-    //   axum-core/src/ext_traits/request.rs:305 and
-    //   ext_traits/request_parts.rs:133 call `E::from_request_parts`.
-    //   axum-core/src/extract/mod.rs:115 calls `T::from_request_parts`.
-    //   axum/src/middleware/from_extractor.rs:220 calls
-    //   `E::from_request_parts` from an async-block owner nested inside
-    //   `FromExtractor::call`.
-    //   axum-core/src/extract/mod.rs:103 calls `Self::from_request_parts`
-    //   from an async-block owner nested inside the ViaParts blanket impl.
-    // Intermediate bindings:
-    //   axum-core/src/extract/mod.rs:79 declares trait `FromRequest`.
-    //   axum-core/src/extract/mod.rs:85 declares `FromRequest::from_request`.
-    //   axum-core/src/extract/mod.rs:53 declares trait `FromRequestParts`.
-    //   axum-core/src/extract/mod.rs:59 declares
-    //   `FromRequestParts::from_request_parts`.
-    //   axum/src/error_handling/mod.rs:207-222 generated HandleError
-    //   service impls call `Tn::from_request_parts` for extractor prefixes.
-    // Expected traversal: bounded type-parameter associated paths resolve to
-    // the trait method binding in one local-exact associated-function edge.
-    // Concrete runtime impl dispatch remains type-parameter dependent and is
-    // not guessed by this query.
+    // Trait bindings are extract/mod.rs:53/:59 and :79/:85; each labeled call below has one edge.
     let from_request = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
     let from_request_parts =
         method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?;
@@ -109,24 +162,7 @@ fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), D
     ];
     for (label, owner, path, target) in cases {
         let context = db.call_context_for_owner(owner)?;
-        let row = row_by_path(&context, path);
-        assert_resolved_target(
-            row,
-            target,
-            CallRelationKind::AssociatedFunction,
-            CallSiteKind::Path,
-            CallTargetKind::Method,
-        );
-        assert_one_edge_traversal(
-            &db,
-            TraversalExpectation {
-                label,
-                owner,
-                target,
-                site_id: row.site.id,
-                expected_edge_count: 1,
-            },
-        )?;
+        assert_path_edge(&db, &context, owner, path, target, label)?;
     }
 
     let from_request_callers = db.callers_for_target(from_request)?;
@@ -162,17 +198,7 @@ fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), D
 fn axum_core_tuple_impl_from_request_projects_generated_rows() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: generated tuple extractor impl rows.
-    // Source chain:
-    //   axum-core/src/extract/tuple.rs:18-75 defines `impl_from_request!`.
-    //   tuple.rs:77 invokes `all_the_tuples!(impl_from_request)`.
-    //   tuple.rs:29 and :52 call `$ty::from_request_parts(...)`.
-    //   tuple.rs:57 calls `$last::from_request(...)`.
-    // Expected traversal: the bounded, module-specific generated item model
-    // projects tuple arities 1 through 16 as generated impl methods with
-    // stable generic names, preserves async-block ownership for
-    // `FromRequest::from_request`, and resolves generated where-clause
-    // associated paths to the axum-core trait method bindings.
+    // tuple.rs:18-77 generates arities 1-16; calls at :29/:52/:57 retain exact owners and edges.
     let from_request = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
     let from_request_parts =
         method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?;
@@ -215,23 +241,13 @@ fn axum_core_tuple_impl_from_request_projects_generated_rows() -> Result<(), DbE
         "generated arity-1 tuple FromRequestParts::from_request_parts",
     )?;
     let parts_context = db.call_context_for_owner(parts_owner)?;
-    let parts_row = row_by_path(&parts_context, &["T1", "from_request_parts"]);
-    assert_resolved_target(
-        parts_row,
-        from_request_parts,
-        CallRelationKind::AssociatedFunction,
-        CallSiteKind::Path,
-        CallTargetKind::Method,
-    );
-    assert_one_edge_traversal(
+    assert_path_edge(
         &db,
-        TraversalExpectation {
-            label: "axum-core/src/extract/tuple.rs generated arity-1 T1::from_request_parts",
-            owner: parts_owner,
-            target: from_request_parts,
-            site_id: parts_row.site.id,
-            expected_edge_count: 1,
-        },
+        &parts_context,
+        parts_owner,
+        &["T1", "from_request_parts"],
+        from_request_parts,
+        "axum-core/src/extract/tuple.rs:29 generated arity-1 T1::from_request_parts",
     )?;
 
     let arity_sixteen = method_id_by_name_body_and_file_suffix(
@@ -247,40 +263,13 @@ fn axum_core_tuple_impl_from_request_projects_generated_rows() -> Result<(), DbE
         "generated arity-16 tuple FromRequestParts::from_request_parts",
     )?;
     let arity_sixteen_context = db.call_context_for_owner(arity_sixteen)?;
-    let target_sites = db.call_sites_for_target(from_request_parts)?;
-    for index in 1..=16 {
-        let ty = format!("T{index}");
-        let expected_path = path(&[ty.as_str(), "from_request_parts"]);
-        let row = arity_sixteen_context
-            .iter()
-            .find(|row| {
-                row.site.kind == CallSiteKind::Path
-                    && row.site.path.as_ref() == Some(&expected_path)
-            })
-            .unwrap_or_else(|| {
-                panic!(
-                    "generated arity-16 tuple FromRequestParts owner should expose {ty}::from_request_parts: {arity_sixteen_context:#?}"
-                )
-            });
-        assert_resolved_target(
-            row,
-            from_request_parts,
-            CallRelationKind::AssociatedFunction,
-            CallSiteKind::Path,
-            CallTargetKind::Method,
-        );
-        assert_eq!(
-            relations_for_site(&db, row.site.id)?.rows.len(),
-            1,
-            "axum-core/src/extract/tuple.rs generated arity-16 {ty}::from_request_parts should persist one call edge"
-        );
-        assert!(
-            target_sites
-                .iter()
-                .any(|site| site.owner_id == arity_sixteen && site.id == row.site.id),
-            "target-centered call_sites_for_target should include generated tuple {ty}::from_request_parts: {target_sites:#?}"
-        );
-    }
+    assert_generated_rows(
+        &db,
+        &arity_sixteen_context,
+        arity_sixteen,
+        from_request_parts,
+        "axum-core/src/extract/tuple.rs:29/:52 generated arity-16 tuple",
+    )?;
 
     let request_owner = method_id_by_name_body_and_file_suffix(
         &db,
@@ -296,41 +285,21 @@ fn axum_core_tuple_impl_from_request_projects_generated_rows() -> Result<(), DbE
     )?;
     let request_body = async_block_owner_for_method_parent(&db, request_owner)?;
     let request_context = db.call_context_for_owner(request_body)?;
-    let prefix_row = row_by_path(&request_context, &["T1", "from_request_parts"]);
-    assert_resolved_target(
-        prefix_row,
+    assert_path_edge(
+        &db,
+        &request_context,
+        request_body,
+        &["T1", "from_request_parts"],
         from_request_parts,
-        CallRelationKind::AssociatedFunction,
-        CallSiteKind::Path,
-        CallTargetKind::Method,
-    );
-    assert_one_edge_traversal(
-        &db,
-        TraversalExpectation {
-            label: "axum-core/src/extract/tuple.rs generated arity-2 T1::from_request_parts",
-            owner: request_body,
-            target: from_request_parts,
-            site_id: prefix_row.site.id,
-            expected_edge_count: 1,
-        },
+        "axum-core/src/extract/tuple.rs:52 generated arity-2 T1::from_request_parts",
     )?;
-    let last_row = row_by_path(&request_context, &["T2", "from_request"]);
-    assert_resolved_target(
-        last_row,
-        from_request,
-        CallRelationKind::AssociatedFunction,
-        CallSiteKind::Path,
-        CallTargetKind::Method,
-    );
-    assert_one_edge_traversal(
+    assert_path_edge(
         &db,
-        TraversalExpectation {
-            label: "axum-core/src/extract/tuple.rs generated arity-2 T2::from_request",
-            owner: request_body,
-            target: from_request,
-            site_id: last_row.site.id,
-            expected_edge_count: 1,
-        },
+        &request_context,
+        request_body,
+        &["T2", "from_request"],
+        from_request,
+        "axum-core/src/extract/tuple.rs:57 generated arity-2 T2::from_request",
     )?;
 
     assert_no_path_rows(&db, &["ty", "from_request_parts"])?;
@@ -341,21 +310,7 @@ fn axum_core_tuple_impl_from_request_projects_generated_rows() -> Result<(), DbE
 fn axum_real_target_from_ref_bounded_paths_reach_trait_method() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: same-crate `FromRef::from_ref` bounded calls.
-    // Source chain:
-    //   axum-core/src/ext_traits/mod.rs:25 calls
-    //   `InnerState::from_ref(state)`.
-    //   axum-core/src/ext_traits/mod.rs:45 calls `String::from_ref(state)`.
-    // Intermediate binding:
-    //   axum-core/src/extract/from_ref.rs:13 declares trait `FromRef`.
-    //   axum-core/src/extract/from_ref.rs:15 declares `FromRef::from_ref`.
-    // Expected traversal: explicit where-predicate bounds such as
-    // `InnerState: FromRef<OuterState>` and `String: FromRef<S>` resolve to
-    // the trait method binding in one local-exact associated-function edge.
-    // The target-centered caller query also includes the axum
-    // `extract/state.rs:309` dependency-root bound resolved by the workspace
-    // proof slice below.
-    // Concrete runtime impl dispatch remains type-dependent and is not guessed.
+    // from_ref.rs:13/:15 binds the trait method; ext_traits/mod.rs:25/:45 traverse once.
     let target = method_id_by_trait_name(&db, "FromRef", "from_ref")?;
 
     let cases = [
@@ -384,24 +339,7 @@ fn axum_real_target_from_ref_bounded_paths_reach_trait_method() -> Result<(), Db
     ];
     for (label, owner, path, target) in cases {
         let context = db.call_context_for_owner(owner)?;
-        let row = row_by_path(&context, path);
-        assert_resolved_target(
-            row,
-            target,
-            CallRelationKind::AssociatedFunction,
-            CallSiteKind::Path,
-            CallTargetKind::Method,
-        );
-        assert_one_edge_traversal(
-            &db,
-            TraversalExpectation {
-                label,
-                owner,
-                target,
-                site_id: row.site.id,
-                expected_edge_count: 1,
-            },
-        )?;
+        assert_path_edge(&db, &context, owner, path, target, label)?;
     }
 
     let callers = db.callers_for_target(target)?;
@@ -425,20 +363,7 @@ fn axum_real_target_from_ref_dependency_root_bound_reaches_workspace_trait_metho
 -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: dependency-root `FromRef::from_ref` bounded calls.
-    // Source chain:
-    //   axum/src/extract/state.rs:1 imports `axum_core::extract::FromRef`.
-    //   axum/src/extract/state.rs:309 calls `InnerState::from_ref(state)`.
-    //   axum/src/middleware/from_extractor.rs:306 imports
-    //   `axum_core::extract::FromRef`.
-    //   axum/src/middleware/from_extractor.rs:328 calls
-    //   `Secret::from_ref(state)` from a test function.
-    // Expected traversal: the top-level State extractor row is owned by the
-    // impl method whose where predicate imports `axum_core::extract::FromRef`.
-    // The workspace-aware call resolver uses the path dependency proof
-    // `axum -> axum-core` before projection, so this row resolves to the
-    // parsed axum-core `FromRef::from_ref` trait method binding in one
-    // associated-function edge.
+    // state.rs:1/:309 and from_extractor.rs:306/:328 import FromRef and traverse one edge.
     let target = method_id_by_trait_name(&db, "FromRef", "from_ref")?;
     let state_owner = method_id_by_name_body_and_file_suffix(
         &db,
@@ -447,29 +372,15 @@ fn axum_real_target_from_ref_dependency_root_bound_reaches_workspace_trait_metho
         "axum/src/extract/state.rs",
     )?;
     let state_context = db.call_context_for_owner(state_owner)?;
-    let state_row = row_by_path(&state_context, &["InnerState", "from_ref"]);
-    assert_resolved_target(
-        state_row,
-        target,
-        CallRelationKind::AssociatedFunction,
-        CallSiteKind::Path,
-        CallTargetKind::Method,
-    );
-    assert_one_edge_traversal(
+    let state_site = assert_path_edge(
         &db,
-        TraversalExpectation {
-            label: "axum/src/extract/state.rs:309",
-            owner: state_owner,
-            target,
-            site_id: state_row.site.id,
-            expected_edge_count: 1,
-        },
+        &state_context,
+        state_owner,
+        &["InnerState", "from_ref"],
+        target,
+        "axum/src/extract/state.rs:309",
     )?;
 
-    // The nested middleware test helper row is owned by the function-local impl
-    // method body, not the enclosing async test function. Its local impl
-    // where-bound `Secret: FromRef<S>` now resolves through the parsed
-    // workspace dependency proof to the axum-core trait method binding.
     let middleware_test = function_id_by_name(&db, "test_from_extractor")?;
     let middleware_owner = local_item_owner_for_parent_with_label(
         &db,
@@ -477,54 +388,39 @@ fn axum_real_target_from_ref_dependency_root_bound_reaches_workspace_trait_metho
         "local_impl_method:from_request_parts",
     )?;
     let middleware_context = db.call_context_for_owner(middleware_owner)?;
-    let middleware_row = row_by_path(&middleware_context, &["Secret", "from_ref"]);
-    assert_resolved_target(
-        middleware_row,
-        target,
-        CallRelationKind::AssociatedFunction,
-        CallSiteKind::Path,
-        CallTargetKind::Method,
-    );
-    assert_one_edge_traversal(
+    let middleware_site = assert_path_edge(
         &db,
-        TraversalExpectation {
-            label: "axum/src/middleware/from_extractor.rs:328",
-            owner: middleware_owner,
-            target,
-            site_id: middleware_row.site.id,
-            expected_edge_count: 1,
-        },
+        &middleware_context,
+        middleware_owner,
+        &["Secret", "from_ref"],
+        target,
+        "axum/src/middleware/from_extractor.rs:328",
     )?;
 
     let domain_id = "bd:corpus-axum-call-graph";
     let mut records = axum_domain_records(domain_id);
-    records.extend([
-        ploke_test_utils::axum_dependency_record(domain_id, state_row.site.id, state_owner, target),
-        ploke_test_utils::axum_dependency_record(
-            domain_id,
-            middleware_row.site.id,
-            middleware_owner,
-            target,
+    let cases = [
+        (
+            state_site,
+            state_owner,
+            "axum/src/extract/state.rs:309 dependency-root proof",
         ),
-    ]);
+        (
+            middleware_site,
+            middleware_owner,
+            "axum/src/middleware/from_extractor.rs:328 dependency-root proof",
+        ),
+    ];
+    records.extend(cases.map(|(site, owner, _)| {
+        ploke_test_utils::axum_dependency_record(domain_id, site, owner, target)
+    }));
     db.upsert_proof_fact_values(&records)?;
 
     let target_id = target.to_string();
     let proof_rows = db.proof_symbol_lookup(&target_id)?;
-    assert_root_proof(
-        &proof_rows,
-        state_row.site.id,
-        state_owner,
-        target,
-        "axum/src/extract/state.rs:309 dependency-root proof",
-    );
-    assert_root_proof(
-        &proof_rows,
-        middleware_row.site.id,
-        middleware_owner,
-        target,
-        "axum/src/middleware/from_extractor.rs:328 dependency-root proof",
-    );
+    for (site, owner, label) in cases {
+        assert_root_proof(&proof_rows, site, owner, target, label);
+    }
 
     Ok(())
 }
@@ -559,11 +455,7 @@ fn assert_root_proof(
 fn axum_real_target_self_accept_rows_are_external_frontiers() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: `Self::accept(self).await` listener row.
-    // Source chain:
-    //   axum/src/serve/listener.rs:41 and :61 use `Self::accept`.
-    // Contract: both visible `Self::accept` path rows are external and targetless;
-    // it should not be treated as recursive trait dispatch.
+    // listener.rs:41/:61 Self::accept rows are external and never recursive edges.
     let owners = method_ids_by_name_body_and_file_suffix(
         &db,
         "accept",
@@ -590,10 +482,7 @@ fn axum_real_target_self_accept_rows_are_external_frontiers() -> Result<(), DbEr
         &CORPUS_AXUM_CALL_GRAPH,
         &["Self", "accept"],
         CallStatusKind::External,
-        &[SourceLineFanout {
-            file_suffix: "axum/src/serve/listener.rs",
-            lines: &[41, 61],
-        }],
+        &[fanout("axum/src/serve/listener.rs", &[41, 61])],
     )
 }
 
@@ -602,26 +491,7 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
 {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix:
-    //   docs/active/agents/call-graph/
-    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
-    //   const initializer and external `HeaderValue::from_static` rows.
-    //
-    // Source chain:
-    //   axum/src/extract/ws.rs:382 and :384 include local const
-    //   initializers inside `WebSocketUpgrade::on_upgrade`.
-    //   axum/src/routing/route.rs:202 includes
-    //   `HeaderValue::from_static("0")` in a local const initializer.
-    //   axum/src/json.rs:208 and :217 include `HeaderValue::from_static`
-    //   inside the nested local `make_response` function.
-    //   axum-core/src/response/into_response.rs:196,207,232,320,
-    //   axum/src/json.rs:208,217, and axum/src/response/mod.rs:47 call the
-    //   same external associated function from response conversion bodies.
-    // Current DB contract: all projected rows stay external and targetless.
-    // The local const and local function rows are owned by executable
-    // `LocalItem` owners, not flattened under enclosing function/method owners
-    // and not modeled as item-level `Const` owners. The websocket local const
-    // initializer rows remain absent in this fixture.
+    // ws.rs:382/:384 stay absent; route.rs:202, json.rs:208/:217, and response rows stay external.
     assert_no_method_owner_by_body_and_file_suffix(
         &db,
         "on_upgrade",
@@ -633,15 +503,6 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
     let route_owner =
         function_id_by_name_in_module(&db, &["crate", "routing", "route"], "set_content_length")?;
     let route_context = db.call_context_for_owner(route_owner)?;
-    assert!(
-        route_context.iter().all(|row| {
-            row.site
-                .path
-                .as_ref()
-                .is_none_or(|path| path != &["HeaderValue", "from_static"])
-        }),
-        "axum/src/routing/route.rs:202 local const HeaderValue::from_static should remain absent under set_content_length: {route_context:#?}"
-    );
     let json_owner = method_id_by_name_body_and_file_suffix(
         &db,
         "into_response",
@@ -649,15 +510,23 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
         "axum/src/json.rs",
     )?;
     let json_context = db.call_context_for_owner(json_owner)?;
-    assert!(
-        json_context.iter().all(|row| {
-            row.site
-                .path
-                .as_ref()
-                .is_none_or(|path| path != &["HeaderValue", "from_static"])
-        }),
-        "axum/src/json.rs:208 and :217 nested local fn HeaderValue::from_static rows should remain absent under outer Json::into_response method: {json_context:#?}"
-    );
+    for (label, context) in [
+        ("axum/src/routing/route.rs:202 local const", &route_context),
+        (
+            "axum/src/json.rs:208/:217 nested local function",
+            &json_context,
+        ),
+    ] {
+        assert!(
+            context.iter().all(|row| {
+                row.site
+                    .path
+                    .as_ref()
+                    .is_none_or(|path| path != &["HeaderValue", "from_static"])
+            }),
+            "{label} HeaderValue::from_static rows should remain absent under the outer owner: {context:#?}"
+        );
+    }
     assert_targetless_path_owner_kind_rows(
         &db,
         &["HeaderValue", "from_static"],
@@ -673,14 +542,8 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
         CallStatusKind::External,
         "LocalItem",
         &[
-            SourceLineFanout {
-                file_suffix: "axum/src/json.rs",
-                lines: &[208, 217],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/route.rs",
-                lines: &[202],
-            },
+            fanout("axum/src/json.rs", &[208, 217]),
+            fanout("axum/src/routing/route.rs", &[202]),
         ],
     )?;
 
@@ -698,22 +561,11 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
         "axum/src/response/mod.rs:47 HeaderValue::from_static",
     )?;
 
+    #[rustfmt::skip]
     let core_cases = [
-        (
-            "axum-core/src/response/into_response.rs:196 HeaderValue::from_static",
-            "mime::TEXT_PLAIN_UTF_8.as_ref()",
-            1,
-        ),
-        (
-            "axum-core/src/response/into_response.rs:207 and :320 HeaderValue::from_static",
-            "Body::from(self).into_response();res.headers_mut().insert(header::CONTENT_TYPE,HeaderValue::from_static(mime::APPLICATION_OCTET_STREAM.as_ref())",
-            2,
-        ),
-        (
-            "axum-core/src/response/into_response.rs:232 HeaderValue::from_static",
-            "BytesChainBody",
-            1,
-        ),
+        ("axum-core/src/response/into_response.rs:196 HeaderValue::from_static", "mime::TEXT_PLAIN_UTF_8.as_ref()", 1),
+        ("axum-core/src/response/into_response.rs:207 and :320 HeaderValue::from_static", "Body::from(self).into_response();res.headers_mut().insert(header::CONTENT_TYPE,HeaderValue::from_static(mime::APPLICATION_OCTET_STREAM.as_ref())", 2),
+        ("axum-core/src/response/into_response.rs:232 HeaderValue::from_static", "BytesChainBody", 1),
     ];
     for (label, body_marker, expected_owners) in core_cases {
         let owners = method_ids_by_name_body_and_file_suffix(
@@ -765,14 +617,11 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
         &["HeaderValue", "from_static"],
         CallStatusKind::External,
         &[
-            SourceLineFanout {
-                file_suffix: "axum-core/src/response/into_response.rs",
-                lines: &[196, 207, 232, 320],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/response/mod.rs",
-                lines: &[47],
-            },
+            fanout(
+                "axum-core/src/response/into_response.rs",
+                &[196, 207, 232, 320],
+            ),
+            fanout("axum/src/response/mod.rs", &[47]),
         ],
     )
 }
@@ -781,20 +630,7 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
 fn axum_real_target_trait_object_dispatch_rows_are_documented_gaps() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: trait-object dispatch rows.
-    // Source chains:
-    //   axum/src/error_handling/mod.rs:251 calls
-    //   `self.project().future.poll(cx)` on
-    //   `Pin<Box<dyn Future<...>>>` from error_handling/mod.rs:240.
-    //   The semantic target is trait-object `Future::poll`, with no concrete
-    //   runtime future available in the current call graph.
-    //   axum/src/serve/mod.rs:485 projects `self.0.as_mut().poll(cx)`;
-    //   middleware/from_fn.rs:375, middleware/map_request.rs:345, and
-    //   middleware/map_response.rs:333 project `self.inner.as_mut().poll(cx)`.
-    //   axum-core/src/body.rs:32 calls
-    //   `<dyn std::any::Any>::downcast_mut::<Option<T>>(&mut k)`.
-    // Current model split: dyn Future dispatch rows stay targetless; qualified
-    // `<dyn Any>::downcast_mut` rows project as std-root external frontiers.
+    // Future::poll at error_handling.rs:251 and middleware/serve fanouts stays targetless.
     assert_targetless_method_result_field_rows(
         &db,
         "poll",
@@ -811,18 +647,9 @@ fn axum_real_target_trait_object_dispatch_rows_are_documented_gaps() -> Result<(
         &["inner"],
         CallStatusKind::Unsupported,
         &[
-            SourceLineFanout {
-                file_suffix: "axum/src/middleware/from_fn.rs",
-                lines: &[375],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/middleware/map_request.rs",
-                lines: &[345],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/middleware/map_response.rs",
-                lines: &[333],
-            },
+            fanout("axum/src/middleware/from_fn.rs", &[375]),
+            fanout("axum/src/middleware/map_request.rs", &[345]),
+            fanout("axum/src/middleware/map_response.rs", &[333]),
         ],
     )?;
     assert_targetless_method_result_field_rows(
@@ -840,10 +667,7 @@ fn axum_real_target_trait_object_dispatch_rows_are_documented_gaps() -> Result<(
         "as_mut",
         &["0"],
         CallStatusKind::Unsupported,
-        &[SourceLineFanout {
-            file_suffix: "axum/src/serve/mod.rs",
-            lines: &[485],
-        }],
+        &[fanout("axum/src/serve/mod.rs", &[485])],
     )?;
     let owner = method_id_by_name_body_and_file_suffix(
         &db,
@@ -851,46 +675,21 @@ fn axum_real_target_trait_object_dispatch_rows_are_documented_gaps() -> Result<(
         "self.project().future.poll(cx)",
         "axum/src/error_handling/mod.rs",
     )?;
-    let context = db.call_context_for_owner(owner)?;
-    let project = row_by_method_receiver(&context, "project", &CallReceiver::SelfValue);
-    assert_targetless_status(project, CallStatusKind::Unresolved);
-    assert!(
-        relations_for_site(&db, project.site.id)?.rows.is_empty(),
-        "axum/src/error_handling/mod.rs:251 self.project() should have zero persisted call edges"
-    );
-    assert_no_traversal_candidates_for_site(
+    assert_owner_method_targetless(
         &db,
         owner,
-        project.site.id,
+        "project",
+        &CallReceiver::SelfValue,
+        CallStatusKind::Unresolved,
         "axum/src/error_handling/mod.rs:251 self.project() receiver setup",
     )?;
-    let poll = context
-        .iter()
-        .find(|row| {
-            row.site.method.as_deref() == Some("poll")
-                && matches!(
-                    row.site.receiver.as_ref(),
-                    Some(CallReceiver::MethodResultField {
-                        method_name,
-                        field_path,
-                        ..
-                    }) if method_name == "project" && field_path == &path(&["future"])
-                )
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "axum/src/error_handling/mod.rs:251 dyn Future::poll should preserve project().future receiver evidence: {context:#?}"
-            )
-        });
-    assert_targetless_status(poll, CallStatusKind::Unsupported);
-    assert!(
-        relations_for_site(&db, poll.site.id)?.rows.is_empty(),
-        "axum/src/error_handling/mod.rs:251 dyn Future::poll should have zero persisted call edges"
-    );
-    assert_no_traversal_candidates_for_site(
+    assert_owner_method_result_field_targetless(
         &db,
         owner,
-        poll.site.id,
+        "poll",
+        "project",
+        &["future"],
+        CallStatusKind::Unsupported,
         "axum/src/error_handling/mod.rs:251 dyn Future::poll receiver dispatch",
     )?;
     for (label, owner) in [
@@ -929,14 +728,7 @@ fn axum_real_target_blanket_via_parts_self_path_reaches_trait_method() -> Result
     let db = setup_axum_call_graph_db()?;
     let target = method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?;
 
-    // Matrix: `FromRequest` ViaParts blanket inner call.
-    // Source chain:
-    //   axum-core/src/extract/mod.rs:103 calls
-    //   `Self::from_request_parts(parts, state).await`.
-    // Expected traversal: the nested async block owns the structural path row,
-    // but `Self` associated-function resolution climbs to the parent blanket
-    // impl method and uses the `T: FromRequestParts<S>` bound to reach the
-    // trait method binding.
+    // extract/mod.rs:103 resolves async-block-owned Self::from_request_parts through ViaParts.
     let callers = db.callers_for_target(target)?;
     let caller = callers
         .iter()
@@ -977,16 +769,7 @@ fn axum_real_target_blanket_via_parts_self_path_reaches_trait_method() -> Result
 fn axum_real_target_handler_macro_extraction_paths_project_generated_rows() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: generated `Handler::call` extraction rows.
-    // Source chain:
-    //   axum/src/handler/mod.rs:242 calls
-    //   `$ty::from_request_parts(&mut parts, &state).await`.
-    //   handler/mod.rs:250 calls `$last::from_request(req, &state).await`.
-    // Expected traversal: the bounded `all_the_tuples!(impl_handler)`
-    // generated item model projects concrete generic names (`T1`, `T2`, ...)
-    // instead of unstable macro metavariables, preserves async-block ownership,
-    // and uses the generated impl where-clause proof to reach the
-    // `FromRequest` / `FromRequestParts` trait method bindings.
+    // handler/mod.rs:242/:250 projects concrete generated paths under their async owners.
     let one_param = method_id_by_name_body_and_file_suffix(
         &db,
         "call",
@@ -999,23 +782,13 @@ fn axum_real_target_handler_macro_extraction_paths_project_generated_rows() -> R
     let from_request = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
     let from_request_parts =
         method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?;
-    let last_row = row_by_path(&one_param_context, &["T1", "from_request"]);
-    assert_resolved_target(
-        last_row,
-        from_request,
-        CallRelationKind::AssociatedFunction,
-        CallSiteKind::Path,
-        CallTargetKind::Method,
-    );
-    assert_one_edge_traversal(
+    assert_path_edge(
         &db,
-        TraversalExpectation {
-            label: "axum/src/handler/mod.rs generated arity-1 T1::from_request",
-            owner: one_param_body,
-            target: from_request,
-            site_id: last_row.site.id,
-            expected_edge_count: 1,
-        },
+        &one_param_context,
+        one_param_body,
+        &["T1", "from_request"],
+        from_request,
+        "axum/src/handler/mod.rs:250 generated arity-1 T1::from_request",
     )?;
 
     let two_param = method_id_by_name_body_and_file_suffix(
@@ -1027,41 +800,21 @@ fn axum_real_target_handler_macro_extraction_paths_project_generated_rows() -> R
     assert_method_owner_impl_trait(&db, two_param, "Handler", "generated arity-2 Handler::call")?;
     let two_param_body = async_block_owner_for_method_parent(&db, two_param)?;
     let two_param_context = db.call_context_for_owner(two_param_body)?;
-    let parts_row = row_by_path(&two_param_context, &["T1", "from_request_parts"]);
-    assert_resolved_target(
-        parts_row,
+    assert_path_edge(
+        &db,
+        &two_param_context,
+        two_param_body,
+        &["T1", "from_request_parts"],
         from_request_parts,
-        CallRelationKind::AssociatedFunction,
-        CallSiteKind::Path,
-        CallTargetKind::Method,
-    );
-    assert_one_edge_traversal(
-        &db,
-        TraversalExpectation {
-            label: "axum/src/handler/mod.rs generated arity-2 T1::from_request_parts",
-            owner: two_param_body,
-            target: from_request_parts,
-            site_id: parts_row.site.id,
-            expected_edge_count: 1,
-        },
+        "axum/src/handler/mod.rs:242 generated arity-2 T1::from_request_parts",
     )?;
-    let last_row = row_by_path(&two_param_context, &["T2", "from_request"]);
-    assert_resolved_target(
-        last_row,
-        from_request,
-        CallRelationKind::AssociatedFunction,
-        CallSiteKind::Path,
-        CallTargetKind::Method,
-    );
-    assert_one_edge_traversal(
+    assert_path_edge(
         &db,
-        TraversalExpectation {
-            label: "axum/src/handler/mod.rs generated arity-2 T2::from_request",
-            owner: two_param_body,
-            target: from_request,
-            site_id: last_row.site.id,
-            expected_edge_count: 1,
-        },
+        &two_param_context,
+        two_param_body,
+        &["T2", "from_request"],
+        from_request,
+        "axum/src/handler/mod.rs:250 generated arity-2 T2::from_request",
     )?;
     assert_no_path_rows(&db, &["ty", "from_request_parts"])?;
     assert_no_path_rows(&db, &["last", "from_request"])
@@ -1071,20 +824,7 @@ fn axum_real_target_handler_macro_extraction_paths_project_generated_rows() -> R
 fn axum_error_handling_impl_service_paths_project_generated_rows() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: generated `HandleError<_, _, T>::call` extraction rows.
-    // Source chain:
-    //   axum/src/error_handling/mod.rs:152-205 defines local
-    //   `impl_service!`.
-    //   error_handling/mod.rs:207-222 invokes it for arities one through
-    //   sixteen. Each generated `Service::call` body calls
-    //   `$ty::from_request_parts(&mut parts, &()).await` before rebuilding
-    //   the request and calling `inner.oneshot(req).await`.
-    // Expected traversal: the bounded, module-specific generated item model
-    // projects the sixteen generated `call` owners with the extractor path
-    // rows needed for proof. It preserves the nested async-block owner and
-    // uses the generated `FromRequestParts<()>` where-clause proof to reach
-    // the trait method binding without applying the unrelated `impl_service!`
-    // templates in middleware modules.
+    // error_handling/mod.rs:152-222 generates 16 Service::call extractor owner/path sets.
     let owners = method_ids_by_name_body_and_file_suffix(
         &db,
         "call",
@@ -1107,42 +847,13 @@ fn axum_error_handling_impl_service_paths_project_generated_rows() -> Result<(),
     let context = db.call_context_for_owner(async_owner)?;
     let target = method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?;
 
-    let target_sites = db.call_sites_for_target(target)?;
-    let mut site_ids = Vec::new();
-    for index in 1..=16 {
-        let ty = format!("T{index}");
-        let expected_path = path(&[ty.as_str(), "from_request_parts"]);
-        let row = context
-            .iter()
-            .find(|row| {
-                row.site.kind == CallSiteKind::Path
-                    && row.site.path.as_ref() == Some(&expected_path)
-            })
-            .unwrap_or_else(|| {
-                panic!(
-                    "generated arity-16 async owner should expose {ty}::from_request_parts: {context:#?}"
-                )
-            });
-        assert_resolved_target(
-            row,
-            target,
-            CallRelationKind::AssociatedFunction,
-            CallSiteKind::Path,
-            CallTargetKind::Method,
-        );
-        assert_eq!(
-            relations_for_site(&db, row.site.id)?.rows.len(),
-            1,
-            "axum/src/error_handling/mod.rs generated arity-16 {ty}::from_request_parts should persist one call edge"
-        );
-        assert!(
-            target_sites
-                .iter()
-                .any(|site| site.owner_id == async_owner && site.id == row.site.id),
-            "target-centered call_sites_for_target should include generated {ty}::from_request_parts: {target_sites:#?}"
-        );
-        site_ids.push(row.site.id);
-    }
+    let site_ids = assert_generated_rows(
+        &db,
+        &context,
+        async_owner,
+        target,
+        "axum/src/error_handling/mod.rs:152-222 generated arity-16",
+    )?;
 
     let outgoing = db.expand_call_context(
         CallContextSeed::Owner(async_owner),
@@ -1170,18 +881,7 @@ fn axum_error_handling_impl_service_paths_project_generated_rows() -> Result<(),
 fn axum_real_target_handler_async_block_body_calls_are_async_block_owned() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: async block body boundary.
-    // Source chains:
-    //   axum/src/handler/mod.rs:217 calls
-    //   `Box::pin(async move { self().await.into_response() })`.
-    //   axum/src/handler/mod.rs:240 starts the generated `Handler::call`
-    //   async block whose inner calls are separately documented by the
-    //   `$ty::from_request_parts` and `$last::from_request` matrix rows.
-    // Expected traversal: the concrete non-macro async block has its own
-    // executable owner. The generic callable `self()` and awaited
-    // `into_response()` receiver stay targetless, but they must be owned by the
-    // async-block body and must not be flattened into the enclosing
-    // `Handler::call` owner.
+    // handler/mod.rs:217/:240 keeps self()/into_response() under the concrete async owner.
     let owner = method_id_by_name_body_and_file_suffix(
         &db,
         "call",
@@ -1238,19 +938,21 @@ fn axum_real_target_handler_async_block_body_calls_are_async_block_owned() -> Re
         ),
     ])?;
 
-    let self_site = self_row.site.id.to_string();
-    let into_response_site = into_response.site.id.to_string();
-    let blockers = db.proof_blockers()?;
-    for (site, label) in [
-        (self_site.as_str(), "Handler::call async-block self()"),
+    let sites = [
         (
-            into_response_site.as_str(),
+            self_row.site.id.to_string(),
+            "Handler::call async-block self()",
+        ),
+        (
+            into_response.site.id.to_string(),
             "Handler::call async-block into_response()",
         ),
-    ] {
+    ];
+    let blockers = db.proof_blockers()?;
+    for (site, label) in &sites {
         assert!(
             blockers.iter().any(|proof| {
-                proof.call_site_id.as_deref() == Some(site)
+                proof.call_site_id.as_deref() == Some(site.as_str())
                     && proof.reason == "dynamic_dispatch_unbounded"
                     && proof.status == "blocked"
             }),
@@ -1259,17 +961,11 @@ fn axum_real_target_handler_async_block_body_calls_are_async_block_owned() -> Re
     }
 
     let proof_rows = db.proof_graphrag_context("async poll/resume")?;
-    for (site, label) in [
-        (self_site.as_str(), "Handler::call async-block self()"),
-        (
-            into_response_site.as_str(),
-            "Handler::call async-block into_response()",
-        ),
-    ] {
+    for (site, label) in &sites {
         assert!(
             proof_rows.iter().any(|proof| {
                 proof.kind == "proof_blocker"
-                    && proof.call_site_id.as_deref() == Some(site)
+                    && proof.call_site_id.as_deref() == Some(site.as_str())
                     && proof.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
             }),
             "{label} proof context should expose the async poll/resume blocker: {proof_rows:#?}"

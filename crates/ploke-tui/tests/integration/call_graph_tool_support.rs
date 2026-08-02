@@ -56,7 +56,11 @@ use ploke_tui::{
     },
     chat_history::ChatHistory,
     event_bus::EventBusCaps,
-    tools::{Ctx, ToolUiPayload},
+    tools::{
+        Ctx, Tool, ToolUiPayload,
+        code_item_lookup::{CodeItemLookup, LookupParams},
+        get_code_edges::{CodeItemEdges, EdgesParams},
+    },
     user_config::UserConfig,
 };
 use serde_json::json;
@@ -90,6 +94,14 @@ pub(crate) use fixture_receiver::*;
 #[path = "call_graph_tool_support/target_fixtures.rs"]
 mod target_fixtures;
 pub(crate) use target_fixtures::*;
+
+/// Builds an isolated fixture database. Call-site proof projection mutates it,
+/// so callers may share it only within one sequential test matrix.
+pub(crate) fn fixture_graph_db() -> Arc<Database> {
+    Arc::new(Database::new(
+        setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
+    ))
+}
 
 pub(crate) struct CallGraphToolFixture {
     pub(crate) state: Arc<AppState>,
@@ -238,6 +250,206 @@ pub(crate) struct ExpectedMethodEdge {
     pub(crate) site: Uuid,
     pub(crate) target: Uuid,
     pub(crate) callee: CallCalleeInfo,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ContextTool {
+    Lookup,
+    Edges,
+}
+
+impl ContextTool {
+    pub(crate) const ALL: [Self; 2] = [Self::Lookup, Self::Edges];
+
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Lookup => "code_item_lookup",
+            Self::Edges => "code_item_edges",
+        }
+    }
+
+    const fn call_id(self) -> &'static str {
+        match self {
+            Self::Lookup => "shared-context-lookup",
+            Self::Edges => "shared-context-edges",
+        }
+    }
+}
+
+pub(crate) struct ContextToolObservation {
+    tool: ContextTool,
+    payload: serde_json::Value,
+    ui: ToolUiPayload,
+}
+
+pub(crate) struct ExactItemQuery<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) file: &'a std::path::Path,
+    pub(crate) kind: &'a str,
+    pub(crate) module: String,
+    pub(crate) trait_name: Option<&'a str>,
+    pub(crate) type_name: Option<&'a str>,
+    pub(crate) label: &'a str,
+}
+
+impl ContextToolObservation {
+    pub(crate) fn label(&self) -> &'static str {
+        self.tool.label()
+    }
+
+    pub(crate) fn field(&self, name: &str) -> &serde_json::Value {
+        let node = match self.tool {
+            ContextTool::Lookup => &self.payload,
+            ContextTool::Edges => self
+                .payload
+                .get("node_info")
+                .unwrap_or_else(|| panic!("{} payload missing node_info", self.label())),
+        };
+        node.get(name)
+            .unwrap_or_else(|| panic!("{} payload missing {name}", self.label()))
+    }
+
+    pub(crate) fn array(&self, name: &str) -> &[serde_json::Value] {
+        self.field(name)
+            .as_array()
+            .unwrap_or_else(|| panic!("{} payload field {name} is not an array", self.label()))
+    }
+
+    pub(crate) fn edge_summary(&self, name: &str) -> usize {
+        assert_eq!(
+            self.tool,
+            ContextTool::Edges,
+            "{} has no edge summary",
+            self.label()
+        );
+        self.payload
+            .get("call_graph_summary")
+            .and_then(|summary| summary.get(name))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} payload missing call_graph_summary.{name}: {:#?}",
+                    self.label(),
+                    self.payload
+                )
+            }) as usize
+    }
+
+    pub(crate) fn ui(&self) -> &ToolUiPayload {
+        &self.ui
+    }
+}
+
+pub(crate) async fn observe_function(
+    tool: ContextTool,
+    state: &Arc<AppState>,
+    file_path: &std::path::Path,
+    item_name: &'static str,
+) -> ContextToolObservation {
+    observe_item(tool, state, file_path, item_name, "function", None).await
+}
+
+pub(crate) async fn observe_method(
+    tool: ContextTool,
+    state: &Arc<AppState>,
+    file_path: &std::path::Path,
+    item_name: &'static str,
+    owner_type: &'static str,
+) -> ContextToolObservation {
+    observe_item(
+        tool,
+        state,
+        file_path,
+        item_name,
+        "method",
+        Some(owner_type),
+    )
+    .await
+}
+
+async fn observe_item(
+    tool: ContextTool,
+    state: &Arc<AppState>,
+    file_path: &std::path::Path,
+    item_name: &'static str,
+    node_kind: &'static str,
+    owner_type: Option<&'static str>,
+) -> ContextToolObservation {
+    observe_exact_item(
+        tool,
+        state,
+        ExactItemQuery {
+            name: item_name,
+            file: file_path,
+            kind: node_kind,
+            module: "crate".to_string(),
+            trait_name: None,
+            type_name: owner_type,
+            label: item_name,
+        },
+    )
+    .await
+}
+
+pub(crate) async fn observe_exact_item(
+    tool: ContextTool,
+    state: &Arc<AppState>,
+    item: ExactItemQuery<'_>,
+) -> ContextToolObservation {
+    let file_path = item.file.display().to_string();
+    let ctx = ctx_for_state(state, tool.call_id());
+    let result = match tool {
+        ContextTool::Lookup => {
+            CodeItemLookup::execute(
+                LookupParams {
+                    item_name: std::borrow::Cow::Owned(item.name.to_string()),
+                    file_path: std::borrow::Cow::Owned(file_path),
+                    node_kind: std::borrow::Cow::Owned(item.kind.to_string()),
+                    module_path: std::borrow::Cow::Owned(item.module),
+                    owner_trait: item
+                        .trait_name
+                        .map(|name| std::borrow::Cow::Owned(name.to_string())),
+                    owner_type: item
+                        .type_name
+                        .map(|name| std::borrow::Cow::Owned(name.to_string())),
+                    parent_name: None,
+                    body_contains: None,
+                    allowed_effects: Vec::new(),
+                },
+                ctx,
+            )
+            .await
+        }
+        ContextTool::Edges => {
+            CodeItemEdges::execute(
+                EdgesParams {
+                    item_name: std::borrow::Cow::Owned(item.name.to_string()),
+                    file_path: std::borrow::Cow::Owned(file_path),
+                    node_kind: std::borrow::Cow::Owned(item.kind.to_string()),
+                    module_path: std::borrow::Cow::Owned(item.module),
+                    owner_trait: item
+                        .trait_name
+                        .map(|name| std::borrow::Cow::Owned(name.to_string())),
+                    owner_type: item
+                        .type_name
+                        .map(|name| std::borrow::Cow::Owned(name.to_string())),
+                    parent_name: None,
+                    body_contains: None,
+                    allowed_effects: Vec::new(),
+                },
+                ctx,
+            )
+            .await
+        }
+    }
+    .unwrap_or_else(|err| panic!("{} {}: {err}", tool.label(), item.label));
+    let payload = serde_json::from_str(&result.content)
+        .unwrap_or_else(|err| panic!("{} {} payload: {err}", tool.label(), item.label));
+    let ui = result
+        .ui_payload
+        .unwrap_or_else(|| panic!("{} {} missing UI payload", tool.label(), item.label));
+
+    ContextToolObservation { tool, payload, ui }
 }
 
 impl CallGraphToolFixture {

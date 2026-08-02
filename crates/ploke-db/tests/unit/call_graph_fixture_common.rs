@@ -1,4 +1,7 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, LazyLock, Mutex},
+};
 
 use cozo::{DataValue, Db, MemStorage, UuidWrapper};
 use ploke_db::{
@@ -44,4 +47,24 @@ pub(super) fn setup_call_graph_fixture_db(fixture: &'static str) -> Result<Datab
         .map_err(|err| DbError::QueryExecution(err.to_string()))?;
 
     Ok(Database::new(db))
+}
+
+static FIXTURE_CACHE: LazyLock<Mutex<BTreeMap<&'static str, Arc<Database>>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+/// Returns one shared database per fixture for tests that only perform reads.
+///
+/// Tests that insert proof facts or otherwise mutate the fixture must continue
+/// to use [`setup_call_graph_fixture_db`] for isolation.
+pub(super) fn shared_fixture_db(fixture: &'static str) -> Result<Arc<Database>, DbError> {
+    let mut cache = FIXTURE_CACHE.lock().map_err(|_| {
+        DbError::QueryExecution("shared call-graph fixture cache mutex was poisoned".to_string())
+    })?;
+    if let Some(db) = cache.get(fixture) {
+        return Ok(Arc::clone(db));
+    }
+
+    let db = Arc::new(setup_call_graph_fixture_db(fixture)?);
+    cache.insert(fixture, Arc::clone(&db));
+    Ok(db)
 }

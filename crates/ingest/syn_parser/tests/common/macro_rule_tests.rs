@@ -330,7 +330,7 @@ macro_rules! paranoid_test_fields_and_values {
 /// Generates a paranoid call-site test.
 ///
 /// The generated test mirrors the node-level paranoid style for parser-owned
-/// call-site IDs: it rebuilds the fixture graph, resolves call statuses, builds
+/// call-site IDs: it loads the fixture graph and resolver report, builds
 /// a typed function/method owner context, regenerates the expected call-site ID,
 /// and delegates exact-ID, value, containment-relation, status, and semantic-edge
 /// checks to [`crate::common::call_site_paranoid::assert_paranoid_call_site`].
@@ -344,18 +344,17 @@ macro_rules! paranoid_call_site_test {
     ) => {
         #[test]
         fn $test_name() -> Result<(), syn_parser::error::SynParserError> {
-            let (graph, tree) = $crate::common::build_tree_for_tests($fixture);
-            let report = syn_parser::resolve::call_resolution::resolve_call_relations_after_tree(
-                &graph, &tree,
-            )?;
+            let fixture = $crate::common::call_site_paranoid::call_fixture($fixture);
+            let graph = fixture.graph();
+            let report = fixture.report();
             let owner = $crate::common::call_site_paranoid::function_owner_context(
-                &graph,
+                graph,
                 $module_path,
                 $function_name,
             );
             let expected = $expected;
             $crate::common::call_site_paranoid::assert_paranoid_call_site(
-                &graph, &report, &owner, &expected,
+                graph, report, &owner, &expected,
             );
             Ok(())
         }
@@ -368,18 +367,17 @@ macro_rules! paranoid_call_site_test {
     ) => {
         #[test]
         fn $test_name() -> Result<(), syn_parser::error::SynParserError> {
-            let (graph, tree) = $crate::common::build_tree_for_tests($fixture);
-            let report = syn_parser::resolve::call_resolution::resolve_call_relations_after_tree(
-                &graph, &tree,
-            )?;
+            let fixture = $crate::common::call_site_paranoid::call_fixture($fixture);
+            let graph = fixture.graph();
+            let report = fixture.report();
             let owner = $crate::common::call_site_paranoid::macro_owner_context(
-                &graph,
+                graph,
                 $module_path,
                 $macro_name,
             );
             let expected = $expected;
             $crate::common::call_site_paranoid::assert_paranoid_call_site(
-                &graph, &report, &owner, &expected,
+                graph, report, &owner, &expected,
             );
             Ok(())
         }
@@ -392,21 +390,20 @@ macro_rules! paranoid_call_site_test {
     ) => {
         #[test]
         fn $test_name() -> Result<(), syn_parser::error::SynParserError> {
-            let (graph, tree) = $crate::common::build_tree_for_tests($fixture);
-            let report = syn_parser::resolve::call_resolution::resolve_call_relations_after_tree(
-                &graph, &tree,
-            )?;
+            let fixture = $crate::common::call_site_paranoid::call_fixture($fixture);
+            let graph = fixture.graph();
+            let report = fixture.report();
             let const_args = $const_args;
             let parsed_graphs =
                 $crate::common::call_site_paranoid::parsed_graphs_for_fixture($fixture);
             let owner = $crate::common::call_site_paranoid::const_owner_context(
-                &graph,
+                graph,
                 parsed_graphs,
                 &const_args,
             )?;
             let expected = $expected;
             $crate::common::call_site_paranoid::assert_paranoid_call_site(
-                &graph, &report, &owner, &expected,
+                graph, report, &owner, &expected,
             );
             Ok(())
         }
@@ -419,21 +416,20 @@ macro_rules! paranoid_call_site_test {
     ) => {
         #[test]
         fn $test_name() -> Result<(), syn_parser::error::SynParserError> {
-            let (graph, tree) = $crate::common::build_tree_for_tests($fixture);
-            let report = syn_parser::resolve::call_resolution::resolve_call_relations_after_tree(
-                &graph, &tree,
-            )?;
+            let fixture = $crate::common::call_site_paranoid::call_fixture($fixture);
+            let graph = fixture.graph();
+            let report = fixture.report();
             let static_args = $static_args;
             let parsed_graphs =
                 $crate::common::call_site_paranoid::parsed_graphs_for_fixture($fixture);
             let owner = $crate::common::call_site_paranoid::static_owner_context(
-                &graph,
+                graph,
                 parsed_graphs,
                 &static_args,
             )?;
             let expected = $expected;
             $crate::common::call_site_paranoid::assert_paranoid_call_site(
-                &graph, &report, &owner, &expected,
+                graph, report, &owner, &expected,
             );
             Ok(())
         }
@@ -446,21 +442,20 @@ macro_rules! paranoid_call_site_test {
     ) => {
         #[test]
         fn $test_name() -> Result<(), syn_parser::error::SynParserError> {
-            let (graph, tree) = $crate::common::build_tree_for_tests($fixture);
-            let report = syn_parser::resolve::call_resolution::resolve_call_relations_after_tree(
-                &graph, &tree,
-            )?;
+            let fixture = $crate::common::call_site_paranoid::call_fixture($fixture);
+            let graph = fixture.graph();
+            let report = fixture.report();
             let const_args = $const_args;
             let parsed_graphs =
                 $crate::common::call_site_paranoid::parsed_graphs_for_fixture($fixture);
             let owner = $crate::common::call_site_paranoid::assoc_const_owner_context(
-                &graph,
+                graph,
                 parsed_graphs,
                 &const_args,
             )?;
             let expected = $expected;
             $crate::common::call_site_paranoid::assert_paranoid_call_site(
-                &graph, &report, &owner, &expected,
+                graph, report, &owner, &expected,
             );
             Ok(())
         }
@@ -473,21 +468,20 @@ macro_rules! paranoid_call_site_test {
     ) => {
         #[test]
         fn $test_name() -> Result<(), syn_parser::error::SynParserError> {
-            let (graph, tree) = $crate::common::build_tree_for_tests($fixture);
-            let report = syn_parser::resolve::call_resolution::resolve_call_relations_after_tree(
-                &graph, &tree,
-            )?;
+            let fixture = $crate::common::call_site_paranoid::call_fixture($fixture);
+            let graph = fixture.graph();
+            let report = fixture.report();
             let method_args = $method_args;
             let parsed_graphs =
                 $crate::common::call_site_paranoid::parsed_graphs_for_fixture($fixture);
             let owner = $crate::common::call_site_paranoid::method_owner_context(
-                &graph,
+                graph,
                 parsed_graphs,
                 &method_args,
             )?;
             let expected = $expected;
             $crate::common::call_site_paranoid::assert_paranoid_call_site(
-                &graph, &report, &owner, &expected,
+                graph, report, &owner, &expected,
             );
             Ok(())
         }

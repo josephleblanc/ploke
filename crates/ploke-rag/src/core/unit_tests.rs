@@ -13,7 +13,12 @@ mod tests {
     //! - Recursive/nested behavior is inherited from DB fixtures; this RAG layer
     //!   does not add independent recursive type traversal assertions.
 
-    use std::{collections::BTreeMap, default, ops::Deref, sync::Arc};
+    use std::{
+        collections::{BTreeMap, HashMap},
+        default,
+        ops::Deref,
+        sync::Arc,
+    };
 
     use crate::{ApproxCharTokenizer, AssemblyPolicy, RetrievalStrategy, TokenBudget};
     use cozo::{DataValue, Db, MemStorage, UuidWrapper};
@@ -27,7 +32,8 @@ mod tests {
     use ploke_core::{CrateId, EmbeddingData, RetrievalScope};
     use ploke_db::get_by_id::{GetNodeInfo, NodePaths};
     use ploke_db::{
-        CallPathOptions, DbError, TypeContextSeed, TypeUseCoordinate, TypeUseRoot, to_uuid,
+        CallContextCandidate, CallContextRelation, CallPathOptions, DbError, TypeContextSeed,
+        TypeUseCoordinate, TypeUseRoot, to_uuid,
     };
     use ploke_db::{
         Database, create_index_primary_with_index,
@@ -1813,6 +1819,59 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         assert_eq!(expansion.call_site_id, call.site_id);
         assert_eq!(expansion.target_id, target_id);
         assert_eq!(expansion.distance, 1);
+    }
+
+    #[test]
+    fn call_provenance_prefers_the_stronger_equal_distance_seed() {
+        let original = Uuid::from_u128(2);
+        let related = Uuid::from_u128(1);
+        let target = Uuid::from_u128(3);
+        let first_site = Uuid::from_u128(4);
+        let other_site = Uuid::from_u128(5);
+        let scores = HashMap::from([(original, 1.0), (related, 0.5)]);
+        let mut expanded = HashMap::new();
+        let mut context = HashMap::new();
+        let mut context_scores = HashMap::new();
+
+        super::super::record_call_expansion_candidate(
+            &mut expanded,
+            &mut context,
+            &mut context_scores,
+            &scores,
+            original,
+            1.0,
+            0.5,
+            CallContextCandidate {
+                node_id: target,
+                relation: CallContextRelation::OutgoingTarget,
+                call_site_id: first_site,
+                target_id: target,
+                distance: 1,
+            },
+        );
+        super::super::record_call_expansion_candidate(
+            &mut expanded,
+            &mut context,
+            &mut context_scores,
+            &scores,
+            related,
+            0.5,
+            0.5,
+            CallContextCandidate {
+                node_id: target,
+                relation: CallContextRelation::OutgoingTarget,
+                call_site_id: other_site,
+                target_id: target,
+                distance: 1,
+            },
+        );
+
+        let provenance = context
+            .get(&target)
+            .expect("target should retain call-expansion provenance");
+        assert_eq!(provenance.seed_id, original);
+        assert_eq!(provenance.call_site_id, first_site);
+        assert_eq!(expanded.get(&target), Some(&0.5));
     }
 
     #[tokio::test]

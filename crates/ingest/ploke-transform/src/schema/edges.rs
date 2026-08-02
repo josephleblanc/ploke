@@ -862,7 +862,16 @@ fn method_receiver_to_cozo(receiver: &MethodCallReceiver) -> (cozo::DataValue, c
                 string_list(&encoded),
             )
         }
-        MethodCallReceiver::MethodResultField {
+        // Resolution distinguishes the direct self-field and post-result
+        // projection shapes before persistence. Keep the existing database
+        // receiver encoding for schema compatibility; status and edge rows
+        // preserve the fail-closed distinction.
+        MethodCallReceiver::SelfFieldMethodResult {
+            method_name,
+            method_span,
+            field_path,
+        }
+        | MethodCallReceiver::MethodResultField {
             method_name,
             method_span,
             field_path,

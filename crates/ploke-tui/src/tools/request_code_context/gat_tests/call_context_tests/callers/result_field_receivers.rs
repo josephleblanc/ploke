@@ -1,4 +1,4 @@
-use super::super::assertions::{assert_expansion, assert_resolved_target, path};
+use super::super::assertions::{assert_resolved_target, path};
 use super::super::*;
 
 struct ExpectedCall {
@@ -182,8 +182,10 @@ async fn request_code_context_returns_result_field_receiver_call_context() -> co
                     kind: CallSiteKind::Method,
                     callee: method_call(
                         "instance_value",
-                        CallReceiverInfo::MethodCallResult {
+                        CallReceiverInfo::MethodResultField {
                             method_name: "clone_assoc".to_string(),
+                            method_span: (31263, 31287),
+                            field_path: path(&["value"]),
                         },
                     ),
                     target: method_target,
@@ -395,12 +397,14 @@ async fn request_code_context_returns_result_field_receiver_call_context() -> co
                     )
                 });
             assert_resolved_target(call, expected.target, expected.relation.clone());
-            assert_expansion(
+            assert_canonical_expansion(
+                &result,
                 target_part,
                 case.owner,
-                expected.target,
                 call.site_id,
-                CallExpansionKind::OutgoingTarget,
+                expected.target,
+                expected.relation.clone(),
+                case.label,
             );
         }
     }
@@ -419,4 +423,40 @@ fn method_call(name: &str, receiver: CallReceiverInfo) -> CallCalleeInfo {
         name: name.to_string(),
         receiver: Some(receiver),
     }
+}
+
+fn assert_canonical_expansion(
+    result: &RequestCodeContextResult,
+    target_part: &ConciseContext,
+    seed_id: Uuid,
+    site_id: Uuid,
+    target: Uuid,
+    relation: CallTargetKind,
+    label: &str,
+) {
+    let expansion = target_part
+        .call_expansion
+        .expect("expanded target should carry provenance");
+    assert_eq!(target_part.id, target, "{label} expanded target id");
+    assert_eq!(expansion.relation, CallExpansionKind::OutgoingTarget);
+    assert_eq!(expansion.target_id, target);
+    assert_eq!(expansion.distance, 1);
+    assert_eq!(expansion.seed_id, seed_id, "{label} canonical seed id");
+    assert_eq!(
+        expansion.call_site_id, site_id,
+        "{label} canonical call-site id"
+    );
+
+    let seed = result
+        .context
+        .iter()
+        .find(|part| part.id == seed_id)
+        .unwrap_or_else(|| panic!("{label} should materialize the canonical expansion seed"));
+    let call = seed
+        .call_context
+        .iter()
+        .find(|call| call.site_id == site_id)
+        .unwrap_or_else(|| panic!("{label} canonical seed should retain its expansion callsite"));
+    assert_eq!(call.owner_id, seed_id);
+    assert_resolved_target(call, target, relation);
 }

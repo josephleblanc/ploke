@@ -4,7 +4,7 @@ use ploke_db::CallPathOptions;
 #[test]
 fn fixture_call_paths_include_direct_recursive_edges_without_expanding_cycles()
 -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let owner = function_id_by_name(&db, "recursive_fixture_call")?;
 
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:
@@ -77,7 +77,7 @@ fn fixture_call_paths_include_direct_recursive_edges_without_expanding_cycles()
 
 #[test]
 fn fixture_context_reads_projected_path_resolution_forms() -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let local_target = function_id_by_name(&db, "local_target")?;
     let nested_target =
         function_id_by_name_in_module(&db, &["crate", "local_mod"], "nested_target")?;
@@ -210,375 +210,105 @@ fn fixture_context_reads_projected_path_resolution_forms() -> Result<(), DbError
 
 #[test]
 fn fixture_context_resolves_single_caller_function_pointer_parameter() -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let owner = function_id_by_name(&db, "call_single_function_pointer_param")?;
-    let caller = function_id_by_name(&db, "call_single_function_pointer_param_with_local_target")?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
-    let helper = function_id_by_name(&db, "call_single_function_pointer_param")?;
-
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1503-1505:
-    // `call_single_function_pointer_param(f: fn() -> i32) { f() }` has one
-    // local caller in this fixture. The caller passes `local_target`, so the
-    // parameter call is exact instead of a generic function-pointer blocker.
-    let context = db.call_context_for_owner(owner)?;
-    assert_eq!(
-        context.len(),
-        1,
-        "parameter owner context rows: {context:#?}"
-    );
-    let row = row_by_path(&context, &["f"]);
-    assert_eq!(row.site.owner_id, owner);
-    assert_eq!(row.site.arg_count, Some(0));
-    assert_eq!(row.site.generic_arg_count, Some(0));
-    assert_resolved_target(
-        row,
+    assert_callable_case(
+        &db,
         target,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
-
-    let callers = db.callers_for_target(target)?;
-    let caller_row = caller_by_owner_kind_path(&callers, owner, CallSiteKind::Path, &["f"]);
-    assert_eq!(caller_row.status.status, CallStatusKind::Resolved);
-    assert_eq!(
-        caller_row.status.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(caller_row.target.target_id, target);
-    assert_eq!(caller_row.target.relation, CallRelationKind::Function);
-
-    let paths = db.call_paths_from_owner(
-        owner,
-        CallPathOptions {
-            max_depth: 1,
-            max_paths: 8,
+        CallableParamCase {
+            owner: "call_single_function_pointer_param",
+            callers: &["call_single_function_pointer_param_with_local_target"],
+            source: "fixture_call_graph: call_single_function_pointer_param(f)",
+            callee_path: &["f"],
+            site_kind: CallSiteKind::Path,
+            relation: CallRelationKind::Function,
+            caller_arg_count: 1,
+            proof_note: "the only local caller supplies local_target",
         },
-    )?;
-    let path = paths
-        .iter()
-        .find(|path| path.start_id == owner && path.end_id == target && path.depth == 1)
-        .expect("parameter owner should have a one-hop path to local_target");
-    assert_eq!(path.edges[0].caller_id, owner);
-    assert_eq!(path.edges[0].callee_id, target);
-    assert_eq!(path.edges[0].relation, CallRelationKind::Function);
-
-    // The source oracle's caller remains a normal direct path call to the
-    // helper function; argument proof is additional resolver evidence, not a
-    // replacement for the caller's own edge.
-    let caller_context = db.call_context_for_owner(caller)?;
-    let helper_call = row_by_path(&caller_context, &["call_single_function_pointer_param"]);
-    assert_eq!(helper_call.site.arg_count, Some(1));
-    assert_resolved_target(
-        helper_call,
-        helper,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
-
-    Ok(())
+    )
 }
 
 #[test]
 fn fixture_context_resolves_same_target_multi_caller_function_pointer_parameter()
 -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let owner = function_id_by_name(&db, "call_multi_function_pointer_param")?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
-    let helper = function_id_by_name(&db, "call_multi_function_pointer_param")?;
-
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:
-    // `call_multi_function_pointer_param(f) { f() }` has two local callers in
-    // this fixture. Both pass `local_target`, so complete private caller proof
-    // still resolves to one exact target.
-    let context = db.call_context_for_owner(owner)?;
-    assert_eq!(
-        context.len(),
-        1,
-        "multi-caller parameter owner context rows: {context:#?}"
-    );
-    let row = row_by_path(&context, &["f"]);
-    assert_eq!(row.site.owner_id, owner);
-    assert_eq!(row.site.arg_count, Some(0));
-    assert_eq!(row.site.generic_arg_count, Some(0));
-    assert_resolved_target(
-        row,
+    assert_callable_case(
+        &db,
         target,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
-
-    let callers = db.callers_for_target(target)?;
-    let caller_row = caller_by_owner_kind_path(&callers, owner, CallSiteKind::Path, &["f"]);
-    assert_eq!(caller_row.status.status, CallStatusKind::Resolved);
-    assert_eq!(
-        caller_row.status.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(caller_row.target.target_id, target);
-    assert_eq!(caller_row.target.relation, CallRelationKind::Function);
-
-    let paths = db.call_paths_from_owner(
-        owner,
-        CallPathOptions {
-            max_depth: 1,
-            max_paths: 8,
+        CallableParamCase {
+            owner: "call_multi_function_pointer_param",
+            callers: &[
+                "call_multi_function_pointer_param_with_local_target_a",
+                "call_multi_function_pointer_param_with_local_target_b",
+            ],
+            source: "fixture_call_graph: call_multi_function_pointer_param(f)",
+            callee_path: &["f"],
+            site_kind: CallSiteKind::Path,
+            relation: CallRelationKind::Function,
+            caller_arg_count: 1,
+            proof_note: "both complete private callers supply local_target",
         },
-    )?;
-    let path = paths
-        .iter()
-        .find(|path| path.start_id == owner && path.end_id == target && path.depth == 1)
-        .expect("multi-caller parameter owner should have a one-hop path to local_target");
-    assert_eq!(path.edges[0].caller_id, owner);
-    assert_eq!(path.edges[0].callee_id, target);
-    assert_eq!(path.edges[0].relation, CallRelationKind::Function);
-
-    for caller_name in [
-        "call_multi_function_pointer_param_with_local_target_a",
-        "call_multi_function_pointer_param_with_local_target_b",
-    ] {
-        let caller = function_id_by_name(&db, caller_name)?;
-        let caller_context = db.call_context_for_owner(caller)?;
-        let helper_call = row_by_path(&caller_context, &["call_multi_function_pointer_param"]);
-        assert_eq!(helper_call.site.arg_count, Some(1));
-        assert_resolved_target(
-            helper_call,
-            helper,
-            CallRelationKind::Function,
-            CallSiteKind::Path,
-            CallTargetKind::Function,
-        );
-    }
-
-    Ok(())
+    )
 }
 
 #[test]
 fn fixture_context_resolves_one_hop_forwarded_function_pointer_parameter() -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let leaf = function_id_by_name(&db, "call_forwarded_function_pointer_leaf")?;
-    let wrapper = function_id_by_name(&db, "call_forwarded_function_pointer_wrapper")?;
-    let caller = function_id_by_name(
-        &db,
-        "call_forwarded_function_pointer_param_with_local_target",
-    )?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
-
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1942-1951:
-    // `call_forwarded_function_pointer_leaf(f) { f() }` is called only by a
-    // private wrapper that forwards its own `f` parameter. The wrapper's
-    // complete local caller set passes `local_target`, so this one-hop value
-    // forwarding proof is exact.
-    let context = db.call_context_for_owner(leaf)?;
-    assert_eq!(
-        context.len(),
-        1,
-        "forwarded leaf context rows: {context:#?}"
-    );
-    let row = row_by_path(&context, &["f"]);
-    assert_eq!(row.site.owner_id, leaf);
-    assert_eq!(row.site.arg_count, Some(0));
-    assert_eq!(row.site.generic_arg_count, Some(0));
-    assert_resolved_target(
-        row,
+    assert_forwarded_case(
+        &db,
         target,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
-
-    let wrapper_context = db.call_context_for_owner(wrapper)?;
-    let leaf_call = row_by_path(&wrapper_context, &["call_forwarded_function_pointer_leaf"]);
-    assert_eq!(leaf_call.site.arg_count, Some(1));
-    assert_resolved_target(
-        leaf_call,
-        leaf,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
-
-    let caller_context = db.call_context_for_owner(caller)?;
-    let wrapper_call = row_by_path(
-        &caller_context,
-        &["call_forwarded_function_pointer_wrapper"],
-    );
-    assert_eq!(wrapper_call.site.arg_count, Some(1));
-    assert_resolved_target(
-        wrapper_call,
-        wrapper,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
-
-    let paths = db.call_paths_between(
-        caller,
-        target,
-        CallPathOptions {
-            max_depth: 3,
-            max_paths: 8,
+        ForwardedCase {
+            label: "one-hop forwarded function pointer",
+            leaf: "call_forwarded_function_pointer_leaf",
+            intermediates: &["call_forwarded_function_pointer_wrapper"],
+            caller: "call_forwarded_function_pointer_param_with_local_target",
+            callee_path: &["f"],
+            site_kind: CallSiteKind::Path,
+            relation: CallRelationKind::Function,
         },
-    )?;
-    let path = paths
-        .iter()
-        .find(|path| path.start_id == caller && path.end_id == target && path.depth == 3)
-        .unwrap_or_else(|| {
-            panic!(
-                "forwarded caller should traverse caller -> wrapper -> leaf -> target: {paths:#?}"
-            )
-        });
-    assert_eq!(path.edges[0].caller_id, caller);
-    assert_eq!(path.edges[0].callee_id, wrapper);
-    assert_eq!(path.edges[1].caller_id, wrapper);
-    assert_eq!(path.edges[1].callee_id, leaf);
-    assert_eq!(path.edges[2].caller_id, leaf);
-    assert_eq!(path.edges[2].callee_id, target);
-    assert!(
-        path.edges
-            .iter()
-            .all(|edge| edge.relation == CallRelationKind::Function),
-        "forwarded path should be ordinary function traversal edges: {path:#?}"
-    );
-
-    Ok(())
+    )
 }
 
 #[test]
 fn fixture_context_resolves_two_hop_forwarded_function_pointer_parameter() -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let leaf = function_id_by_name(&db, "call_two_hop_forwarded_function_pointer_leaf")?;
-    let middle = function_id_by_name(&db, "call_two_hop_forwarded_function_pointer_middle")?;
-    let wrapper = function_id_by_name(&db, "call_two_hop_forwarded_function_pointer_wrapper")?;
-    let caller = function_id_by_name(
-        &db,
-        "call_two_hop_forwarded_function_pointer_param_with_local_target",
-    )?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
-
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2004-2018:
-    // `leaf(f) { f() }` receives `f` through two private forwarding helpers.
-    // The complete local caller set still supplies `local_target`, so the
-    // bounded two-hop value-forwarding proof can emit a real traversal path.
-    let context = db.call_context_for_owner(leaf)?;
-    assert_eq!(
-        context.len(),
-        1,
-        "two-hop forwarded leaf context rows: {context:#?}"
-    );
-    let row = row_by_path(&context, &["f"]);
-    assert_eq!(row.site.owner_id, leaf);
-    assert_eq!(row.site.arg_count, Some(0));
-    assert_resolved_target(
-        row,
+    assert_forwarded_case(
+        &db,
         target,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
-
-    let middle_context = db.call_context_for_owner(middle)?;
-    let leaf_call = row_by_path(
-        &middle_context,
-        &["call_two_hop_forwarded_function_pointer_leaf"],
-    );
-    assert_resolved_target(
-        leaf_call,
-        leaf,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
-
-    let wrapper_context = db.call_context_for_owner(wrapper)?;
-    let middle_call = row_by_path(
-        &wrapper_context,
-        &["call_two_hop_forwarded_function_pointer_middle"],
-    );
-    assert_resolved_target(
-        middle_call,
-        middle,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
-
-    let caller_context = db.call_context_for_owner(caller)?;
-    let wrapper_call = row_by_path(
-        &caller_context,
-        &["call_two_hop_forwarded_function_pointer_wrapper"],
-    );
-    assert_resolved_target(
-        wrapper_call,
-        wrapper,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
-
-    let paths = db.call_paths_between(
-        caller,
-        target,
-        CallPathOptions {
-            max_depth: 4,
-            max_paths: 8,
+        ForwardedCase {
+            label: "two-hop forwarded function pointer",
+            leaf: "call_two_hop_forwarded_function_pointer_leaf",
+            intermediates: &[
+                "call_two_hop_forwarded_function_pointer_middle",
+                "call_two_hop_forwarded_function_pointer_wrapper",
+            ],
+            caller: "call_two_hop_forwarded_function_pointer_param_with_local_target",
+            callee_path: &["f"],
+            site_kind: CallSiteKind::Path,
+            relation: CallRelationKind::Function,
         },
-    )?;
-    let path = paths
-        .iter()
-        .find(|path| path.start_id == caller && path.end_id == target && path.depth == 4)
-        .unwrap_or_else(|| {
-            panic!(
-                "two-hop forwarded caller should traverse caller -> wrapper -> middle -> leaf -> target: {paths:#?}"
-            )
-        });
-    assert_eq!(path.edges[0].caller_id, caller);
-    assert_eq!(path.edges[0].callee_id, wrapper);
-    assert_eq!(path.edges[1].caller_id, wrapper);
-    assert_eq!(path.edges[1].callee_id, middle);
-    assert_eq!(path.edges[2].caller_id, middle);
-    assert_eq!(path.edges[2].callee_id, leaf);
-    assert_eq!(path.edges[3].caller_id, leaf);
-    assert_eq!(path.edges[3].callee_id, target);
-    assert!(
-        path.edges
-            .iter()
-            .all(|edge| edge.relation == CallRelationKind::Function),
-        "two-hop forwarded path should be ordinary function traversal edges: {path:#?}"
-    );
-
-    Ok(())
+    )
 }
 
 #[test]
 fn fixture_context_resolves_forwarded_callable_trait_object_parameters() -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
 
-    struct Case<'a> {
-        label: &'a str,
-        leaf: &'a str,
-        intermediates: &'a [&'a str],
-        caller: &'a str,
-        expected_depth: u32,
-    }
-
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs EOF:
-    // each private leaf receives `f` through a bounded forwarding chain. The
-    // complete local caller set ends in either `&local_target` or
-    // `Box::new(local_target)`, so the callable trait-object parameter proof can
-    // reuse the same forwarding contract as bare function-pointer parameters.
     for case in [
-        Case {
+        ForwardedCase {
             label: "one-hop forwarded referenced dyn Fn",
             leaf: "call_forwarded_referenced_dyn_fn_leaf",
             intermediates: &["call_forwarded_referenced_dyn_fn_wrapper"],
             caller: "call_forwarded_referenced_dyn_fn_with_local_target",
-            expected_depth: 3,
+            callee_path: &["f"],
+            site_kind: CallSiteKind::Path,
+            relation: CallRelationKind::Function,
         },
-        Case {
+        ForwardedCase {
             label: "two-hop forwarded referenced dyn Fn",
             leaf: "call_two_hop_forwarded_referenced_dyn_fn_leaf",
             intermediates: &[
@@ -586,16 +316,20 @@ fn fixture_context_resolves_forwarded_callable_trait_object_parameters() -> Resu
                 "call_two_hop_forwarded_referenced_dyn_fn_wrapper",
             ],
             caller: "call_two_hop_forwarded_referenced_dyn_fn_with_local_target",
-            expected_depth: 4,
+            callee_path: &["f"],
+            site_kind: CallSiteKind::Path,
+            relation: CallRelationKind::Function,
         },
-        Case {
+        ForwardedCase {
             label: "one-hop forwarded boxed dyn Fn",
             leaf: "call_forwarded_boxed_dyn_fn_leaf",
             intermediates: &["call_forwarded_boxed_dyn_fn_wrapper"],
             caller: "call_forwarded_boxed_dyn_fn_with_local_target",
-            expected_depth: 3,
+            callee_path: &["f"],
+            site_kind: CallSiteKind::Path,
+            relation: CallRelationKind::Function,
         },
-        Case {
+        ForwardedCase {
             label: "two-hop forwarded boxed dyn Fn",
             leaf: "call_two_hop_forwarded_boxed_dyn_fn_leaf",
             intermediates: &[
@@ -603,68 +337,12 @@ fn fixture_context_resolves_forwarded_callable_trait_object_parameters() -> Resu
                 "call_two_hop_forwarded_boxed_dyn_fn_wrapper",
             ],
             caller: "call_two_hop_forwarded_boxed_dyn_fn_with_local_target",
-            expected_depth: 4,
+            callee_path: &["f"],
+            site_kind: CallSiteKind::Path,
+            relation: CallRelationKind::Function,
         },
     ] {
-        let leaf = function_id_by_name(&db, case.leaf)?;
-        let caller = function_id_by_name(&db, case.caller)?;
-        let mut chain = vec![caller];
-        for name in case.intermediates.iter().rev() {
-            chain.push(function_id_by_name(&db, name)?);
-        }
-        chain.push(leaf);
-        chain.push(target);
-
-        let context = db.call_context_for_owner(leaf)?;
-        assert_eq!(
-            context.len(),
-            1,
-            "{} leaf context rows: {context:#?}",
-            case.label
-        );
-        let row = row_by_path(&context, &["f"]);
-        assert_eq!(row.site.owner_id, leaf);
-        assert_eq!(row.site.arg_count, Some(0));
-        assert_resolved_target(
-            row,
-            target,
-            CallRelationKind::Function,
-            CallSiteKind::Path,
-            CallTargetKind::Function,
-        );
-
-        let paths = db.call_paths_between(
-            caller,
-            target,
-            CallPathOptions {
-                max_depth: case.expected_depth,
-                max_paths: 8,
-            },
-        )?;
-        let path = paths
-            .iter()
-            .find(|path| {
-                path.start_id == caller
-                    && path.end_id == target
-                    && path.depth == case.expected_depth
-            })
-            .unwrap_or_else(|| {
-                panic!(
-                    "{} should traverse caller through forwarded callable trait-object helpers: {paths:#?}",
-                    case.label
-                )
-            });
-        assert_eq!(
-            path.edges.len(),
-            chain.len() - 1,
-            "{} path edge count: {path:#?}",
-            case.label
-        );
-        for (edge, pair) in path.edges.iter().zip(chain.windows(2)) {
-            assert_eq!(edge.caller_id, pair[0]);
-            assert_eq!(edge.callee_id, pair[1]);
-            assert_eq!(edge.relation, CallRelationKind::Function);
-        }
+        assert_forwarded_case(&db, target, case)?;
     }
 
     Ok(())
@@ -673,7 +351,7 @@ fn fixture_context_resolves_forwarded_callable_trait_object_parameters() -> Resu
 #[test]
 fn fixture_context_preserves_forwarded_conflicting_boxed_dyn_fn_candidates() -> Result<(), DbError>
 {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let expected = dynamic_candidates(&db)?;
     let leaf = function_id_by_name(&db, "call_forwarded_conflicting_boxed_dyn_fn_leaf")?;
     let wrapper = function_id_by_name(&db, "call_forwarded_conflicting_boxed_dyn_fn_wrapper")?;
@@ -737,197 +415,49 @@ fn fixture_context_preserves_forwarded_conflicting_boxed_dyn_fn_candidates() -> 
 
 #[test]
 fn fixture_context_resolves_one_hop_forwarded_named_field_parameter() -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let leaf = function_id_by_name(&db, "call_forwarded_named_field_leaf")?;
-    let wrapper = function_id_by_name(&db, "call_forwarded_named_field_wrapper")?;
-    let caller = function_id_by_name(&db, "call_forwarded_named_field_param_with_local_target")?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
-
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs EOF:
-    // `call_forwarded_named_field_leaf(holder) { (holder.callback)() }` is
-    // called only by a private wrapper that forwards its own `holder`
-    // parameter. The wrapper's complete caller set constructs
-    // `CallbackHolder { callback: local_target }`, so the holder-field proof is
-    // exact after one forwarding hop.
-    let context = db.call_context_for_owner(leaf)?;
-    assert_eq!(
-        context.len(),
-        1,
-        "forwarded field leaf context rows: {context:#?}"
-    );
-    let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["holder", "callback"]);
-    assert_eq!(row.site.owner_id, leaf);
-    assert_eq!(row.site.arg_count, Some(0));
-    assert_eq!(row.site.generic_arg_count, None);
-    assert_resolved_target(
-        row,
+    assert_forwarded_case(
+        &db,
         target,
-        CallRelationKind::DynamicFunction,
-        CallSiteKind::Dynamic,
-        CallTargetKind::Function,
-    );
-
-    let wrapper_context = db.call_context_for_owner(wrapper)?;
-    let leaf_call = row_by_path(&wrapper_context, &["call_forwarded_named_field_leaf"]);
-    assert_eq!(leaf_call.site.arg_count, Some(1));
-    assert_resolved_target(
-        leaf_call,
-        leaf,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
-
-    let caller_context = db.call_context_for_owner(caller)?;
-    let wrapper_call = row_by_path(&caller_context, &["call_forwarded_named_field_wrapper"]);
-    assert_eq!(wrapper_call.site.arg_count, Some(1));
-    assert_resolved_target(
-        wrapper_call,
-        wrapper,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
-
-    let paths = db.call_paths_between(
-        caller,
-        target,
-        CallPathOptions {
-            max_depth: 3,
-            max_paths: 8,
+        ForwardedCase {
+            label: "one-hop forwarded named field",
+            leaf: "call_forwarded_named_field_leaf",
+            intermediates: &["call_forwarded_named_field_wrapper"],
+            caller: "call_forwarded_named_field_param_with_local_target",
+            callee_path: &["holder", "callback"],
+            site_kind: CallSiteKind::Dynamic,
+            relation: CallRelationKind::DynamicFunction,
         },
-    )?;
-    let path = paths
-        .iter()
-        .find(|path| path.start_id == caller && path.end_id == target && path.depth == 3)
-        .unwrap_or_else(|| {
-            panic!(
-                "forwarded field caller should traverse caller -> wrapper -> leaf -> target: {paths:#?}"
-            )
-        });
-    assert_eq!(path.edges[0].caller_id, caller);
-    assert_eq!(path.edges[0].callee_id, wrapper);
-    assert_eq!(path.edges[0].relation, CallRelationKind::Function);
-    assert_eq!(path.edges[1].caller_id, wrapper);
-    assert_eq!(path.edges[1].callee_id, leaf);
-    assert_eq!(path.edges[1].relation, CallRelationKind::Function);
-    assert_eq!(path.edges[2].caller_id, leaf);
-    assert_eq!(path.edges[2].callee_id, target);
-    assert_eq!(path.edges[2].relation, CallRelationKind::DynamicFunction);
-
-    Ok(())
+    )
 }
 
 #[test]
 fn fixture_context_resolves_two_hop_forwarded_named_field_parameter() -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let leaf = function_id_by_name(&db, "call_two_hop_forwarded_named_field_leaf")?;
-    let middle = function_id_by_name(&db, "call_two_hop_forwarded_named_field_middle")?;
-    let wrapper = function_id_by_name(&db, "call_two_hop_forwarded_named_field_wrapper")?;
-    let caller = function_id_by_name(
-        &db,
-        "call_two_hop_forwarded_named_field_param_with_local_target",
-    )?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
-
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs EOF:
-    // `call_two_hop_forwarded_named_field_leaf(holder) { (holder.callback)() }`
-    // receives `holder` through two private forwarding helpers. The complete
-    // caller set still constructs `CallbackHolder { callback: local_target }`,
-    // so the bounded field-forwarding proof can emit one dynamic edge at the
-    // leaf and ordinary function edges through the helper chain.
-    let context = db.call_context_for_owner(leaf)?;
-    assert_eq!(
-        context.len(),
-        1,
-        "two-hop forwarded field leaf context rows: {context:#?}"
-    );
-    let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["holder", "callback"]);
-    assert_eq!(row.site.owner_id, leaf);
-    assert_eq!(row.site.arg_count, Some(0));
-    assert_resolved_target(
-        row,
+    assert_forwarded_case(
+        &db,
         target,
-        CallRelationKind::DynamicFunction,
-        CallSiteKind::Dynamic,
-        CallTargetKind::Function,
-    );
-
-    let middle_context = db.call_context_for_owner(middle)?;
-    let leaf_call = row_by_path(
-        &middle_context,
-        &["call_two_hop_forwarded_named_field_leaf"],
-    );
-    assert_resolved_target(
-        leaf_call,
-        leaf,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
-
-    let wrapper_context = db.call_context_for_owner(wrapper)?;
-    let middle_call = row_by_path(
-        &wrapper_context,
-        &["call_two_hop_forwarded_named_field_middle"],
-    );
-    assert_resolved_target(
-        middle_call,
-        middle,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
-
-    let caller_context = db.call_context_for_owner(caller)?;
-    let wrapper_call = row_by_path(
-        &caller_context,
-        &["call_two_hop_forwarded_named_field_wrapper"],
-    );
-    assert_resolved_target(
-        wrapper_call,
-        wrapper,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
-
-    let paths = db.call_paths_between(
-        caller,
-        target,
-        CallPathOptions {
-            max_depth: 4,
-            max_paths: 8,
+        ForwardedCase {
+            label: "two-hop forwarded named field",
+            leaf: "call_two_hop_forwarded_named_field_leaf",
+            intermediates: &[
+                "call_two_hop_forwarded_named_field_middle",
+                "call_two_hop_forwarded_named_field_wrapper",
+            ],
+            caller: "call_two_hop_forwarded_named_field_param_with_local_target",
+            callee_path: &["holder", "callback"],
+            site_kind: CallSiteKind::Dynamic,
+            relation: CallRelationKind::DynamicFunction,
         },
-    )?;
-    let path = paths
-        .iter()
-        .find(|path| path.start_id == caller && path.end_id == target && path.depth == 4)
-        .unwrap_or_else(|| {
-            panic!(
-                "two-hop forwarded field caller should traverse caller -> wrapper -> middle -> leaf -> target: {paths:#?}"
-            )
-        });
-    assert_eq!(path.edges[0].caller_id, caller);
-    assert_eq!(path.edges[0].callee_id, wrapper);
-    assert_eq!(path.edges[0].relation, CallRelationKind::Function);
-    assert_eq!(path.edges[1].caller_id, wrapper);
-    assert_eq!(path.edges[1].callee_id, middle);
-    assert_eq!(path.edges[1].relation, CallRelationKind::Function);
-    assert_eq!(path.edges[2].caller_id, middle);
-    assert_eq!(path.edges[2].callee_id, leaf);
-    assert_eq!(path.edges[2].relation, CallRelationKind::Function);
-    assert_eq!(path.edges[3].caller_id, leaf);
-    assert_eq!(path.edges[3].callee_id, target);
-    assert_eq!(path.edges[3].relation, CallRelationKind::DynamicFunction);
-
-    Ok(())
+    )
 }
 
 #[test]
 fn fixture_context_preserves_forwarded_conflicting_function_pointer_candidates()
 -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let expected = dynamic_candidates(&db)?;
     let leaf = function_id_by_name(&db, "call_forwarded_conflicting_function_pointer_leaf")?;
     let wrapper = function_id_by_name(&db, "call_forwarded_conflicting_function_pointer_wrapper")?;
@@ -970,7 +500,7 @@ fn fixture_context_preserves_forwarded_conflicting_function_pointer_candidates()
 #[test]
 fn fixture_context_preserves_two_hop_forwarded_conflicting_function_pointer_candidates()
 -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let expected = dynamic_candidates(&db)?;
     let leaf = function_id_by_name(
         &db,
@@ -1054,109 +584,52 @@ fn fixture_context_preserves_two_hop_forwarded_conflicting_function_pointer_cand
 #[test]
 fn fixture_context_resolves_single_caller_dynamic_function_pointer_parameter_forms()
 -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
 
-    struct Case {
-        owner: &'static str,
-        caller: &'static str,
-        caller_arg_count: u32,
-        source: &'static str,
-    }
-
-    let cases = [
-        Case {
+    for case in [
+        CallableParamCase {
             owner: "call_single_parenthesized_function_pointer_param",
-            caller: "call_single_parenthesized_function_pointer_param_with_local_target",
+            callers: &["call_single_parenthesized_function_pointer_param_with_local_target"],
             caller_arg_count: 1,
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1522-1527 `(f)()`",
+            callee_path: &["f"],
+            site_kind: CallSiteKind::Dynamic,
+            relation: CallRelationKind::DynamicFunction,
+            proof_note: "the only local caller supplies local_target",
         },
-        Case {
+        CallableParamCase {
             owner: "call_single_if_function_pointer_param_branch",
-            caller: "call_single_if_function_pointer_param_branch_with_local_target",
+            callers: &["call_single_if_function_pointer_param_branch_with_local_target"],
             caller_arg_count: 2,
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1654-1659 `(if flag { f } else { f })()`",
+            callee_path: &["f"],
+            site_kind: CallSiteKind::Dynamic,
+            relation: CallRelationKind::DynamicFunction,
+            proof_note: "the only local caller supplies local_target",
         },
-        Case {
+        CallableParamCase {
             owner: "call_single_match_function_pointer_param_arm",
-            caller: "call_single_match_function_pointer_param_arm_with_local_target",
+            callers: &["call_single_match_function_pointer_param_arm_with_local_target"],
             caller_arg_count: 2,
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1662-1670 `match flag { true => f, false => f }`",
+            callee_path: &["f"],
+            site_kind: CallSiteKind::Dynamic,
+            relation: CallRelationKind::DynamicFunction,
+            proof_note: "the only local caller supplies local_target",
         },
-        Case {
+        CallableParamCase {
             owner: "call_single_function_pointer_param_cast",
-            caller: "call_single_function_pointer_param_cast_with_local_target",
+            callers: &["call_single_function_pointer_param_cast_with_local_target"],
             caller_arg_count: 1,
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1564-1569 `(f as fn() -> i32)()`",
+            callee_path: &["f"],
+            site_kind: CallSiteKind::Dynamic,
+            relation: CallRelationKind::DynamicFunction,
+            proof_note: "the only local caller supplies local_target",
         },
-    ];
-
-    for case in cases {
-        let owner = function_id_by_name(&db, case.owner)?;
-        let caller = function_id_by_name(&db, case.caller)?;
-        let helper = function_id_by_name(&db, case.owner)?;
-
-        // These private helpers have one local caller in this fixture, and
-        // that caller passes `local_target`. The callee syntax is dynamic, but
-        // the complete private caller proof is still exact.
-        let context = db.call_context_for_owner(owner)?;
-        assert_eq!(
-            context.len(),
-            1,
-            "{} owner context rows from {}: {context:#?}",
-            case.owner,
-            case.source
-        );
-        let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["f"]);
-        assert_eq!(row.site.owner_id, owner);
-        assert_eq!(row.site.arg_count, Some(0));
-        assert_eq!(row.site.generic_arg_count, None);
-        assert_resolved_target(
-            row,
-            target,
-            CallRelationKind::DynamicFunction,
-            CallSiteKind::Dynamic,
-            CallTargetKind::Function,
-        );
-
-        let callers = db.callers_for_target(target)?;
-        let caller_row = caller_by_owner_kind_path(&callers, owner, CallSiteKind::Dynamic, &["f"]);
-        assert_eq!(caller_row.status.status, CallStatusKind::Resolved);
-        assert_eq!(
-            caller_row.status.resolution,
-            Some(CallResolutionKind::LocalExact)
-        );
-        assert_eq!(caller_row.target.target_id, target);
-        assert_eq!(
-            caller_row.target.relation,
-            CallRelationKind::DynamicFunction
-        );
-
-        let paths = db.call_paths_from_owner(
-            owner,
-            CallPathOptions {
-                max_depth: 1,
-                max_paths: 8,
-            },
-        )?;
-        let path = paths
-            .iter()
-            .find(|path| path.start_id == owner && path.end_id == target && path.depth == 1)
-            .unwrap_or_else(|| panic!("{} should have a one-hop path to local_target", case.owner));
-        assert_eq!(path.edges[0].caller_id, owner);
-        assert_eq!(path.edges[0].callee_id, target);
-        assert_eq!(path.edges[0].relation, CallRelationKind::DynamicFunction);
-
-        let caller_context = db.call_context_for_owner(caller)?;
-        let helper_call = row_by_path(&caller_context, &[case.owner]);
-        assert_eq!(helper_call.site.arg_count, Some(case.caller_arg_count));
-        assert_resolved_target(
-            helper_call,
-            helper,
-            CallRelationKind::Function,
-            CallSiteKind::Path,
-            CallTargetKind::Function,
-        );
+    ] {
+        assert_callable_case(&db, target, case)?;
     }
 
     Ok(())
@@ -1165,102 +638,34 @@ fn fixture_context_resolves_single_caller_dynamic_function_pointer_parameter_for
 #[test]
 fn fixture_context_resolves_single_caller_aliased_function_pointer_parameters()
 -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
 
-    struct Case {
-        owner: &'static str,
-        caller: &'static str,
-        source: &'static str,
-        site_kind: CallSiteKind,
-        relation: CallRelationKind,
-        target_kind: CallTargetKind,
-    }
-
-    let cases = [
-        Case {
+    for case in [
+        CallableParamCase {
             owner: "call_single_aliased_function_pointer_param",
-            caller: "call_single_aliased_function_pointer_param_with_local_target",
+            callers: &["call_single_aliased_function_pointer_param_with_local_target"],
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1685-1687 `let g = f; g()`",
+            callee_path: &["g"],
             site_kind: CallSiteKind::Path,
             relation: CallRelationKind::Function,
-            target_kind: CallTargetKind::Function,
+            caller_arg_count: 1,
+            proof_note: "alias proof traces g back to the caller's local_target argument",
         },
-        Case {
+        CallableParamCase {
             owner: "call_single_parenthesized_aliased_function_pointer_param",
-            caller: "call_single_parenthesized_aliased_function_pointer_param_with_local_target",
+            callers: &[
+                "call_single_parenthesized_aliased_function_pointer_param_with_local_target",
+            ],
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1694-1696 `let g = f; (g)()`",
+            callee_path: &["g"],
             site_kind: CallSiteKind::Dynamic,
             relation: CallRelationKind::DynamicFunction,
-            target_kind: CallTargetKind::Function,
+            caller_arg_count: 1,
+            proof_note: "alias proof traces g back to the caller's local_target argument",
         },
-    ];
-
-    for case in cases {
-        let owner = function_id_by_name(&db, case.owner)?;
-        let caller = function_id_by_name(&db, case.caller)?;
-        let helper = function_id_by_name(&db, case.owner)?;
-
-        // These private helpers alias the callable parameter with `let g = f`
-        // before calling through `g`. The persisted call row keeps the
-        // observed callee path as `g`, while resolver proof follows the alias
-        // back to the single caller's `local_target` argument.
-        let context = db.call_context_for_owner(owner)?;
-        assert_eq!(
-            context.len(),
-            1,
-            "{} owner context rows from {}: {context:#?}",
-            case.owner,
-            case.source
-        );
-        let row = row_by_kind_path(&context, case.site_kind, &["g"]);
-        assert_eq!(row.site.owner_id, owner);
-        assert_eq!(row.site.arg_count, Some(0));
-        assert_eq!(
-            row.site.generic_arg_count,
-            match case.site_kind {
-                CallSiteKind::Path => Some(0),
-                CallSiteKind::Dynamic => None,
-                _ => unreachable!("aliased callable case should be path or dynamic"),
-            }
-        );
-        assert_resolved_target(row, target, case.relation, case.site_kind, case.target_kind);
-
-        let callers = db.callers_for_target(target)?;
-        let caller_row = caller_by_owner_kind_path(&callers, owner, case.site_kind, &["g"]);
-        assert_eq!(caller_row.status.status, CallStatusKind::Resolved);
-        assert_eq!(
-            caller_row.status.resolution,
-            Some(CallResolutionKind::LocalExact)
-        );
-        assert_eq!(caller_row.target.target_id, target);
-        assert_eq!(caller_row.target.relation, case.relation);
-
-        let paths = db.call_paths_from_owner(
-            owner,
-            CallPathOptions {
-                max_depth: 1,
-                max_paths: 8,
-            },
-        )?;
-        let path = paths
-            .iter()
-            .find(|path| path.start_id == owner && path.end_id == target && path.depth == 1)
-            .unwrap_or_else(|| panic!("{} should have a one-hop path to local_target", case.owner));
-        assert_eq!(path.edges[0].caller_id, owner);
-        assert_eq!(path.edges[0].callee_id, target);
-        assert_eq!(path.edges[0].relation, case.relation);
-
-        let caller_context = db.call_context_for_owner(caller)?;
-        let helper_call = row_by_path(&caller_context, &[case.owner]);
-        assert_eq!(helper_call.site.arg_count, Some(1));
-        assert_resolved_target(
-            helper_call,
-            helper,
-            CallRelationKind::Function,
-            CallSiteKind::Path,
-            CallTargetKind::Function,
-        );
+    ] {
+        assert_callable_case(&db, target, case)?;
     }
 
     Ok(())
@@ -1268,7 +673,7 @@ fn fixture_context_resolves_single_caller_aliased_function_pointer_parameters()
 
 #[test]
 fn fixture_context_preserves_forwarded_conflicting_named_field_candidates() -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let expected = dynamic_candidates(&db)?;
     let leaf = function_id_by_name(&db, "call_forwarded_conflicting_named_field_leaf")?;
     let wrapper = function_id_by_name(&db, "call_forwarded_conflicting_named_field_wrapper")?;
@@ -1333,7 +738,7 @@ fn fixture_context_preserves_forwarded_conflicting_named_field_candidates() -> R
 #[test]
 fn fixture_context_preserves_two_hop_forwarded_conflicting_named_field_candidates()
 -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let expected = dynamic_candidates(&db)?;
     let leaf = function_id_by_name(&db, "call_two_hop_forwarded_conflicting_named_field_leaf")?;
     let middle = function_id_by_name(&db, "call_two_hop_forwarded_conflicting_named_field_middle")?;
@@ -1416,118 +821,65 @@ fn fixture_context_preserves_two_hop_forwarded_conflicting_named_field_candidate
 #[test]
 fn fixture_context_resolves_single_caller_indexed_field_function_parameters() -> Result<(), DbError>
 {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
 
-    struct Case {
-        owner: &'static str,
-        callers: &'static [&'static str],
-        path: &'static [&'static str],
-    }
-
-    let cases = [
-        Case {
+    for case in [
+        CallableParamCase {
             owner: "call_single_named_field_function_param",
             callers: &["call_single_named_field_function_param_with_local_target"],
-            path: &["holder", "callback"],
+            source: "fixture_call_graph: (holder.callback)()",
+            callee_path: &["holder", "callback"],
+            site_kind: CallSiteKind::Dynamic,
+            relation: CallRelationKind::DynamicFunction,
+            caller_arg_count: 1,
+            proof_note: "the caller supplies local_target in the named field",
         },
-        Case {
+        CallableParamCase {
             owner: "call_multi_named_field_function_param",
             callers: &[
                 "call_multi_named_field_function_param_with_local_target_a",
                 "call_multi_named_field_function_param_with_local_target_b",
             ],
-            path: &["holder", "callback"],
+            source: "fixture_call_graph: multi-caller (holder.callback)()",
+            callee_path: &["holder", "callback"],
+            site_kind: CallSiteKind::Dynamic,
+            relation: CallRelationKind::DynamicFunction,
+            caller_arg_count: 1,
+            proof_note: "both complete callers supply local_target in the named field",
         },
-        Case {
+        CallableParamCase {
             owner: "call_single_indexed_function_pointer_param",
             callers: &["call_single_indexed_function_pointer_param_with_local_target"],
-            path: &["funcs", "0"],
+            source: "fixture_call_graph: funcs[0]()",
+            callee_path: &["funcs", "0"],
+            site_kind: CallSiteKind::Dynamic,
+            relation: CallRelationKind::DynamicFunction,
+            caller_arg_count: 1,
+            proof_note: "the caller supplies local_target in the array slot",
         },
-        Case {
+        CallableParamCase {
             owner: "call_single_indexed_field_function_param",
             callers: &["call_single_indexed_field_function_param_with_local_target"],
-            path: &["holder", "callbacks", "0"],
+            source: "fixture_call_graph: holder.callbacks[0]()",
+            callee_path: &["holder", "callbacks", "0"],
+            site_kind: CallSiteKind::Dynamic,
+            relation: CallRelationKind::DynamicFunction,
+            caller_arg_count: 1,
+            proof_note: "the caller supplies local_target in the indexed field",
         },
-        Case {
+        CallableParamCase {
             owner: "call_single_indexed_tuple_field_function_param",
             callers: &["call_single_indexed_tuple_field_function_param_with_local_target"],
-            path: &["holder", "0", "0"],
+            source: "fixture_call_graph: holder.0[0]()",
+            callee_path: &["holder", "0", "0"],
+            site_kind: CallSiteKind::Dynamic,
+            relation: CallRelationKind::DynamicFunction,
+            caller_arg_count: 1,
+            proof_note: "the caller supplies local_target in the indexed tuple field",
         },
-    ];
-
-    for case in cases {
-        let owner = function_id_by_name(&db, case.owner)?;
-        let helper = function_id_by_name(&db, case.owner)?;
-
-        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1555,
-        // 1598-1606, 1847-1877, and the final direct array-parameter helper:
-        // These private helpers call through `(holder.callback)()`,
-        // `holder.callbacks[0]()`, `holder.0[0]()`, and `funcs[0]()`. Each
-        // helper has a complete local caller set that supplies `local_target` in the
-        // relevant holder field or array slot, so the parameter call is an
-        // exact DynamicFunction edge instead of an opaque dynamic blocker.
-        let context = db.call_context_for_owner(owner)?;
-        assert_eq!(
-            context.len(),
-            1,
-            "{} owner context rows: {context:#?}",
-            case.owner
-        );
-        let row = row_by_kind_path(&context, CallSiteKind::Dynamic, case.path);
-        assert_eq!(row.site.owner_id, owner);
-        assert_eq!(row.site.arg_count, Some(0));
-        assert_eq!(row.site.generic_arg_count, None);
-        assert_resolved_target(
-            row,
-            target,
-            CallRelationKind::DynamicFunction,
-            CallSiteKind::Dynamic,
-            CallTargetKind::Function,
-        );
-
-        let callers = db.callers_for_target(target)?;
-        let caller_row =
-            caller_by_owner_kind_path(&callers, owner, CallSiteKind::Dynamic, case.path);
-        assert_eq!(caller_row.status.status, CallStatusKind::Resolved);
-        assert_eq!(
-            caller_row.status.resolution,
-            Some(CallResolutionKind::LocalExact)
-        );
-        assert_eq!(caller_row.target.target_id, target);
-        assert_eq!(
-            caller_row.target.relation,
-            CallRelationKind::DynamicFunction
-        );
-
-        let paths = db.call_paths_from_owner(
-            owner,
-            CallPathOptions {
-                max_depth: 1,
-                max_paths: 8,
-            },
-        )?;
-        let path = paths
-            .iter()
-            .find(|path| path.start_id == owner && path.end_id == target && path.depth == 1)
-            .unwrap_or_else(|| panic!("{} should have a one-hop path to local_target", case.owner));
-        assert_eq!(path.edges[0].caller_id, owner);
-        assert_eq!(path.edges[0].callee_id, target);
-        assert_eq!(path.edges[0].relation, CallRelationKind::DynamicFunction);
-
-        for caller_name in case.callers {
-            let caller = function_id_by_name(&db, caller_name)?;
-            let caller_context = db.call_context_for_owner(caller)?;
-            let helper_call = row_by_path(&caller_context, &[case.owner]);
-            assert_eq!(helper_call.site.arg_count, Some(1));
-            assert_resolved_target(
-                helper_call,
-                helper,
-                CallRelationKind::Function,
-                CallSiteKind::Path,
-                CallTargetKind::Function,
-            );
-        }
+    ] {
+        assert_callable_case(&db, target, case)?;
     }
 
     Ok(())
@@ -1536,179 +888,55 @@ fn fixture_context_resolves_single_caller_indexed_field_function_parameters() ->
 #[test]
 fn fixture_context_resolves_same_target_multi_caller_generic_fn_once_parameter()
 -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let owner = function_id_by_name(&db, "call_multi_generic_fn_once_param")?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
-    let helper = function_id_by_name(&db, "call_multi_generic_fn_once_param")?;
-
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:
-    // `call_multi_generic_fn_once_param(generic_f) { generic_f() }` has two
-    // local callers. Both pass `local_target`, so the complete private caller
-    // proof still resolves to one exact target without broad FnOnce dispatch.
-    let context = db.call_context_for_owner(owner)?;
-    assert_eq!(
-        context.len(),
-        1,
-        "multi-caller generic FnOnce context rows: {context:#?}"
-    );
-    let row = row_by_path(&context, &["generic_f"]);
-    assert_eq!(row.site.owner_id, owner);
-    assert_eq!(row.site.arg_count, Some(0));
-    assert_eq!(row.site.generic_arg_count, Some(0));
-    assert_resolved_target(
-        row,
+    assert_callable_case(
+        &db,
         target,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
-
-    let callers = db.callers_for_target(target)?;
-    let caller_row = caller_by_owner_kind_path(&callers, owner, CallSiteKind::Path, &["generic_f"]);
-    assert_eq!(caller_row.status.status, CallStatusKind::Resolved);
-    assert_eq!(
-        caller_row.status.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(caller_row.target.target_id, target);
-    assert_eq!(caller_row.target.relation, CallRelationKind::Function);
-
-    let paths = db.call_paths_from_owner(
-        owner,
-        CallPathOptions {
-            max_depth: 1,
-            max_paths: 8,
+        CallableParamCase {
+            owner: "call_multi_generic_fn_once_param",
+            callers: &[
+                "call_multi_generic_fn_once_param_with_local_target_a",
+                "call_multi_generic_fn_once_param_with_local_target_b",
+            ],
+            source: "fixture_call_graph: call_multi_generic_fn_once_param(generic_f)",
+            callee_path: &["generic_f"],
+            site_kind: CallSiteKind::Path,
+            relation: CallRelationKind::Function,
+            caller_arg_count: 1,
+            proof_note: "both complete private callers supply local_target",
         },
-    )?;
-    let path = paths
-        .iter()
-        .find(|path| path.start_id == owner && path.end_id == target && path.depth == 1)
-        .expect("multi-caller generic FnOnce owner should have a one-hop path to local_target");
-    assert_eq!(path.edges[0].caller_id, owner);
-    assert_eq!(path.edges[0].callee_id, target);
-    assert_eq!(path.edges[0].relation, CallRelationKind::Function);
-
-    for caller_name in [
-        "call_multi_generic_fn_once_param_with_local_target_a",
-        "call_multi_generic_fn_once_param_with_local_target_b",
-    ] {
-        let caller = function_id_by_name(&db, caller_name)?;
-        let caller_context = db.call_context_for_owner(caller)?;
-        let helper_call = row_by_path(&caller_context, &["call_multi_generic_fn_once_param"]);
-        assert_eq!(helper_call.site.arg_count, Some(1));
-        assert_resolved_target(
-            helper_call,
-            helper,
-            CallRelationKind::Function,
-            CallSiteKind::Path,
-            CallTargetKind::Function,
-        );
-    }
-
-    Ok(())
+    )
 }
 
 #[test]
 fn fixture_context_resolves_single_caller_generic_fn_once_parameter() -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
 
-    struct Case {
-        owner: &'static str,
-        caller: &'static str,
-        source: &'static str,
-        site_kind: CallSiteKind,
-        relation: CallRelationKind,
-        target_kind: CallTargetKind,
-    }
-
-    let cases = [
-        Case {
+    for case in [
+        CallableParamCase {
             owner: "call_single_generic_fn_once_param",
-            caller: "call_single_generic_fn_once_param_with_local_target",
+            callers: &["call_single_generic_fn_once_param_with_local_target"],
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1519-1524 `generic_f()`",
+            callee_path: &["generic_f"],
             site_kind: CallSiteKind::Path,
             relation: CallRelationKind::Function,
-            target_kind: CallTargetKind::Function,
+            caller_arg_count: 1,
+            proof_note: "the only private caller supplies local_target",
         },
-        Case {
+        CallableParamCase {
             owner: "call_single_parenthesized_generic_fn_once_param",
-            caller: "call_single_parenthesized_generic_fn_once_param_with_local_target",
+            callers: &["call_single_parenthesized_generic_fn_once_param_with_local_target"],
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1729-1734 `(generic_f)()`",
+            callee_path: &["generic_f"],
             site_kind: CallSiteKind::Dynamic,
             relation: CallRelationKind::DynamicFunction,
-            target_kind: CallTargetKind::Function,
+            caller_arg_count: 1,
+            proof_note: "the only private caller supplies local_target",
         },
-    ];
-
-    for case in cases {
-        let owner = function_id_by_name(&db, case.owner)?;
-        let caller = function_id_by_name(&db, case.caller)?;
-        let helper = function_id_by_name(&db, case.owner)?;
-
-        // These private generic helpers have one local caller in this fixture.
-        // Each caller passes `local_target`, so the parameter call is admitted
-        // as exact value-flow proof, while public or multi-target callable-trait
-        // dispatch stays targetless.
-        let context = db.call_context_for_owner(owner)?;
-        assert_eq!(
-            context.len(),
-            1,
-            "{} generic FnOnce parameter context rows from {}: {context:#?}",
-            case.owner,
-            case.source
-        );
-        let row = row_by_kind_path(&context, case.site_kind, &["generic_f"]);
-        assert_eq!(row.site.owner_id, owner);
-        assert_eq!(row.site.arg_count, Some(0));
-        assert_eq!(
-            row.site.generic_arg_count,
-            match case.site_kind {
-                CallSiteKind::Path => Some(0),
-                CallSiteKind::Dynamic => None,
-                _ => unreachable!("generic callable case should be path or dynamic"),
-            }
-        );
-        assert_resolved_target(row, target, case.relation, case.site_kind, case.target_kind);
-
-        let callers = db.callers_for_target(target)?;
-        let caller_row = caller_by_owner_kind_path(&callers, owner, case.site_kind, &["generic_f"]);
-        assert_eq!(caller_row.status.status, CallStatusKind::Resolved);
-        assert_eq!(
-            caller_row.status.resolution,
-            Some(CallResolutionKind::LocalExact)
-        );
-        assert_eq!(caller_row.target.target_id, target);
-        assert_eq!(caller_row.target.relation, case.relation);
-
-        let paths = db.call_paths_from_owner(
-            owner,
-            CallPathOptions {
-                max_depth: 1,
-                max_paths: 8,
-            },
-        )?;
-        let path = paths
-            .iter()
-            .find(|path| path.start_id == owner && path.end_id == target && path.depth == 1)
-            .unwrap_or_else(|| panic!("{} should have a one-hop path to local_target", case.owner));
-        assert_eq!(path.edges[0].caller_id, owner);
-        assert_eq!(path.edges[0].callee_id, target);
-        assert_eq!(path.edges[0].relation, case.relation);
-
-        // The caller still has a normal direct call edge to the private helper;
-        // single-caller argument proof is additional resolver evidence, not a
-        // replacement for the caller's own edge.
-        let caller_context = db.call_context_for_owner(caller)?;
-        let helper_call = row_by_path(&caller_context, &[case.owner]);
-        assert_eq!(helper_call.site.arg_count, Some(1));
-        assert_resolved_target(
-            helper_call,
-            helper,
-            CallRelationKind::Function,
-            CallSiteKind::Path,
-            CallTargetKind::Function,
-        );
+    ] {
+        assert_callable_case(&db, target, case)?;
     }
 
     Ok(())
@@ -1717,28 +945,28 @@ fn fixture_context_resolves_single_caller_generic_fn_once_parameter() -> Result<
 #[test]
 fn fixture_context_resolves_single_caller_referenced_callable_trait_object_parameter()
 -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
 
     let cases = [
         CallableParamCase {
             owner: "call_single_referenced_dyn_fn_param",
-            caller: "call_single_referenced_dyn_fn_param_with_local_target",
+            callers: &["call_single_referenced_dyn_fn_param_with_local_target"],
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:2148-2153 `f()` with `&dyn Fn` parameter",
             callee_path: &["f"],
             site_kind: CallSiteKind::Path,
             relation: CallRelationKind::Function,
-            target_kind: CallTargetKind::Function,
+            caller_arg_count: 1,
             proof_note: "private `&dyn Fn` helper whose only local caller passes `&local_target`",
         },
         CallableParamCase {
             owner: "call_single_parenthesized_referenced_dyn_fn_param",
-            caller: "call_single_parenthesized_referenced_dyn_fn_param_with_local_target",
+            callers: &["call_single_parenthesized_referenced_dyn_fn_param_with_local_target"],
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:2156-2161 `(f)()` with `&dyn Fn` parameter",
             callee_path: &["f"],
             site_kind: CallSiteKind::Dynamic,
             relation: CallRelationKind::DynamicFunction,
-            target_kind: CallTargetKind::Function,
+            caller_arg_count: 1,
             proof_note: "private `&dyn Fn` helper whose only local caller passes `&local_target`",
         },
     ];
@@ -1753,28 +981,28 @@ fn fixture_context_resolves_single_caller_referenced_callable_trait_object_param
 #[test]
 fn fixture_context_resolves_single_caller_boxed_callable_trait_object_parameter()
 -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let db = shared_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
 
     let cases = [
         CallableParamCase {
             owner: "call_single_boxed_dyn_fn_param",
-            caller: "call_single_boxed_dyn_fn_param_with_local_target",
+            callers: &["call_single_boxed_dyn_fn_param_with_local_target"],
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs EOF `f()` with `Box<dyn Fn>` parameter",
             callee_path: &["f"],
             site_kind: CallSiteKind::Path,
             relation: CallRelationKind::Function,
-            target_kind: CallTargetKind::Function,
+            caller_arg_count: 1,
             proof_note: "private `Box<dyn Fn>` helper whose only local caller passes `Box::new(local_target)`",
         },
         CallableParamCase {
             owner: "call_single_parenthesized_boxed_dyn_fn_param",
-            caller: "call_single_parenthesized_boxed_dyn_fn_param_with_local_target",
+            callers: &["call_single_parenthesized_boxed_dyn_fn_param_with_local_target"],
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs EOF `(f)()` with `Box<dyn Fn>` parameter",
             callee_path: &["f"],
             site_kind: CallSiteKind::Dynamic,
             relation: CallRelationKind::DynamicFunction,
-            target_kind: CallTargetKind::Function,
+            caller_arg_count: 1,
             proof_note: "private `Box<dyn Fn>` helper whose only local caller passes `Box::new(local_target)`",
         },
     ];
@@ -1786,14 +1014,123 @@ fn fixture_context_resolves_single_caller_boxed_callable_trait_object_parameter(
     Ok(())
 }
 
+struct ForwardedCase {
+    label: &'static str,
+    leaf: &'static str,
+    intermediates: &'static [&'static str],
+    caller: &'static str,
+    callee_path: &'static [&'static str],
+    site_kind: CallSiteKind,
+    relation: CallRelationKind,
+}
+
+fn assert_forwarded_case(db: &Database, target: Uuid, case: ForwardedCase) -> Result<(), DbError> {
+    let leaf = function_id_by_name(db, case.leaf)?;
+    let caller = function_id_by_name(db, case.caller)?;
+    let mut names = vec![case.caller];
+    names.extend(case.intermediates.iter().rev().copied());
+    names.push(case.leaf);
+    let mut chain = names
+        .iter()
+        .map(|name| function_id_by_name(db, name))
+        .collect::<Result<Vec<_>, _>>()?;
+    chain.push(target);
+
+    let context = db.call_context_for_owner(leaf)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "{} leaf context rows: {context:#?}",
+        case.label
+    );
+    let row = row_by_kind_path(&context, case.site_kind, case.callee_path);
+    assert_eq!(row.site.owner_id, leaf, "{} leaf owner", case.label);
+    assert_eq!(row.site.arg_count, Some(0), "{} leaf arguments", case.label);
+    assert_eq!(
+        row.site.generic_arg_count,
+        match case.site_kind {
+            CallSiteKind::Path => Some(0),
+            CallSiteKind::Dynamic => None,
+            _ => unreachable!("forwarded callable case should be path or dynamic"),
+        },
+        "{} leaf generic arguments",
+        case.label
+    );
+    assert_resolved_target(
+        row,
+        target,
+        case.relation,
+        case.site_kind,
+        CallTargetKind::Function,
+    );
+
+    for (pair, ids) in names.windows(2).zip(chain.windows(2)) {
+        let context = db.call_context_for_owner(ids[0])?;
+        let row = row_by_path(&context, &[pair[1]]);
+        assert_eq!(
+            row.site.arg_count,
+            Some(1),
+            "{} forwarding edge",
+            case.label
+        );
+        assert_resolved_target(
+            row,
+            ids[1],
+            CallRelationKind::Function,
+            CallSiteKind::Path,
+            CallTargetKind::Function,
+        );
+    }
+
+    let expected_depth = (chain.len() - 1) as u32;
+    let paths = db.call_paths_between(
+        caller,
+        target,
+        CallPathOptions {
+            max_depth: expected_depth,
+            max_paths: 8,
+        },
+    )?;
+    let path = paths
+        .iter()
+        .find(|path| {
+            path.start_id == caller && path.end_id == target && path.depth == expected_depth
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{} should traverse its complete forwarding chain: {paths:#?}",
+                case.label
+            )
+        });
+    assert_eq!(
+        path.edges.len(),
+        chain.len() - 1,
+        "{} path edge count: {path:#?}",
+        case.label
+    );
+    let edge_count = path.edges.len();
+    for (index, (edge, ids)) in path.edges.iter().zip(chain.windows(2)).enumerate() {
+        assert_eq!(edge.caller_id, ids[0], "{} path caller", case.label);
+        assert_eq!(edge.callee_id, ids[1], "{} path callee", case.label);
+        let relation = if index + 1 == edge_count {
+            case.relation
+        } else {
+            CallRelationKind::Function
+        };
+        assert_eq!(edge.relation, relation, "{} path relation", case.label);
+    }
+
+    Ok(())
+}
+
 struct CallableParamCase {
     owner: &'static str,
-    caller: &'static str,
+    callers: &'static [&'static str],
     source: &'static str,
     callee_path: &'static [&'static str],
     site_kind: CallSiteKind,
     relation: CallRelationKind,
-    target_kind: CallTargetKind,
+    caller_arg_count: u32,
     proof_note: &'static str,
 }
 
@@ -1803,7 +1140,6 @@ fn assert_callable_case(
     case: CallableParamCase,
 ) -> Result<(), DbError> {
     let owner = function_id_by_name(db, case.owner)?;
-    let caller = function_id_by_name(db, case.caller)?;
     let helper = function_id_by_name(db, case.owner)?;
 
     // This is exact complete-private-caller proof. It must not generalize to
@@ -1828,7 +1164,13 @@ fn assert_callable_case(
             _ => unreachable!("callable parameter case should be path or dynamic"),
         }
     );
-    assert_resolved_target(row, target, case.relation, case.site_kind, case.target_kind);
+    assert_resolved_target(
+        row,
+        target,
+        case.relation,
+        case.site_kind,
+        CallTargetKind::Function,
+    );
 
     let callers = db.callers_for_target(target)?;
     let caller_row = caller_by_owner_kind_path(&callers, owner, case.site_kind, case.callee_path);
@@ -1851,22 +1193,37 @@ fn assert_callable_case(
         .iter()
         .find(|path| path.start_id == owner && path.end_id == target && path.depth == 1)
         .unwrap_or_else(|| panic!("{} should have a one-hop path to local_target", case.owner));
+    assert_eq!(
+        path.edges.len(),
+        1,
+        "{} direct callable path cardinality",
+        case.owner
+    );
     assert_eq!(path.edges[0].caller_id, owner);
     assert_eq!(path.edges[0].callee_id, target);
     assert_eq!(path.edges[0].relation, case.relation);
 
     // The caller remains an ordinary direct call to the private helper; argument
     // proof only affects the helper body's callable-parameter invocation.
-    let caller_context = db.call_context_for_owner(caller)?;
-    let helper_call = row_by_path(&caller_context, &[case.owner]);
-    assert_eq!(helper_call.site.arg_count, Some(1));
-    assert_resolved_target(
-        helper_call,
-        helper,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
+    for caller_name in case.callers {
+        let caller = function_id_by_name(db, caller_name)?;
+        let caller_context = db.call_context_for_owner(caller)?;
+        let helper_call = row_by_path(&caller_context, &[case.owner]);
+        assert_eq!(
+            helper_call.site.arg_count,
+            Some(case.caller_arg_count),
+            "{} caller argument shape from {}",
+            case.owner,
+            case.source
+        );
+        assert_resolved_target(
+            helper_call,
+            helper,
+            CallRelationKind::Function,
+            CallSiteKind::Path,
+            CallTargetKind::Function,
+        );
+    }
 
     Ok(())
 }

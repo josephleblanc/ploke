@@ -1,6 +1,277 @@
 use super::super::super::super::super::*;
 use super::super::super::helpers::*;
-use super::expected::assert_ambiguous_call_candidates;
+use super::expected::{assert_ambiguous_call_candidates, path_call};
+
+struct ResolvedCase {
+    label: &'static str,
+    owner: Uuid,
+    count: Option<usize>,
+    source: Uuid,
+    kind: CallSiteKind,
+    callee: CallCalleeInfo,
+    target: Uuid,
+    relation: CallTargetKind,
+}
+
+impl ResolvedCase {
+    fn path(
+        label: &'static str,
+        owner: Uuid,
+        count: Option<usize>,
+        path: &[&str],
+        target: Uuid,
+    ) -> Self {
+        Self::path_from(label, owner, count, owner, path, target)
+    }
+
+    fn path_from(
+        label: &'static str,
+        owner: Uuid,
+        count: Option<usize>,
+        source: Uuid,
+        path: &[&str],
+        target: Uuid,
+    ) -> Self {
+        Self {
+            label,
+            owner,
+            count,
+            source,
+            kind: CallSiteKind::Path,
+            callee: path_call(path),
+            target,
+            relation: CallTargetKind::Function,
+        }
+    }
+
+    fn dynamic(label: &'static str, owner: Uuid, count: Option<usize>, target: Uuid) -> Self {
+        Self {
+            label,
+            owner,
+            count,
+            source: owner,
+            kind: CallSiteKind::Dynamic,
+            callee: CallCalleeInfo::Dynamic,
+            target,
+            relation: CallTargetKind::DynamicFunction,
+        }
+    }
+}
+
+macro_rules! resolved_cases {
+    ($($kind:ident($($arg:expr),+ $(,)?);)+) => {
+        [$(ResolvedCase::$kind($($arg),+)),+]
+    };
+}
+
+struct TargetlessCase {
+    label: &'static str,
+    owner: Uuid,
+    count: Option<usize>,
+    kind: CallSiteKind,
+    callee: CallCalleeInfo,
+    status: CallStatusKind,
+}
+
+impl TargetlessCase {
+    fn path(
+        label: &'static str,
+        owner: Uuid,
+        count: Option<usize>,
+        path: &[&str],
+        status: CallStatusKind,
+    ) -> Self {
+        Self {
+            label,
+            owner,
+            count,
+            kind: CallSiteKind::Path,
+            callee: path_call(path),
+            status,
+        }
+    }
+
+    fn dynamic(label: &'static str, owner: Uuid, status: CallStatusKind) -> Self {
+        Self {
+            label,
+            owner,
+            count: None,
+            kind: CallSiteKind::Dynamic,
+            callee: CallCalleeInfo::Dynamic,
+            status,
+        }
+    }
+}
+
+struct AmbiguousCase {
+    label: &'static str,
+    owner: Uuid,
+    kind: CallSiteKind,
+    callee: CallCalleeInfo,
+    relation: CallTargetKind,
+}
+
+impl AmbiguousCase {
+    fn path(label: &'static str, owner: Uuid, path: &[&str]) -> Self {
+        Self {
+            label,
+            owner,
+            kind: CallSiteKind::Path,
+            callee: path_call(path),
+            relation: CallTargetKind::Function,
+        }
+    }
+
+    fn dynamic(label: &'static str, owner: Uuid) -> Self {
+        Self {
+            label,
+            owner,
+            kind: CallSiteKind::Dynamic,
+            callee: CallCalleeInfo::Dynamic,
+            relation: CallTargetKind::DynamicFunction,
+        }
+    }
+}
+
+struct ClosureCase {
+    label: &'static str,
+    owner: Uuid,
+    maker: Uuid,
+}
+
+fn fixture_owner_id(db: &Database, name: &str) -> Result<Uuid, Error> {
+    Ok(one_uuid(db, &function_in_module_query(&["crate"], name))?)
+}
+
+fn assert_count(context: &[CallContextInfo], count: Option<usize>, label: &str) {
+    if let Some(count) = count {
+        assert_eq!(context.len(), count, "{label} context: {context:#?}");
+    }
+}
+
+fn select_call<'a>(
+    context: &'a [CallContextInfo],
+    source: Uuid,
+    kind: &CallSiteKind,
+    callee: &CallCalleeInfo,
+    target: Option<Uuid>,
+    label: &str,
+) -> &'a CallContextInfo {
+    let matches = context
+        .iter()
+        .filter(|call| {
+            call.owner_id == source
+                && &call.kind == kind
+                && &call.callee == callee
+                && target.is_none_or(|target| {
+                    call.targets
+                        .iter()
+                        .any(|candidate| candidate.target_id == target)
+                })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches.len(),
+        1,
+        "{label} should match exactly one call: {context:#?}"
+    );
+    matches[0]
+}
+
+fn assert_resolved(context: &[CallContextInfo], case: &ResolvedCase) {
+    assert_count(context, case.count, case.label);
+    let call = select_call(
+        context,
+        case.source,
+        &case.kind,
+        &case.callee,
+        Some(case.target),
+        case.label,
+    );
+    assert_eq!(call.status, CallStatusKind::Resolved, "{}", case.label);
+    assert_eq!(
+        call.resolution,
+        Some(CallResolutionKind::LocalExact),
+        "{}",
+        case.label
+    );
+    assert_eq!(call.targets.len(), 1, "{}: {call:#?}", case.label);
+    assert_eq!(call.targets[0].target_id, case.target, "{}", case.label);
+    assert_eq!(call.targets[0].relation, case.relation, "{}", case.label);
+}
+
+fn assert_targetless(context: &[CallContextInfo], case: &TargetlessCase) {
+    assert_count(context, case.count, case.label);
+    let call = select_call(
+        context,
+        case.owner,
+        &case.kind,
+        &case.callee,
+        None,
+        case.label,
+    );
+    assert_eq!(call.status, case.status, "{}", case.label);
+    assert!(call.resolution.is_none(), "{}: {call:#?}", case.label);
+    assert!(
+        call.targets.is_empty(),
+        "{} must not fabricate targets: {call:#?}",
+        case.label
+    );
+}
+
+fn assert_ambiguous(context: &[CallContextInfo], case: &AmbiguousCase, first: Uuid, second: Uuid) {
+    let call = select_call(
+        context,
+        case.owner,
+        &case.kind,
+        &case.callee,
+        None,
+        case.label,
+    );
+    assert_ambiguous_call_candidates(call, first, second, case.relation.clone(), case.label);
+}
+
+fn assert_closure(context: &[CallContextInfo], case: &ClosureCase) {
+    let matches = context
+        .iter()
+        .filter(|call| {
+            call.owner_id == case.owner
+                && call.kind == CallSiteKind::Dynamic
+                && call.callee == CallCalleeInfo::Dynamic
+                && call
+                    .targets
+                    .iter()
+                    .any(|target| target.relation == CallTargetKind::DynamicClosure)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches.len(),
+        1,
+        "{} should match exactly one dynamic closure call: {context:#?}",
+        case.label
+    );
+    let call = matches[0];
+    assert_eq!(call.status, CallStatusKind::Resolved, "{}", case.label);
+    assert_eq!(
+        call.resolution,
+        Some(CallResolutionKind::LocalExact),
+        "{}",
+        case.label
+    );
+    assert_eq!(call.targets.len(), 1, "{}: {call:#?}", case.label);
+    assert_ne!(
+        call.targets[0].target_id, case.maker,
+        "{} target should be the closure owner, not the maker function",
+        case.label
+    );
+    assert_eq!(
+        call.targets[0].relation,
+        CallTargetKind::DynamicClosure,
+        "{}",
+        case.label
+    );
+}
+
 #[tokio::test]
 async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Result<(), Error> {
     init_tracing_once();
@@ -25,151 +296,68 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     )?;
     let local_target = unique_id_by_name(&db, "function", "local_target")?;
     let other_target = unique_id_by_name(&db, "function", "other_target")?;
-    let returned_owner = one_uuid(
+    let returned_owner = fixture_owner_id(&db, "call_returned_function")?;
+    let returned_param_owner = fixture_owner_id(
         &db,
-        &function_in_module_query(&["crate"], "call_returned_function"),
+        "call_returned_forwarded_function_pointer_param_with_local_target",
     )?;
-    let returned_param_owner = one_uuid(
+    let returned_conflicting_local_owner = fixture_owner_id(
         &db,
-        &function_in_module_query(
-            &["crate"],
-            "call_returned_forwarded_function_pointer_param_with_local_target",
-        ),
+        "call_returned_conflicting_forwarded_function_pointer_param_with_local_target",
     )?;
-    let returned_conflicting_local_owner = one_uuid(
+    let returned_conflicting_other_owner = fixture_owner_id(
         &db,
-        &function_in_module_query(
-            &["crate"],
-            "call_returned_conflicting_forwarded_function_pointer_param_with_local_target",
-        ),
+        "call_returned_conflicting_forwarded_function_pointer_param_with_other_target",
     )?;
-    let returned_conflicting_other_owner = one_uuid(
+    let returned_closure_owner = fixture_owner_id(&db, "call_returned_closure")?;
+    let bound_owner = fixture_owner_id(&db, "call_returned_bound_closure")?;
+    let alias_owner = fixture_owner_id(&db, "call_returned_alias_bound_closure")?;
+    let closure_owner = fixture_owner_id(&db, "call_forwarded_returned_closure")?;
+    let returned_async_no_await_owner =
+        fixture_owner_id(&db, "call_returned_async_closure_without_await")?;
+    let returned_async_awaited_owner =
+        fixture_owner_id(&db, "call_awaited_returned_async_closure")?;
+    let returned_async_stored_owner = fixture_owner_id(&db, "call_stored_returned_async_closure")?;
+    let future_owner = fixture_owner_id(&db, "call_forwarded_returned_async_future")?;
+    let stored_future_owner = fixture_owner_id(
         &db,
-        &function_in_module_query(
-            &["crate"],
-            "call_returned_conflicting_forwarded_function_pointer_param_with_other_target",
-        ),
+        "call_stored_forwarded_returned_async_future_tuple_field",
     )?;
-    let returned_closure_owner = one_uuid(
+    let aliased_future_owner = fixture_owner_id(
         &db,
-        &function_in_module_query(&["crate"], "call_returned_closure"),
+        "call_aliased_stored_forwarded_returned_async_future_tuple_field",
     )?;
-    let bound_owner = one_uuid(
+    let branch_owner = fixture_owner_id(&db, "call_if_initialized_function_item_binding")?;
+    let block_owner = fixture_owner_id(&db, "call_block_initialized_function_item_binding")?;
+    let fn_param_owner = fixture_owner_id(&db, "call_function_pointer_param")?;
+    let single_param_owner = fixture_owner_id(&db, "call_single_function_pointer_param")?;
+    let multi_param_owner = fixture_owner_id(&db, "call_multi_function_pointer_param")?;
+    let forwarded_param_owner = fixture_owner_id(&db, "call_forwarded_function_pointer_leaf")?;
+    let two_hop_forwarded_param_owner =
+        fixture_owner_id(&db, "call_two_hop_forwarded_function_pointer_leaf")?;
+    let forwarded_referenced_owner =
+        fixture_owner_id(&db, "call_forwarded_referenced_dyn_fn_leaf")?;
+    let two_hop_forwarded_referenced_owner =
+        fixture_owner_id(&db, "call_two_hop_forwarded_referenced_dyn_fn_leaf")?;
+    let multi_conflicting_param_owner =
+        fixture_owner_id(&db, "call_multi_conflicting_function_pointer_param")?;
+    let forwarded_conflicting_owner =
+        fixture_owner_id(&db, "call_forwarded_conflicting_function_pointer_leaf")?;
+    let two_hop_forwarded_conflicting_owner = fixture_owner_id(
         &db,
-        &function_in_module_query(&["crate"], "call_returned_bound_closure"),
+        "call_two_hop_forwarded_conflicting_function_pointer_leaf",
     )?;
-    let alias_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_returned_alias_bound_closure"),
-    )?;
-    let closure_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_forwarded_returned_closure"),
-    )?;
-    let returned_async_no_await_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_returned_async_closure_without_await"),
-    )?;
-    let returned_async_awaited_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_awaited_returned_async_closure"),
-    )?;
-    let returned_async_stored_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_stored_returned_async_closure"),
-    )?;
-    let future_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_forwarded_returned_async_future"),
-    )?;
-    let branch_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_if_initialized_function_item_binding"),
-    )?;
-    let block_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_block_initialized_function_item_binding"),
-    )?;
-    let fn_param_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_function_pointer_param"),
-    )?;
-    let single_param_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_single_function_pointer_param"),
-    )?;
-    let multi_param_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_multi_function_pointer_param"),
-    )?;
-    let forwarded_param_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_forwarded_function_pointer_leaf"),
-    )?;
-    let two_hop_forwarded_param_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_two_hop_forwarded_function_pointer_leaf"),
-    )?;
-    let forwarded_referenced_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_forwarded_referenced_dyn_fn_leaf"),
-    )?;
-    let two_hop_forwarded_referenced_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_two_hop_forwarded_referenced_dyn_fn_leaf"),
-    )?;
-    let multi_conflicting_param_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_multi_conflicting_function_pointer_param"),
-    )?;
-    let forwarded_conflicting_owner = one_uuid(
-        &db,
-        &function_in_module_query(
-            &["crate"],
-            "call_forwarded_conflicting_function_pointer_leaf",
-        ),
-    )?;
-    let two_hop_forwarded_conflicting_owner = one_uuid(
-        &db,
-        &function_in_module_query(
-            &["crate"],
-            "call_two_hop_forwarded_conflicting_function_pointer_leaf",
-        ),
-    )?;
-    let multi_conflicting_generic_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_multi_conflicting_generic_fn_once_param"),
-    )?;
-    let multi_conflicting_field_owner = one_uuid(
-        &db,
-        &function_in_module_query(
-            &["crate"],
-            "call_multi_conflicting_named_field_function_param",
-        ),
-    )?;
-    let forwarded_conflicting_field_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_forwarded_conflicting_named_field_leaf"),
-    )?;
-    let single_parenthesized_param_owner = one_uuid(
-        &db,
-        &function_in_module_query(
-            &["crate"],
-            "call_single_parenthesized_function_pointer_param",
-        ),
-    )?;
-    let generic_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_generic_fn_once_value_binding"),
-    )?;
-    let boxed_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_boxed_dyn_fn_value_binding"),
-    )?;
-    let vec_owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_prelude_vec_new"),
-    )?;
+    let multi_conflicting_generic_owner =
+        fixture_owner_id(&db, "call_multi_conflicting_generic_fn_once_param")?;
+    let multi_conflicting_field_owner =
+        fixture_owner_id(&db, "call_multi_conflicting_named_field_function_param")?;
+    let forwarded_conflicting_field_owner =
+        fixture_owner_id(&db, "call_forwarded_conflicting_named_field_leaf")?;
+    let single_parenthesized_param_owner =
+        fixture_owner_id(&db, "call_single_parenthesized_function_pointer_param")?;
+    let generic_owner = fixture_owner_id(&db, "call_generic_fn_once_value_binding")?;
+    let boxed_owner = fixture_owner_id(&db, "call_boxed_dyn_fn_value_binding")?;
+    let vec_owner = fixture_owner_id(&db, "call_prelude_vec_new")?;
     let mut rag = init_test_rag_mock(Arc::clone(&db));
     rag.cfg.call_context.max_owner_hits = 64;
     assert!(
@@ -213,906 +401,194 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         (vec_owner, 1.0),
     ])?;
 
-    let returned_context = call_context
-        .get(&returned_owner)
-        .expect("returned-function owner should receive outgoing call context");
-    assert_eq!(
-        returned_context.len(),
-        2,
-        "returned-function owner context: {returned_context:#?}"
-    );
-    let returned_path = returned_context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Path
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: vec!["make_fn".to_string()],
-                    }
-        })
-        .expect("inner make_fn path call should stay visible");
-    assert_eq!(returned_path.status, CallStatusKind::Resolved);
-    assert_eq!(
-        returned_path.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(returned_path.targets.len(), 1);
-    assert_eq!(returned_path.targets[0].target_id, make_fn);
-    assert_eq!(returned_path.targets[0].relation, CallTargetKind::Function);
-
-    let returned_dynamic = returned_context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Dynamic
-                && call
-                    .targets
-                    .iter()
-                    .any(|target| target.target_id == local_target)
-        })
-        .expect("outer returned-function dynamic call should stay visible");
-    assert_eq!(returned_dynamic.callee, CallCalleeInfo::Dynamic);
-    assert_eq!(returned_dynamic.status, CallStatusKind::Resolved);
-    assert_eq!(
-        returned_dynamic.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(returned_dynamic.targets.len(), 1);
-    assert_eq!(returned_dynamic.targets[0].target_id, local_target);
-    assert_eq!(
-        returned_dynamic.targets[0].relation,
-        CallTargetKind::DynamicFunction
-    );
-
-    let returned_param_context = call_context
-        .get(&returned_param_owner)
-        .expect("returned parameter function owner should receive outgoing call context");
-    assert_eq!(
-        returned_param_context.len(),
-        2,
-        "returned parameter function context: {returned_param_context:#?}"
-    );
-    let returned_param_path = returned_param_context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Path
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: vec!["return_forwarded_function_pointer".to_string()],
-                    }
-        })
-        .expect("inner returned-parameter helper path call should stay visible");
-    assert_eq!(returned_param_path.status, CallStatusKind::Resolved);
-    assert_eq!(
-        returned_param_path.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(returned_param_path.targets.len(), 1);
-    assert_eq!(
-        returned_param_path.targets[0].target_id,
-        returned_param_helper
-    );
-    assert_eq!(
-        returned_param_path.targets[0].relation,
-        CallTargetKind::Function
-    );
-
-    let returned_param_dynamic = returned_param_context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Dynamic
-                && call
-                    .targets
-                    .iter()
-                    .any(|target| target.target_id == local_target)
-        })
-        .expect("outer returned-parameter dynamic call should stay visible");
-    assert_eq!(returned_param_dynamic.callee, CallCalleeInfo::Dynamic);
-    assert_eq!(returned_param_dynamic.status, CallStatusKind::Resolved);
-    assert_eq!(
-        returned_param_dynamic.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(returned_param_dynamic.targets.len(), 1);
-    assert_eq!(returned_param_dynamic.targets[0].target_id, local_target);
-    assert_eq!(
-        returned_param_dynamic.targets[0].relation,
-        CallTargetKind::DynamicFunction
-    );
-
-    for (owner, label) in [
-        (
-            returned_conflicting_local_owner,
-            "returned conflicting local caller",
-        ),
-        (
-            returned_conflicting_other_owner,
-            "returned conflicting other caller",
-        ),
-    ] {
+    let resolved_cases = resolved_cases! {
+        path("inner make_fn path call", returned_owner, Some(2), &["make_fn"], make_fn);
+        dynamic("outer returned-function dynamic call", returned_owner, None, local_target);
+        path("inner returned-parameter helper path call", returned_param_owner, Some(2),
+            &["return_forwarded_function_pointer"], returned_param_helper);
+        dynamic("outer returned-parameter dynamic call", returned_param_owner, None, local_target);
+        path("returned conflicting local caller", returned_conflicting_local_owner, Some(2),
+            &["return_conflicting_forwarded_function_pointer"], returned_conflicting_helper);
+        path("returned conflicting other caller", returned_conflicting_other_owner, Some(2),
+            &["return_conflicting_forwarded_function_pointer"], returned_conflicting_helper);
+        path("make_closure", returned_closure_owner, Some(2), &["make_closure"], make_closure);
+        path("make_bound_closure", bound_owner, Some(2), &["make_bound_closure"], make_bound);
+        path("make_alias_bound_closure", alias_owner, Some(2), &["make_alias_bound_closure"], make_alias);
+        path("make_forwarded_returned_closure", closure_owner, Some(2),
+            &["make_forwarded_returned_closure"], closure_producer);
+        path_from("incoming returned closure caller", closure_producer, Some(2), closure_owner,
+            &["make_forwarded_returned_closure"], closure_producer);
+        path_from("closure maker path call", closure_producer, None, closure_producer,
+            &["make_target_closure"], target_maker);
+        path("un-awaited returned async closure", returned_async_no_await_owner, Some(2),
+            &["make_returned_async_closure"], make_returned_async);
+        path("awaited returned async closure", returned_async_awaited_owner, Some(2),
+            &["make_returned_async_closure"], make_returned_async);
+        path("stored returned async closure future", returned_async_stored_owner, Some(2),
+            &["make_returned_async_closure"], make_returned_async);
+        path("forwarded returned async future caller", future_owner, Some(1),
+            &["make_forwarded_returned_async_future"], future_producer);
+        path_from("incoming forwarded future caller", future_producer, Some(5), future_owner,
+            &["make_forwarded_returned_async_future"], future_producer);
+        path_from("incoming stored forwarded future caller", future_producer, Some(5), stored_future_owner,
+            &["make_forwarded_returned_async_future"], future_producer);
+        path_from("incoming aliased forwarded future caller", future_producer, Some(5), aliased_future_owner,
+            &["make_forwarded_returned_async_future"], future_producer);
+        path_from("returned async closure maker path call", future_producer, None, future_producer,
+            &["make_returned_async_closure"], make_returned_async);
+        path("branch-initialized function item", branch_owner, Some(1), &["f"], local_target);
+        path("block-initialized function item", block_owner, Some(1), &["f"], local_target);
+        path("single-caller function-pointer param", single_param_owner, None, &["f"], local_target);
+        path("same-target multi-caller function-pointer param", multi_param_owner, None,
+            &["f"], local_target);
+        path("forwarded function-pointer leaf", forwarded_param_owner, None, &["f"], local_target);
+        path("two-hop forwarded function-pointer leaf", two_hop_forwarded_param_owner, None,
+            &["f"], local_target);
+        path("forwarded referenced dyn Fn leaf", forwarded_referenced_owner, None,
+            &["f"], local_target);
+        path("two-hop forwarded referenced dyn Fn leaf", two_hop_forwarded_referenced_owner, None,
+            &["f"], local_target);
+        dynamic("single-caller parenthesized function-pointer param",
+            single_parenthesized_param_owner, None, local_target);
+        path("boxed dyn Fn path call", boxed_owner, Some(2), &["boxed_fn"], local_target);
+    };
+    for case in &resolved_cases {
         let context = call_context
-            .get(&owner)
-            .unwrap_or_else(|| panic!("{label} should receive outgoing call context"));
-        assert_eq!(context.len(), 2, "{label} context: {context:#?}");
+            .get(&case.owner)
+            .unwrap_or_else(|| panic!("{} should receive call context", case.label));
+        assert_resolved(context, case);
+    }
 
-        let helper = context
-            .iter()
-            .find(|call| {
-                call.kind == CallSiteKind::Path
-                    && call.callee
-                        == CallCalleeInfo::Path {
-                            path: vec!["return_conflicting_forwarded_function_pointer".to_string()],
-                        }
-            })
-            .unwrap_or_else(|| panic!("{label} should include the returned helper path call"));
-        assert_eq!(helper.status, CallStatusKind::Resolved);
-        assert_eq!(helper.resolution, Some(CallResolutionKind::LocalExact));
-        assert_eq!(helper.targets.len(), 1);
-        assert_eq!(helper.targets[0].target_id, returned_conflicting_helper);
-        assert_eq!(helper.targets[0].relation, CallTargetKind::Function);
+    let targetless_cases = [
+        TargetlessCase::dynamic(
+            "un-awaited returned async closure",
+            returned_async_no_await_owner,
+            CallStatusKind::Unsupported,
+        ),
+        TargetlessCase::dynamic(
+            "non-local returned future flow",
+            future_producer,
+            CallStatusKind::Unsupported,
+        ),
+        TargetlessCase::path(
+            "opaque fn pointer path call",
+            fn_param_owner,
+            Some(1),
+            &["f"],
+            CallStatusKind::Unsupported,
+        ),
+        TargetlessCase::path(
+            "generic FnOnce path call",
+            generic_owner,
+            Some(1),
+            &["generic_f"],
+            CallStatusKind::Unsupported,
+        ),
+        TargetlessCase::path(
+            "Box::new setup call",
+            boxed_owner,
+            None,
+            &["Box", "new"],
+            CallStatusKind::External,
+        ),
+        TargetlessCase::path(
+            "Vec::new external call",
+            vec_owner,
+            Some(1),
+            &["Vec", "new"],
+            CallStatusKind::External,
+        ),
+    ];
+    for case in &targetless_cases {
+        let context = call_context
+            .get(&case.owner)
+            .unwrap_or_else(|| panic!("{} should receive call context", case.label));
+        assert_targetless(context, case);
+    }
 
-        let dynamic = context
-            .iter()
-            .find(|call| call.kind == CallSiteKind::Dynamic)
-            .unwrap_or_else(|| panic!("{label} should include an outer dynamic call"));
-        assert_eq!(dynamic.callee, CallCalleeInfo::Dynamic);
-        assert_ambiguous_call_candidates(
-            dynamic,
-            local_target,
-            other_target,
-            CallTargetKind::DynamicFunction,
-            label,
-        );
+    let ambiguous_cases = [
+        AmbiguousCase::dynamic(
+            "returned conflicting local caller",
+            returned_conflicting_local_owner,
+        ),
+        AmbiguousCase::dynamic(
+            "returned conflicting other caller",
+            returned_conflicting_other_owner,
+        ),
+        AmbiguousCase::path(
+            "conflicting multi-caller function-pointer",
+            multi_conflicting_param_owner,
+            &["f"],
+        ),
+        AmbiguousCase::path(
+            "forwarded conflicting function-pointer",
+            forwarded_conflicting_owner,
+            &["f"],
+        ),
+        AmbiguousCase::path(
+            "two-hop forwarded conflicting function-pointer",
+            two_hop_forwarded_conflicting_owner,
+            &["f"],
+        ),
+        AmbiguousCase::path(
+            "conflicting multi-caller generic FnOnce",
+            multi_conflicting_generic_owner,
+            &["generic_f"],
+        ),
+        AmbiguousCase::dynamic(
+            "conflicting multi-caller named-field",
+            multi_conflicting_field_owner,
+        ),
+        AmbiguousCase::dynamic(
+            "forwarded conflicting named-field",
+            forwarded_conflicting_field_owner,
+        ),
+    ];
+    for case in &ambiguous_cases {
+        let context = call_context
+            .get(&case.owner)
+            .unwrap_or_else(|| panic!("{} should receive call context", case.label));
+        assert_ambiguous(context, case, local_target, other_target);
     }
 
     let closure_cases = [
-        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1431:
-        // `make_closure()()` returns a direct closure literal.
-        (returned_closure_owner, make_closure, "make_closure"),
-        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1453:
-        // `make_bound_closure()()` returns a local closure binding.
-        (bound_owner, make_bound, "make_bound_closure"),
-        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1500:
-        // `make_alias_bound_closure()()` returns a local alias of a closure binding.
-        (alias_owner, make_alias, "make_alias_bound_closure"),
-        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1520:
-        // `make_forwarded_returned_closure()()` returns a sync closure through
-        // a bounded producer-to-maker forwarding proof.
-        (
-            closure_owner,
-            closure_producer,
-            "make_forwarded_returned_closure",
-        ),
+        ClosureCase {
+            label: "make_closure",
+            owner: returned_closure_owner,
+            maker: make_closure,
+        },
+        ClosureCase {
+            label: "make_bound_closure",
+            owner: bound_owner,
+            maker: make_bound,
+        },
+        ClosureCase {
+            label: "make_alias_bound_closure",
+            owner: alias_owner,
+            maker: make_alias,
+        },
+        ClosureCase {
+            label: "make_forwarded_returned_closure",
+            owner: closure_owner,
+            maker: closure_producer,
+        },
+        ClosureCase {
+            label: "awaited returned async closure",
+            owner: returned_async_awaited_owner,
+            maker: make_returned_async,
+        },
+        ClosureCase {
+            label: "stored returned async closure future",
+            owner: returned_async_stored_owner,
+            maker: make_returned_async,
+        },
     ];
-    for (owner, maker, name) in closure_cases {
+    for case in &closure_cases {
         let context = call_context
-            .get(&owner)
-            .expect("returned closure owner should receive outgoing call context");
-        assert_eq!(context.len(), 2, "returned closure context: {context:#?}");
-
-        let path = context
-            .iter()
-            .find(|call| {
-                call.kind == CallSiteKind::Path
-                    && call.callee
-                        == CallCalleeInfo::Path {
-                            path: vec![name.to_string()],
-                        }
-            })
-            .expect("inner returned-closure maker path call should stay visible");
-        assert_eq!(path.status, CallStatusKind::Resolved);
-        assert_eq!(path.resolution, Some(CallResolutionKind::LocalExact));
-        assert_eq!(path.targets.len(), 1);
-        assert_eq!(path.targets[0].target_id, maker);
-        assert_eq!(path.targets[0].relation, CallTargetKind::Function);
-
-        let dynamic = context
-            .iter()
-            .find(|call| {
-                call.kind == CallSiteKind::Dynamic
-                    && call
-                        .targets
-                        .iter()
-                        .any(|target| target.relation == CallTargetKind::DynamicClosure)
-            })
-            .expect("outer returned-closure dynamic call should stay visible");
-        assert_eq!(dynamic.callee, CallCalleeInfo::Dynamic);
-        assert_eq!(dynamic.status, CallStatusKind::Resolved);
-        assert_eq!(dynamic.resolution, Some(CallResolutionKind::LocalExact));
-        assert_eq!(dynamic.targets.len(), 1);
-        assert_ne!(
-            dynamic.targets[0].target_id, maker,
-            "outer returned-closure dynamic target should be the closure owner, not the maker function"
-        );
-        assert_eq!(dynamic.targets[0].relation, CallTargetKind::DynamicClosure);
+            .get(&case.owner)
+            .unwrap_or_else(|| panic!("{} should receive call context", case.label));
+        assert_closure(context, case);
     }
-
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1520:
-    // the forwarded returned closure producer context exposes both the incoming
-    // caller row and its own maker path.
-    let closure_producer_context = call_context
-        .get(&closure_producer)
-        .expect("forwarded returned closure producer should receive call context");
-    assert_eq!(
-        closure_producer_context.len(),
-        2,
-        "forwarded returned closure producer context: {closure_producer_context:#?}"
-    );
-    let incoming_closure = closure_producer_context
-        .iter()
-        .find(|call| {
-            call.owner_id == closure_owner
-                && call.kind == CallSiteKind::Path
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: vec!["make_forwarded_returned_closure".to_string()],
-                    }
-        })
-        .expect("producer context should include the incoming returned closure caller");
-    assert_eq!(incoming_closure.status, CallStatusKind::Resolved);
-    assert_eq!(
-        incoming_closure.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(incoming_closure.targets.len(), 1);
-    assert_eq!(incoming_closure.targets[0].target_id, closure_producer);
-    assert_eq!(
-        incoming_closure.targets[0].relation,
-        CallTargetKind::Function
-    );
-
-    let maker_path = closure_producer_context
-        .iter()
-        .find(|call| {
-            call.owner_id == closure_producer
-                && call.kind == CallSiteKind::Path
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: vec!["make_target_closure".to_string()],
-                    }
-        })
-        .expect("producer should include the closure maker path call");
-    assert_eq!(maker_path.status, CallStatusKind::Resolved);
-    assert_eq!(maker_path.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(maker_path.targets.len(), 1);
-    assert_eq!(maker_path.targets[0].target_id, target_maker);
-    assert_eq!(maker_path.targets[0].relation, CallTargetKind::Function);
-
-    for (owner, label) in [
-        (
-            returned_async_no_await_owner,
-            "un-awaited returned async closure",
-        ),
-        (
-            returned_async_awaited_owner,
-            "awaited returned async closure",
-        ),
-        (
-            returned_async_stored_owner,
-            "stored returned async closure future",
-        ),
-    ] {
-        // tests/fixture_crates/fixture_call_graph/src/lib.rs:2355-2365:
-        // both owners call the same async-closure maker, but only the awaited
-        // and stored callers poll the returned future and may receive a
-        // DynamicClosure edge.
-        let context = call_context
-            .get(&owner)
-            .unwrap_or_else(|| panic!("{label} should receive outgoing call context"));
-        assert_eq!(context.len(), 2, "{label} context: {context:#?}");
-
-        let path = context
-            .iter()
-            .find(|call| {
-                call.kind == CallSiteKind::Path
-                    && call.callee
-                        == CallCalleeInfo::Path {
-                            path: vec!["make_returned_async_closure".to_string()],
-                        }
-            })
-            .unwrap_or_else(|| panic!("{label} should include the async closure maker path call"));
-        assert_eq!(path.status, CallStatusKind::Resolved);
-        assert_eq!(path.resolution, Some(CallResolutionKind::LocalExact));
-        assert_eq!(path.targets.len(), 1);
-        assert_eq!(path.targets[0].target_id, make_returned_async);
-        assert_eq!(path.targets[0].relation, CallTargetKind::Function);
-
-        let dynamic = context
-            .iter()
-            .find(|call| call.kind == CallSiteKind::Dynamic)
-            .unwrap_or_else(|| panic!("{label} should include an outer dynamic call"));
-        assert_eq!(dynamic.callee, CallCalleeInfo::Dynamic);
-        if owner == returned_async_no_await_owner {
-            assert_eq!(dynamic.status, CallStatusKind::Unsupported);
-            assert_eq!(dynamic.resolution, None);
-            assert!(
-                dynamic.targets.is_empty(),
-                "un-awaited returned async closure must not fabricate a closure target: {dynamic:#?}"
-            );
-        } else {
-            assert_eq!(dynamic.status, CallStatusKind::Resolved);
-            assert_eq!(dynamic.resolution, Some(CallResolutionKind::LocalExact));
-            assert_eq!(dynamic.targets.len(), 1);
-            assert_ne!(
-                dynamic.targets[0].target_id, make_returned_async,
-                "awaited returned async closure dynamic target should be the closure owner, not the maker function"
-            );
-            assert_eq!(dynamic.targets[0].relation, CallTargetKind::DynamicClosure);
-        }
-    }
-
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2368-2373:
-    // the caller awaits a producer function that returns a future, but the
-    // current graph does not carry future value flow across that function
-    // boundary. RAG should expose the producer call and leave the producer's
-    // inner returned async closure dynamic row targetless.
-    let future_context = call_context
-        .get(&future_owner)
-        .expect("forwarded returned async future caller should receive outgoing call context");
-    assert_eq!(
-        future_context.len(),
-        1,
-        "forwarded returned async future caller context: {future_context:#?}"
-    );
-    let producer_call = &future_context[0];
-    assert_eq!(producer_call.kind, CallSiteKind::Path);
-    assert_eq!(
-        producer_call.callee,
-        CallCalleeInfo::Path {
-            path: vec!["make_forwarded_returned_async_future".to_string()],
-        }
-    );
-    assert_eq!(producer_call.status, CallStatusKind::Resolved);
-    assert_eq!(
-        producer_call.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(producer_call.targets.len(), 1);
-    assert_eq!(producer_call.targets[0].target_id, future_producer);
-    assert_eq!(producer_call.targets[0].relation, CallTargetKind::Function);
-
-    let producer_context = call_context
-        .get(&future_producer)
-        .expect("forwarded returned async future producer should receive outgoing call context");
-    assert_eq!(
-        producer_context.len(),
-        3,
-        "forwarded returned async future producer context: {producer_context:#?}"
-    );
-    let incoming_call = producer_context
-        .iter()
-        .find(|call| {
-            call.owner_id == future_owner
-                && call.kind == CallSiteKind::Path
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: vec!["make_forwarded_returned_async_future".to_string()],
-                    }
-        })
-        .expect("producer context should include the incoming caller edge");
-    assert_eq!(incoming_call.status, CallStatusKind::Resolved);
-    assert_eq!(
-        incoming_call.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(incoming_call.targets.len(), 1);
-    assert_eq!(incoming_call.targets[0].target_id, future_producer);
-    assert_eq!(incoming_call.targets[0].relation, CallTargetKind::Function);
-
-    let producer_path = producer_context
-        .iter()
-        .find(|call| {
-            call.owner_id == future_producer
-                && call.kind == CallSiteKind::Path
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: vec!["make_returned_async_closure".to_string()],
-                    }
-        })
-        .expect("producer should include the returned async closure maker path call");
-    assert_eq!(producer_path.status, CallStatusKind::Resolved);
-    assert_eq!(
-        producer_path.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(producer_path.targets.len(), 1);
-    assert_eq!(producer_path.targets[0].target_id, make_returned_async);
-    assert_eq!(producer_path.targets[0].relation, CallTargetKind::Function);
-
-    let producer_dynamic = producer_context
-        .iter()
-        .find(|call| call.owner_id == future_producer && call.kind == CallSiteKind::Dynamic)
-        .expect("producer should include a targetless outer dynamic call");
-    assert_eq!(producer_dynamic.callee, CallCalleeInfo::Dynamic);
-    assert_eq!(producer_dynamic.status, CallStatusKind::Unsupported);
-    assert_eq!(producer_dynamic.resolution, None);
-    assert!(
-        producer_dynamic.targets.is_empty(),
-        "non-local returned future flow must not fabricate a dynamic target: {producer_dynamic:#?}"
-    );
-
-    let branch_context = call_context
-        .get(&branch_owner)
-        .expect("branch-initialized function item owner should receive outgoing call context");
-    assert_eq!(
-        branch_context.len(),
-        1,
-        "branch-initialized function item context: {branch_context:#?}"
-    );
-    let branch_call = &branch_context[0];
-    assert_eq!(branch_call.kind, CallSiteKind::Path);
-    assert_eq!(
-        branch_call.callee,
-        CallCalleeInfo::Path {
-            path: vec!["f".to_string()],
-        }
-    );
-    assert_eq!(branch_call.status, CallStatusKind::Resolved);
-    assert_eq!(branch_call.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(branch_call.targets.len(), 1);
-    assert_eq!(branch_call.targets[0].target_id, local_target);
-    assert_eq!(branch_call.targets[0].relation, CallTargetKind::Function);
-
-    let block_context = call_context
-        .get(&block_owner)
-        .expect("block-initialized function item owner should receive outgoing call context");
-    assert_eq!(
-        block_context.len(),
-        1,
-        "block-initialized function item context: {block_context:#?}"
-    );
-    let block_call = &block_context[0];
-    assert_eq!(block_call.kind, CallSiteKind::Path);
-    assert_eq!(
-        block_call.callee,
-        CallCalleeInfo::Path {
-            path: vec!["f".to_string()],
-        }
-    );
-    assert_eq!(block_call.status, CallStatusKind::Resolved);
-    assert_eq!(block_call.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(block_call.targets.len(), 1);
-    assert_eq!(block_call.targets[0].target_id, local_target);
-    assert_eq!(block_call.targets[0].relation, CallTargetKind::Function);
-
-    let fn_param_context = call_context
-        .get(&fn_param_owner)
-        .expect("function-pointer param owner should receive outgoing call context");
-    assert_eq!(
-        fn_param_context.len(),
-        1,
-        "function-pointer param context: {fn_param_context:#?}"
-    );
-    let fn_param_call = &fn_param_context[0];
-    assert_eq!(fn_param_call.kind, CallSiteKind::Path);
-    assert_eq!(
-        fn_param_call.callee,
-        CallCalleeInfo::Path {
-            path: vec!["f".to_string()],
-        }
-    );
-    assert_eq!(fn_param_call.status, CallStatusKind::Unsupported);
-    assert!(fn_param_call.resolution.is_none());
-    assert!(
-        fn_param_call.targets.is_empty(),
-        "opaque fn pointer path calls must not fabricate RAG targets: {fn_param_call:#?}"
-    );
-
-    let single_param_context = call_context
-        .get(&single_param_owner)
-        .expect("single-caller function-pointer param owner should receive outgoing call context");
-    let single_param_call = single_param_context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Path
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: vec!["f".to_string()],
-                    }
-                && call
-                    .targets
-                    .iter()
-                    .any(|target| target.target_id == local_target)
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "single-caller function-pointer param context should include resolved f() -> local_target: {single_param_context:#?}"
-            )
-        });
-    assert_eq!(single_param_call.status, CallStatusKind::Resolved);
-    assert_eq!(
-        single_param_call.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(single_param_call.targets.len(), 1);
-    assert_eq!(single_param_call.targets[0].target_id, local_target);
-    assert_eq!(
-        single_param_call.targets[0].relation,
-        CallTargetKind::Function
-    );
-
-    let multi_param_context = call_context
-        .get(&multi_param_owner)
-        .expect("same-target multi-caller function-pointer param owner should receive outgoing call context");
-    let multi_param_call = multi_param_context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Path
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: vec!["f".to_string()],
-                    }
-                && call
-                    .targets
-                    .iter()
-                    .any(|target| target.target_id == local_target)
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "same-target multi-caller function-pointer param context should include resolved f() -> local_target: {multi_param_context:#?}"
-            )
-        });
-    assert_eq!(multi_param_call.status, CallStatusKind::Resolved);
-    assert_eq!(
-        multi_param_call.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(multi_param_call.targets.len(), 1);
-    assert_eq!(multi_param_call.targets[0].target_id, local_target);
-    assert_eq!(
-        multi_param_call.targets[0].relation,
-        CallTargetKind::Function
-    );
-
-    for (owner, label) in [
-        (forwarded_param_owner, "forwarded function-pointer leaf"),
-        (
-            two_hop_forwarded_param_owner,
-            "two-hop forwarded function-pointer leaf",
-        ),
-        (
-            forwarded_referenced_owner,
-            "forwarded referenced dyn Fn leaf",
-        ),
-        (
-            two_hop_forwarded_referenced_owner,
-            "two-hop forwarded referenced dyn Fn leaf",
-        ),
-    ] {
-        let context = call_context
-            .get(&owner)
-            .unwrap_or_else(|| panic!("{label} should receive outgoing call context"));
-        let call = context
-            .iter()
-            .find(|call| {
-                call.kind == CallSiteKind::Path
-                    && call.callee
-                        == CallCalleeInfo::Path {
-                            path: vec!["f".to_string()],
-                        }
-                    && call
-                        .targets
-                        .iter()
-                        .any(|target| target.target_id == local_target)
-            })
-            .unwrap_or_else(|| {
-                panic!("{label} context should include resolved f() -> local_target: {context:#?}")
-            });
-        assert_eq!(call.status, CallStatusKind::Resolved);
-        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-        assert_eq!(call.targets.len(), 1);
-        assert_eq!(call.targets[0].target_id, local_target);
-        assert_eq!(call.targets[0].relation, CallTargetKind::Function);
-    }
-
-    let multi_conflicting_context = call_context
-        .get(&multi_conflicting_param_owner)
-        .expect("conflicting multi-caller function-pointer param owner should receive outgoing call context");
-    let multi_conflicting_matches = multi_conflicting_context
-        .iter()
-        .filter(|call| {
-            call.owner_id == multi_conflicting_param_owner
-                && call.kind == CallSiteKind::Path
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: vec!["f".to_string()],
-                    }
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        multi_conflicting_matches.len(),
-        1,
-        "conflicting multi-caller function-pointer param body context: {multi_conflicting_context:#?}"
-    );
-    let multi_conflicting_call = multi_conflicting_matches[0];
-    assert_eq!(multi_conflicting_call.kind, CallSiteKind::Path);
-    assert_eq!(
-        multi_conflicting_call.callee,
-        CallCalleeInfo::Path {
-            path: vec!["f".to_string()],
-        }
-    );
-    assert_eq!(multi_conflicting_call.status, CallStatusKind::Ambiguous);
-    assert!(multi_conflicting_call.resolution.is_none());
-    assert_ambiguous_call_candidates(
-        multi_conflicting_call,
-        local_target,
-        other_target,
-        CallTargetKind::Function,
-        "conflicting multi-caller function-pointer",
-    );
-
-    let forwarded_conflicting_context = call_context
-        .get(&forwarded_conflicting_owner)
-        .expect("forwarded conflicting function-pointer leaf should receive outgoing call context");
-    let forwarded_conflicting_matches = forwarded_conflicting_context
-        .iter()
-        .filter(|call| {
-            call.owner_id == forwarded_conflicting_owner
-                && call.kind == CallSiteKind::Path
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: vec!["f".to_string()],
-                    }
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        forwarded_conflicting_matches.len(),
-        1,
-        "forwarded conflicting function-pointer leaf context: {forwarded_conflicting_context:#?}"
-    );
-    let forwarded_conflicting_call = forwarded_conflicting_matches[0];
-    assert_eq!(forwarded_conflicting_call.status, CallStatusKind::Ambiguous);
-    assert!(forwarded_conflicting_call.resolution.is_none());
-    assert_ambiguous_call_candidates(
-        forwarded_conflicting_call,
-        local_target,
-        other_target,
-        CallTargetKind::Function,
-        "forwarded conflicting function-pointer",
-    );
-
-    let two_hop_forwarded_conflicting_context = call_context
-        .get(&two_hop_forwarded_conflicting_owner)
-        .expect("two-hop forwarded conflicting function-pointer leaf should receive outgoing call context");
-    let two_hop_forwarded_conflicting_matches = two_hop_forwarded_conflicting_context
-        .iter()
-        .filter(|call| {
-            call.owner_id == two_hop_forwarded_conflicting_owner
-                && call.kind == CallSiteKind::Path
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: vec!["f".to_string()],
-                    }
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        two_hop_forwarded_conflicting_matches.len(),
-        1,
-        "two-hop forwarded conflicting function-pointer leaf context: {two_hop_forwarded_conflicting_context:#?}"
-    );
-    let two_hop_forwarded_conflicting_call = two_hop_forwarded_conflicting_matches[0];
-    assert_eq!(
-        two_hop_forwarded_conflicting_call.status,
-        CallStatusKind::Ambiguous
-    );
-    assert!(two_hop_forwarded_conflicting_call.resolution.is_none());
-    assert_ambiguous_call_candidates(
-        two_hop_forwarded_conflicting_call,
-        local_target,
-        other_target,
-        CallTargetKind::Function,
-        "two-hop forwarded conflicting function-pointer",
-    );
-
-    let multi_conflicting_generic_context =
-        call_context.get(&multi_conflicting_generic_owner).expect(
-            "conflicting multi-caller generic FnOnce owner should receive outgoing call context",
-        );
-    let multi_conflicting_generic_matches = multi_conflicting_generic_context
-        .iter()
-        .filter(|call| {
-            call.owner_id == multi_conflicting_generic_owner
-                && call.kind == CallSiteKind::Path
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: vec!["generic_f".to_string()],
-                    }
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        multi_conflicting_generic_matches.len(),
-        1,
-        "conflicting multi-caller generic FnOnce body context: {multi_conflicting_generic_context:#?}"
-    );
-    let multi_conflicting_generic_call = multi_conflicting_generic_matches[0];
-    assert_eq!(
-        multi_conflicting_generic_call.status,
-        CallStatusKind::Ambiguous
-    );
-    assert!(multi_conflicting_generic_call.resolution.is_none());
-    assert_ambiguous_call_candidates(
-        multi_conflicting_generic_call,
-        local_target,
-        other_target,
-        CallTargetKind::Function,
-        "conflicting multi-caller generic FnOnce",
-    );
-
-    let multi_conflicting_field_context = call_context
-        .get(&multi_conflicting_field_owner)
-        .expect("conflicting multi-caller named-field owner should receive outgoing call context");
-    let multi_conflicting_field_matches = multi_conflicting_field_context
-        .iter()
-        .filter(|call| {
-            call.owner_id == multi_conflicting_field_owner
-                && call.kind == CallSiteKind::Dynamic
-                && call.callee == CallCalleeInfo::Dynamic
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        multi_conflicting_field_matches.len(),
-        1,
-        "conflicting multi-caller named-field body context: {multi_conflicting_field_context:#?}"
-    );
-    let multi_conflicting_field_call = multi_conflicting_field_matches[0];
-    assert_eq!(
-        multi_conflicting_field_call.status,
-        CallStatusKind::Ambiguous
-    );
-    assert!(multi_conflicting_field_call.resolution.is_none());
-    assert_ambiguous_call_candidates(
-        multi_conflicting_field_call,
-        local_target,
-        other_target,
-        CallTargetKind::DynamicFunction,
-        "conflicting multi-caller named-field",
-    );
-
-    let forwarded_conflicting_field_context = call_context
-        .get(&forwarded_conflicting_field_owner)
-        .expect("forwarded conflicting named-field leaf should receive outgoing call context");
-    let forwarded_conflicting_field_matches = forwarded_conflicting_field_context
-        .iter()
-        .filter(|call| {
-            call.owner_id == forwarded_conflicting_field_owner
-                && call.kind == CallSiteKind::Dynamic
-                && call.callee == CallCalleeInfo::Dynamic
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        forwarded_conflicting_field_matches.len(),
-        1,
-        "forwarded conflicting named-field leaf context: {forwarded_conflicting_field_context:#?}"
-    );
-    let forwarded_conflicting_field_call = forwarded_conflicting_field_matches[0];
-    assert_eq!(
-        forwarded_conflicting_field_call.status,
-        CallStatusKind::Ambiguous
-    );
-    assert!(forwarded_conflicting_field_call.resolution.is_none());
-    assert_ambiguous_call_candidates(
-        forwarded_conflicting_field_call,
-        local_target,
-        other_target,
-        CallTargetKind::DynamicFunction,
-        "forwarded conflicting named-field",
-    );
-
-    let single_parenthesized_param_context = call_context
-        .get(&single_parenthesized_param_owner)
-        .expect("single-caller parenthesized function-pointer param owner should receive outgoing call context");
-    let single_parenthesized_param_call = single_parenthesized_param_context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Dynamic
-                && call.callee == CallCalleeInfo::Dynamic
-                && call
-                    .targets
-                    .iter()
-                    .any(|target| target.target_id == local_target)
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "single-caller parenthesized function-pointer param context should include resolved (f)() -> local_target: {single_parenthesized_param_context:#?}"
-            )
-        });
-    assert_eq!(
-        single_parenthesized_param_call.status,
-        CallStatusKind::Resolved
-    );
-    assert_eq!(
-        single_parenthesized_param_call.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(single_parenthesized_param_call.targets.len(), 1);
-    assert_eq!(
-        single_parenthesized_param_call.targets[0].target_id,
-        local_target
-    );
-    assert_eq!(
-        single_parenthesized_param_call.targets[0].relation,
-        CallTargetKind::DynamicFunction
-    );
-
-    let generic_context = call_context
-        .get(&generic_owner)
-        .expect("generic FnOnce owner should receive outgoing call context");
-    assert_eq!(
-        generic_context.len(),
-        1,
-        "generic FnOnce context: {generic_context:#?}"
-    );
-    let generic_call = &generic_context[0];
-    assert_eq!(generic_call.kind, CallSiteKind::Path);
-    assert_eq!(
-        generic_call.callee,
-        CallCalleeInfo::Path {
-            path: vec!["generic_f".to_string()],
-        }
-    );
-    assert_eq!(generic_call.status, CallStatusKind::Unsupported);
-    assert!(generic_call.resolution.is_none());
-    assert!(
-        generic_call.targets.is_empty(),
-        "generic FnOnce path calls must not fabricate RAG targets: {generic_call:#?}"
-    );
-
-    let boxed_context = call_context
-        .get(&boxed_owner)
-        .expect("boxed dyn Fn owner should receive outgoing call context");
-    assert_eq!(
-        boxed_context.len(),
-        2,
-        "boxed dyn Fn context: {boxed_context:#?}"
-    );
-    let box_new = boxed_context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Path
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: vec!["Box".to_string(), "new".to_string()],
-                    }
-        })
-        .expect("Box::new setup call should stay visible");
-    assert_eq!(box_new.status, CallStatusKind::External);
-    assert!(box_new.resolution.is_none());
-    assert!(box_new.targets.is_empty());
-
-    let boxed_call = boxed_context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Path
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: vec!["boxed_fn".to_string()],
-                    }
-        })
-        .expect("boxed dyn Fn path call should stay visible");
-    assert_eq!(boxed_call.status, CallStatusKind::Resolved);
-    assert_eq!(boxed_call.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(boxed_call.targets.len(), 1);
-    assert_eq!(boxed_call.targets[0].target_id, local_target);
-    assert_eq!(boxed_call.targets[0].relation, CallTargetKind::Function);
-
-    let vec_context = call_context
-        .get(&vec_owner)
-        .expect("Vec::new owner should receive outgoing call context");
-    assert_eq!(vec_context.len(), 1, "Vec::new context: {vec_context:#?}");
-    let vec_new = &vec_context[0];
-    assert_eq!(vec_new.kind, CallSiteKind::Path);
-    assert_eq!(
-        vec_new.callee,
-        CallCalleeInfo::Path {
-            path: vec!["Vec".to_string(), "new".to_string()],
-        }
-    );
-    assert_eq!(vec_new.status, CallStatusKind::External);
-    assert!(vec_new.resolution.is_none());
-    assert!(
-        vec_new.targets.is_empty(),
-        "Vec::new external calls must not fabricate RAG targets: {vec_new:#?}"
-    );
 
     Ok(())
 }

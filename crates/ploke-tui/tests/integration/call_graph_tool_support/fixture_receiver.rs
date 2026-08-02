@@ -39,9 +39,10 @@ pub(crate) struct FixtureMethodCallableArgumentToolFixture {
 
 impl FixtureDynamicCallableToolFixture {
     pub(crate) async fn new_for_owner(owner_name: &'static str) -> Self {
-        let db = Arc::new(Database::new(
-            setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
-        ));
+        Self::with_db(fixture_graph_db(), owner_name).await
+    }
+
+    pub(crate) async fn with_db(db: Arc<Database>, owner_name: &'static str) -> Self {
         let crate_root = workspace_root().join("tests/fixture_crates/fixture_call_graph");
         let module_path = vec!["crate".to_string()];
         let file_path = crate_root.join("src/lib.rs");
