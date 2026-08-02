@@ -1,0 +1,448 @@
+use cozo::DataValue;
+
+use crate::{
+    DbError,
+    database::{to_string, to_string_list},
+};
+
+use super::CallReceiver;
+
+impl CallReceiver {
+    pub(in crate::call_graph) fn from_parts(
+        kind: &DataValue,
+        path: &DataValue,
+    ) -> Result<Option<Self>, DbError> {
+        if matches!(kind, DataValue::Null) {
+            return match path {
+                DataValue::Null => Ok(None),
+                other => Err(DbError::Cozo(format!(
+                    "method-call receiver path without receiver kind: {other:?}"
+                ))),
+            };
+        }
+
+        match to_string(kind)?.as_str() {
+            "SelfValue" => Ok(Some(Self::SelfValue)),
+            "SelfField" => Ok(Some(Self::SelfField {
+                path: to_string_list(path)?,
+            })),
+            "LocalBinding" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name] => Ok(Some(Self::LocalBinding { name: name.clone() })),
+                    other => Err(DbError::Cozo(format!(
+                        "local binding receiver should store exactly one name, got {other:?}"
+                    ))),
+                }
+            }
+            "TypedLocalBinding" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name, type_path @ ..] if !type_path.is_empty() => {
+                        Ok(Some(Self::TypedLocalBinding {
+                            name: name.clone(),
+                            type_path: type_path.to_vec(),
+                        }))
+                    }
+                    other => Err(DbError::Cozo(format!(
+                        "typed local binding receiver should store a name followed by a type path, got {other:?}"
+                    ))),
+                }
+            }
+            "InitializedLocalBinding" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name, init_path @ ..] if !init_path.is_empty() => {
+                        Ok(Some(Self::InitializedLocalBinding {
+                            name: name.clone(),
+                            init_path: init_path.to_vec(),
+                        }))
+                    }
+                    other => Err(DbError::Cozo(format!(
+                        "initialized local binding receiver should store a name followed by an initializer path, got {other:?}"
+                    ))),
+                }
+            }
+            "AliasedLocalBinding" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name, source_path @ ..] if !source_path.is_empty() => {
+                        Ok(Some(Self::AliasedLocalBinding {
+                            name: name.clone(),
+                            source_path: source_path.to_vec(),
+                        }))
+                    }
+                    other => Err(DbError::Cozo(format!(
+                        "aliased local binding receiver should store a name followed by a source path, got {other:?}"
+                    ))),
+                }
+            }
+            "TupleReturnBinding" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name, index, return_path @ ..] if !return_path.is_empty() => {
+                        let index = index.parse::<usize>().map_err(|err| {
+                            DbError::Cozo(format!(
+                                "tuple return binding receiver should store a usize index, got {index:?}: {err}"
+                            ))
+                        })?;
+                        Ok(Some(Self::TupleReturnBinding {
+                            name: name.clone(),
+                            path: return_path.to_vec(),
+                            index,
+                        }))
+                    }
+                    other => Err(DbError::Cozo(format!(
+                        "tuple return binding receiver should store a name, index, and function path, got {other:?}"
+                    ))),
+                }
+            }
+            "TupleMethodReturn" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name, index, method_name, start, end] => {
+                        let index = index.parse::<usize>().map_err(|err| {
+                            DbError::Cozo(format!(
+                                "tuple method return receiver should store a usize index, got {index:?}: {err}"
+                            ))
+                        })?;
+                        let start = start.parse::<usize>().map_err(|err| {
+                            DbError::Cozo(format!(
+                                "tuple method return receiver should store a usize span start, got {start:?}: {err}"
+                            ))
+                        })?;
+                        let end = end.parse::<usize>().map_err(|err| {
+                            DbError::Cozo(format!(
+                                "tuple method return receiver should store a usize span end, got {end:?}: {err}"
+                            ))
+                        })?;
+                        Ok(Some(Self::TupleMethodReturn {
+                            name: name.clone(),
+                            method_name: method_name.clone(),
+                            method_span: (start, end),
+                            index,
+                        }))
+                    }
+                    other => Err(DbError::Cozo(format!(
+                        "tuple method return receiver should store a name, index, method name, and method span, got {other:?}"
+                    ))),
+                }
+            }
+            "MethodResultLocalBinding" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name, method_name, start, end] => {
+                        let start = start.parse::<usize>().map_err(|err| {
+                            DbError::Cozo(format!(
+                                "method-result local binding receiver should store a usize span start, got {start:?}: {err}"
+                            ))
+                        })?;
+                        let end = end.parse::<usize>().map_err(|err| {
+                            DbError::Cozo(format!(
+                                "method-result local binding receiver should store a usize span end, got {end:?}: {err}"
+                            ))
+                        })?;
+                        Ok(Some(Self::MethodResultLocalBinding {
+                            name: name.clone(),
+                            method_name: method_name.clone(),
+                            method_span: (start, end),
+                        }))
+                    }
+                    other => Err(DbError::Cozo(format!(
+                        "method-result local binding receiver should store a name, method name, and method span, got {other:?}"
+                    ))),
+                }
+            }
+            "MethodResultField" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [method_name, start, end, field_path @ ..] if !field_path.is_empty() => {
+                        let start = start.parse::<usize>().map_err(|err| {
+                            DbError::Cozo(format!(
+                                "method-result field receiver should store a usize span start, got {start:?}: {err}"
+                            ))
+                        })?;
+                        let end = end.parse::<usize>().map_err(|err| {
+                            DbError::Cozo(format!(
+                                "method-result field receiver should store a usize span end, got {end:?}: {err}"
+                            ))
+                        })?;
+                        Ok(Some(Self::MethodResultField {
+                            method_name: method_name.clone(),
+                            method_span: (start, end),
+                            field_path: field_path.to_vec(),
+                        }))
+                    }
+                    other => Err(DbError::Cozo(format!(
+                        "method-result field receiver should store a method name, method span, and non-empty field path, got {other:?}"
+                    ))),
+                }
+            }
+            "EnumVariantBinding" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name, field_index, variant_name, enum_path @ ..] if !enum_path.is_empty() => {
+                        let field_index = field_index.parse::<usize>().map_err(|err| {
+                            DbError::Cozo(format!(
+                                "enum variant binding receiver should store a usize field index, got {field_index:?}: {err}"
+                            ))
+                        })?;
+                        Ok(Some(Self::EnumVariantBinding {
+                            name: name.clone(),
+                            enum_path: enum_path.to_vec(),
+                            variant_name: variant_name.clone(),
+                            field_index,
+                        }))
+                    }
+                    other => Err(DbError::Cozo(format!(
+                        "enum variant binding receiver should store a name, field index, variant name, and enum path, got {other:?}"
+                    ))),
+                }
+            }
+            "BorrowedLocalBinding" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name] => Ok(Some(Self::BorrowedLocalBinding { name: name.clone() })),
+                    other => Err(DbError::Cozo(format!(
+                        "borrowed local binding receiver should store exactly one name, got {other:?}"
+                    ))),
+                }
+            }
+            "BorrowedTypedLocalBinding" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name, type_path @ ..] if !type_path.is_empty() => {
+                        Ok(Some(Self::BorrowedTypedLocalBinding {
+                            name: name.clone(),
+                            type_path: type_path.to_vec(),
+                        }))
+                    }
+                    other => Err(DbError::Cozo(format!(
+                        "borrowed typed local binding receiver should store a name followed by a type path, got {other:?}"
+                    ))),
+                }
+            }
+            "BorrowedInitializedLocalBinding" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name, init_path @ ..] if !init_path.is_empty() => {
+                        Ok(Some(Self::BorrowedInitializedLocalBinding {
+                            name: name.clone(),
+                            init_path: init_path.to_vec(),
+                        }))
+                    }
+                    other => Err(DbError::Cozo(format!(
+                        "borrowed initialized local binding receiver should store a name followed by an initializer path, got {other:?}"
+                    ))),
+                }
+            }
+            "DereferencedLocalBinding" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name] => Ok(Some(Self::DereferencedLocalBinding { name: name.clone() })),
+                    other => Err(DbError::Cozo(format!(
+                        "dereferenced local binding receiver should store exactly one name, got {other:?}"
+                    ))),
+                }
+            }
+            "DereferencedInitializedLocalBinding" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name, init_path @ ..] if !init_path.is_empty() => {
+                        Ok(Some(Self::DereferencedInitializedLocalBinding {
+                            name: name.clone(),
+                            init_path: init_path.to_vec(),
+                        }))
+                    }
+                    other => Err(DbError::Cozo(format!(
+                        "dereferenced initialized local binding receiver should store a name followed by an initializer path, got {other:?}"
+                    ))),
+                }
+            }
+            "FieldLocalBinding" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name, field_path @ ..] if !field_path.is_empty() => {
+                        Ok(Some(Self::FieldLocalBinding {
+                            name: name.clone(),
+                            field_path: field_path.to_vec(),
+                        }))
+                    }
+                    other => Err(DbError::Cozo(format!(
+                        "field local binding receiver should store a name followed by a field path, got {other:?}"
+                    ))),
+                }
+            }
+            "FieldTypedLocalBinding" => {
+                let path = to_string_list(path)?;
+                let (name, type_path, field_path) =
+                    split_field_receiver_path(&path, "field typed local binding receiver")?;
+                Ok(Some(Self::FieldTypedLocalBinding {
+                    name,
+                    type_path,
+                    field_path,
+                }))
+            }
+            "FieldInitializedLocalBinding" => {
+                let path = to_string_list(path)?;
+                let (name, init_path, field_path) =
+                    split_field_receiver_path(&path, "field initialized local binding receiver")?;
+                Ok(Some(Self::FieldInitializedLocalBinding {
+                    name,
+                    init_path,
+                    field_path,
+                }))
+            }
+            "PathCallResult" => {
+                let path = to_string_list(path)?;
+                if path.is_empty() {
+                    Err(DbError::Cozo(
+                        "path-call result receiver should store a non-empty path".to_string(),
+                    ))
+                } else {
+                    Ok(Some(Self::PathCallResult { path }))
+                }
+            }
+            "MethodCallResult" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [method_name] => Ok(Some(Self::MethodCallResult {
+                        method_name: method_name.clone(),
+                    })),
+                    other => Err(DbError::Cozo(format!(
+                        "method-call result receiver should store exactly one method name, got {other:?}"
+                    ))),
+                }
+            }
+            "AwaitResult" => match path {
+                DataValue::Null => Ok(Some(Self::AwaitResult)),
+                other => Err(DbError::Cozo(format!(
+                    "await result receiver should not store a path, got {other:?}"
+                ))),
+            },
+            "AwaitPathCallResult" => {
+                let path = to_string_list(path)?;
+                if path.is_empty() {
+                    Err(DbError::Cozo(
+                        "await path-call result receiver should store a non-empty path".to_string(),
+                    ))
+                } else {
+                    Ok(Some(Self::AwaitPathCallResult { path }))
+                }
+            }
+            "AwaitMethodCallResult" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [method_name] => Ok(Some(Self::AwaitMethodCallResult {
+                        method_name: method_name.clone(),
+                    })),
+                    other => Err(DbError::Cozo(format!(
+                        "await method-call result receiver should store exactly one method name, got {other:?}"
+                    ))),
+                }
+            }
+            "TryResult" => match path {
+                DataValue::Null => Ok(Some(Self::TryResult)),
+                other => Err(DbError::Cozo(format!(
+                    "try result receiver should not store a path, got {other:?}"
+                ))),
+            },
+            "TryPathCallResult" => {
+                let path = to_string_list(path)?;
+                if path.is_empty() {
+                    Err(DbError::Cozo(
+                        "try path-call result receiver should store a non-empty path".to_string(),
+                    ))
+                } else {
+                    Ok(Some(Self::TryPathCallResult { path }))
+                }
+            }
+            "TryMethodCallResult" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [method_name] => Ok(Some(Self::TryMethodCallResult {
+                        method_name: method_name.clone(),
+                    })),
+                    other => Err(DbError::Cozo(format!(
+                        "try method-call result receiver should store exactly one method name, got {other:?}"
+                    ))),
+                }
+            }
+            "IfBranchPaths" => {
+                let paths = split_branch_receiver_paths(&to_string_list(path)?)?;
+                Ok(Some(Self::IfBranchPaths { paths }))
+            }
+            "Literal" => match path {
+                DataValue::Null => Ok(Some(Self::Literal)),
+                other => Err(DbError::Cozo(format!(
+                    "literal receiver should not store a path, got {other:?}"
+                ))),
+            },
+            "Unsupported" => match path {
+                DataValue::Null => Ok(Some(Self::Unsupported)),
+                other => Err(DbError::Cozo(format!(
+                    "unsupported receiver should not store a path, got {other:?}"
+                ))),
+            },
+            other => Err(DbError::Cozo(format!(
+                "unknown method-call receiver kind {other:?}"
+            ))),
+        }
+    }
+}
+
+fn split_field_receiver_path(
+    path: &[String],
+    label: &str,
+) -> Result<(String, Vec<String>, Vec<String>), DbError> {
+    let Some((name, rest)) = path.split_first() else {
+        return Err(DbError::Cozo(format!(
+            "{label} should store a name, root path, separator, and field path, got {path:?}"
+        )));
+    };
+    let Some(separator_idx) = rest.iter().position(String::is_empty) else {
+        return Err(DbError::Cozo(format!(
+            "{label} should include an empty separator between root path and field path, got {path:?}"
+        )));
+    };
+    let root_path = rest[..separator_idx].to_vec();
+    let field_path = rest[separator_idx + 1..].to_vec();
+    if root_path.is_empty() || field_path.is_empty() {
+        return Err(DbError::Cozo(format!(
+            "{label} should store non-empty root and field paths, got {path:?}"
+        )));
+    }
+
+    Ok((name.clone(), root_path, field_path))
+}
+
+fn split_branch_receiver_paths(path: &[String]) -> Result<Vec<Vec<String>>, DbError> {
+    if path.is_empty() {
+        return Err(DbError::Cozo(
+            "if-branch receiver should store at least one branch path".to_string(),
+        ));
+    }
+
+    let mut paths = Vec::new();
+    let mut current = Vec::new();
+    for segment in path {
+        if segment.is_empty() {
+            if current.is_empty() {
+                return Err(DbError::Cozo(format!(
+                    "if-branch receiver should not store an empty branch path, got {path:?}"
+                )));
+            }
+            paths.push(std::mem::take(&mut current));
+        } else {
+            current.push(segment.clone());
+        }
+    }
+
+    if current.is_empty() {
+        return Err(DbError::Cozo(format!(
+            "if-branch receiver should not end with an empty branch path, got {path:?}"
+        )));
+    }
+    paths.push(current);
+    Ok(paths)
+}

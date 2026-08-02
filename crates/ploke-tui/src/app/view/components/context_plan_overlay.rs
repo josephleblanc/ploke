@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ploke_core::rag_types::ContextPart;
+use ploke_core::rag_types::{CallStatusKind, ContextPart};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Style, Stylize as _};
@@ -20,6 +20,10 @@ use crate::app::view::widgets::expanding_list::{ExpandingItem, ExpandingList, Ex
 use crate::chat_history::{ContextTokens, Message, MessageKind, TokenKind};
 use crate::context_plan::{ContextPlanHistory, ContextPlanSnapshot};
 use crate::llm::manager::events::{ContextExclusionReason, ContextPlanMessage, ContextPlanRagPart};
+use crate::rag::context::{
+    format_call_context_block_for_part, format_call_expansion, format_call_paths_block,
+    format_proof_context_block,
+};
 use crate::ui_theme::UiTheme;
 use unicode_width::UnicodeWidthChar;
 
@@ -930,13 +934,57 @@ fn build_display_items(
                 let expanded = expanded.contains(key) || snippet_visible.contains(&part.part_id);
                 let show_snippet_gutter = snippet_visible.contains(&part.part_id);
                 let display_path = display_relative_path(&part.file_path, focus_root);
+                let type_suffix = part
+                    .type_context
+                    .map(|ctx| format!(", type {}", ctx.relation.to_static_str()))
+                    .unwrap_or_default();
+                let expansion_suffix = part
+                    .call_expansion
+                    .map(|ctx| format!(", call {}", ctx.relation.to_static_str()))
+                    .unwrap_or_default();
+                let call_suffix = if part.call_context.is_empty() {
+                    String::new()
+                } else {
+                    format!(", calls {}", part.call_context.len())
+                };
+                let call_paths = part.call_paths_from_owner.len() + part.call_paths_to_target.len();
+                let call_path_suffix = if call_paths == 0 {
+                    String::new()
+                } else {
+                    format!(", paths {call_paths}")
+                };
+                let call_blockers = part
+                    .call_context
+                    .iter()
+                    .filter(|call| call.status != CallStatusKind::Resolved)
+                    .count();
+                let call_blocker_suffix = if call_blockers == 0 {
+                    String::new()
+                } else {
+                    format!(", call blockers {call_blockers}")
+                };
+                let proof_suffix = if part.proof_context.is_empty() {
+                    String::new()
+                } else {
+                    format!(", proofs {}", part.proof_context.len())
+                };
+                let proof_blockers = part
+                    .proof_context
+                    .iter()
+                    .filter(|proof| proof.blocker_reason.is_some())
+                    .count();
+                let proof_blocker_suffix = if proof_blockers == 0 {
+                    String::new()
+                } else {
+                    format!(", proof blockers {proof_blockers}")
+                };
                 let suffix = format!(
                     " ({}, score {:.3}{}) — ~{} tok",
                     part.kind.to_static_str(),
                     part.score,
-                    part.type_context
-                        .map(|ctx| format!(", type {}", ctx.relation.to_static_str()))
-                        .unwrap_or_default(),
+                    format_args!(
+                        "{type_suffix}{expansion_suffix}{call_suffix}{call_path_suffix}{call_blocker_suffix}{proof_suffix}{proof_blocker_suffix}"
+                    ),
                     part.estimated_tokens
                 );
                 let title_path =
@@ -961,6 +1009,47 @@ fn build_display_items(
                             truncate_uuid(type_context.seed_id),
                             type_context.distance
                         )));
+                    }
+                    if let Some(call_expansion) = part.call_expansion {
+                        details.push(Line::from(format!(
+                            "    {}",
+                            format_call_expansion(&call_expansion)
+                        )));
+                    }
+                    if !part.call_context.is_empty() {
+                        let call_context = format_call_context_block_for_part(
+                            part.part_id,
+                            &part.call_context,
+                            "  ",
+                            8,
+                        );
+                        details.extend(
+                            call_context
+                                .lines()
+                                .map(|line| Line::from(format!("    {line}"))),
+                        );
+                    }
+                    if !part.call_paths_from_owner.is_empty()
+                        || !part.call_paths_to_target.is_empty()
+                    {
+                        let call_paths = format_call_paths_block(
+                            &part.call_paths_from_owner,
+                            &part.call_paths_to_target,
+                        );
+                        details.extend(
+                            call_paths
+                                .lines()
+                                .map(|line| Line::from(format!("    {line}"))),
+                        );
+                    }
+                    if !part.proof_context.is_empty() {
+                        let proof_context =
+                            format_proof_context_block(&part.proof_context, "  ", 8);
+                        details.extend(
+                            proof_context
+                                .lines()
+                                .map(|line| Line::from(format!("    {line}"))),
+                        );
                     }
                     details.push(Line::from(format!(
                         "    estimated_tokens: {}",
@@ -1412,3 +1501,6 @@ fn render_context_plan_footer(frame: &mut Frame<'_>, area: Rect, help_visible: b
         .wrap(Wrap { trim: true });
     frame.render_widget(widget, area);
 }
+
+#[cfg(test)]
+mod tests;

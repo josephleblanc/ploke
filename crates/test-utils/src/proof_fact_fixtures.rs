@@ -1,0 +1,803 @@
+use uuid::Uuid;
+
+const AXUM_CALL_GRAPH_DOMAIN_ID: &str = "bd:corpus-axum-call-graph";
+const MEMCHR_CALL_GRAPH_DOMAIN_ID: &str = "bd:corpus-memchr-call-graph";
+pub const AXUM_OPAQUE_FUTURE_SUMMARY_ID: &str = "external-summary:axum-opaque-future-macro";
+pub const AXUM_ROUTING_POST_SUMMARY_ID: &str = "external-summary:axum-routing-post-macro";
+pub const AXUM_ROUTING_GET_SERVICE_SUMMARY_ID: &str =
+    "external-summary:axum-routing-get-service-macro";
+pub const AXUM_REQUEST_BUILDER_SUMMARY_ID: &str = "external-summary:axum-request-builder";
+pub const AXUM_STD_MEM_REPLACE_SUMMARY_ID: &str = "external-summary:axum-std-mem-replace";
+pub const AXUM_SERDE_JSON_FROM_SLICE_SUMMARY_ID: &str =
+    "external-summary:axum-serde-json-from-slice";
+pub const AXUM_BODY_SIZE_HINT_SUMMARY_ID: &str = "external-summary:axum-body-size-hint";
+pub const AXUM_ROUTE_ONESHOT_SUMMARY_ID: &str = "external-summary:axum-route-oneshot";
+const AXUM_OPAQUE_FUTURE_EXPANDED_ITEM_ID: &str = "expanded:item:axum-opaque-future-new";
+const AXUM_ROUTING_POST_EXPANDED_ITEM_ID: &str = "expanded:item:axum-routing-post";
+const AXUM_ROUTING_GET_SERVICE_EXPANDED_ITEM_ID: &str = "expanded:item:axum-routing-get-service";
+const AXUM_OPAQUE_FUTURE_DEFINITION_ID: &str = "def:axum::future::IntoServiceFuture::new";
+const AXUM_ROUTING_POST_DEFINITION_ID: &str = "def:axum::routing::method_routing::post";
+const AXUM_ROUTING_GET_SERVICE_DEFINITION_ID: &str =
+    "def:axum::routing::method_routing::get_service";
+
+pub fn axum_opaque_future_boundary_id(call_site_id: Uuid) -> String {
+    format!("boundary:{call_site_id}:opaque_future")
+}
+
+pub fn axum_opaque_future_macro_summary_records(call_site_id: Uuid) -> Vec<serde_json::Value> {
+    let site = call_site_id.to_string();
+    let boundary_id = axum_opaque_future_boundary_id(call_site_id);
+    let mut records = axum_call_graph_domain_records(AXUM_CALL_GRAPH_DOMAIN_ID);
+    records.extend([
+        serde_json::json!({
+            "fact_kind": "expansion_boundary",
+            "schema_version": "ploke-proof-facts.v1",
+            "boundary_id": boundary_id.clone(),
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "call_site_id": site,
+            "boundary_kind": "macro_rules_invocation",
+            "expansion_state": "externally_summarized",
+            "external_summary_id": AXUM_OPAQUE_FUTURE_SUMMARY_ID,
+            "source_span": {
+                "file": "axum/src/handler/future.rs",
+                "start_byte": 285,
+                "end_byte": 506
+            },
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "expanded_item",
+            "schema_version": "ploke-proof-facts.v1",
+            "expanded_item_id": AXUM_OPAQUE_FUTURE_EXPANDED_ITEM_ID,
+            "boundary_id": boundary_id.clone(),
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "definition_id": AXUM_OPAQUE_FUTURE_DEFINITION_ID,
+            "source_span": {
+                "file": "axum/src/macros.rs",
+                "start_byte": 483,
+                "end_byte": 523
+            },
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "external_summary",
+            "schema_version": "ploke-proof-facts.v1",
+            "external_summary_id": AXUM_OPAQUE_FUTURE_SUMMARY_ID,
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "summary_class": "audited_no_process_effects",
+            "artifact_hash": "sha256:axum-opaque-future-summary",
+            "version": "axum-opaque-future-summary-v1",
+            "review_method": "source-oracle-review",
+            "scope_of_validity": "axum opaque_future macro boundary for IntoServiceFuture",
+            "allowed_effects": ["external_summary_boundary"],
+            "required_containment": "none",
+            "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+    ]);
+    records
+}
+
+pub fn axum_routing_post_boundary_id(call_site_id: Uuid) -> String {
+    format!("boundary:{call_site_id}:routing_post")
+}
+
+pub fn axum_routing_post_macro_summary_records(call_site_id: Uuid) -> Vec<serde_json::Value> {
+    let site = call_site_id.to_string();
+    let boundary_id = axum_routing_post_boundary_id(call_site_id);
+    let mut records = axum_call_graph_domain_records(AXUM_CALL_GRAPH_DOMAIN_ID);
+    records.extend([
+        serde_json::json!({
+            "fact_kind": "expansion_boundary",
+            "schema_version": "ploke-proof-facts.v1",
+            "boundary_id": boundary_id.clone(),
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "call_site_id": site,
+            "boundary_kind": "macro_rules_invocation",
+            "expansion_state": "externally_summarized",
+            "external_summary_id": AXUM_ROUTING_POST_SUMMARY_ID,
+            "source_span": {
+                "file": "axum/src/routing/method_routing.rs",
+                "start_byte": 12752,
+                "end_byte": 12786
+            },
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "expanded_item",
+            "schema_version": "ploke-proof-facts.v1",
+            "expanded_item_id": AXUM_ROUTING_POST_EXPANDED_ITEM_ID,
+            "boundary_id": boundary_id.clone(),
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "definition_id": AXUM_ROUTING_POST_DEFINITION_ID,
+            "source_span": {
+                "file": "axum/src/routing/method_routing.rs",
+                "start_byte": 12752,
+                "end_byte": 12786
+            },
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "external_summary",
+            "schema_version": "ploke-proof-facts.v1",
+            "external_summary_id": AXUM_ROUTING_POST_SUMMARY_ID,
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "summary_class": "audited_no_process_effects",
+            "artifact_hash": "sha256:axum-routing-post-summary",
+            "version": "axum-routing-post-summary-v1",
+            "review_method": "source-oracle-review",
+            "scope_of_validity": "axum routing method macro boundary for generated post function",
+            "allowed_effects": ["external_summary_boundary"],
+            "required_containment": "none",
+            "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+    ]);
+    records
+}
+
+pub fn axum_routing_get_service_boundary_id(call_site_id: Uuid) -> String {
+    format!("boundary:{call_site_id}:routing_get_service")
+}
+
+pub fn axum_routing_get_service_macro_summary_records(
+    call_site_id: Uuid,
+) -> Vec<serde_json::Value> {
+    let site = call_site_id.to_string();
+    let boundary_id = axum_routing_get_service_boundary_id(call_site_id);
+    let mut records = axum_call_graph_domain_records(AXUM_CALL_GRAPH_DOMAIN_ID);
+    records.extend([
+        serde_json::json!({
+            "fact_kind": "expansion_boundary",
+            "schema_version": "ploke-proof-facts.v1",
+            "boundary_id": boundary_id.clone(),
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "call_site_id": site,
+            "boundary_kind": "macro_rules_invocation",
+            "expansion_state": "externally_summarized",
+            "external_summary_id": AXUM_ROUTING_GET_SERVICE_SUMMARY_ID,
+            "source_span": {
+                "file": "axum/src/routing/method_routing.rs",
+                "start_byte": 9725,
+                "end_byte": 9765
+            },
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "expanded_item",
+            "schema_version": "ploke-proof-facts.v1",
+            "expanded_item_id": AXUM_ROUTING_GET_SERVICE_EXPANDED_ITEM_ID,
+            "boundary_id": boundary_id.clone(),
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "definition_id": AXUM_ROUTING_GET_SERVICE_DEFINITION_ID,
+            "source_span": {
+                "file": "axum/src/routing/method_routing.rs",
+                "start_byte": 9725,
+                "end_byte": 9765
+            },
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "external_summary",
+            "schema_version": "ploke-proof-facts.v1",
+            "external_summary_id": AXUM_ROUTING_GET_SERVICE_SUMMARY_ID,
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "summary_class": "audited_no_process_effects",
+            "artifact_hash": "sha256:axum-routing-get-service-summary",
+            "version": "axum-routing-get-service-summary-v1",
+            "review_method": "source-oracle-review",
+            "scope_of_validity": "axum routing method macro boundary for generated get_service function",
+            "allowed_effects": ["external_summary_boundary"],
+            "required_containment": "none",
+            "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+    ]);
+    records
+}
+
+pub fn axum_entrypoint_record(domain_id: &str, definition_id: Uuid) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "entrypoint_summary",
+        "schema_version": "ploke-proof-facts.v1",
+        "entrypoint_summary_id": "entrypoint-summary:axum-error-handling-traits-test",
+        "build_domain_id": domain_id,
+        "definition_id": definition_id.to_string(),
+        "target_kind": "test",
+        "target_name": "generated-test-harness",
+        "summary_class": "analyzed_source",
+        "artifact_hash": "sha256:axum-error-handling-traits-test-harness",
+        "version": "axum-call-graph-test-entrypoint-v1",
+        "review_method": "source-oracle-review",
+        "scope_of_validity": "axum error_handling::traits generated #[test] harness in corpus_axum_call_graph",
+        "required_containment": "rust-test-harness",
+        "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",
+        "status": "admitted",
+        "evidence_use": "proof_only"
+    })
+}
+
+pub fn axum_entrypoint_effect_policy_record(
+    domain_id: &str,
+    definition_id: Uuid,
+    allowed_effects: &[&str],
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "effect_policy",
+        "schema_version": "ploke-proof-facts.v1",
+        "effect_policy_id": "effect-policy:axum-error-handling-traits-test",
+        "build_domain_id": domain_id,
+        "definition_id": definition_id.to_string(),
+        "proof_policy_version": "axum-call-graph-test-entrypoint-policy-v1",
+        "review_method": "source-oracle-review",
+        "scope_of_validity": "axum error_handling::traits generated #[test] harness execution policy in corpus_axum_call_graph",
+        "allowed_effects": allowed_effects,
+        "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",
+        "status": "admitted",
+        "evidence_use": "proof_only"
+    })
+}
+
+pub fn axum_request_builder_summary_records(call_site_id: Uuid) -> Vec<serde_json::Value> {
+    let site = call_site_id.to_string();
+    let mut records = axum_call_graph_domain_records(AXUM_CALL_GRAPH_DOMAIN_ID);
+    records.extend([
+        serde_json::json!({
+            "fact_kind": "call_resolution",
+            "schema_version": "ploke-proof-facts.v1",
+            "call_site_id": site,
+            "resolution_state": "externally_summarized",
+            "external_summary_id": AXUM_REQUEST_BUILDER_SUMMARY_ID,
+            "evidence_use": "proof_and_navigation"
+        }),
+        serde_json::json!({
+            "fact_kind": "external_summary",
+            "schema_version": "ploke-proof-facts.v1",
+            "external_summary_id": AXUM_REQUEST_BUILDER_SUMMARY_ID,
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "summary_class": "audited_no_process_effects",
+            "artifact_hash": "sha256:axum-request-builder-summary",
+            "version": "axum-request-builder-summary-v1",
+            "review_method": "source-oracle-review",
+            "scope_of_validity": "axum Request::builder alias frontier in corpus_axum_call_graph",
+            "allowed_effects": ["external_summary_boundary"],
+            "required_containment": "none",
+            "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+    ]);
+    records
+}
+
+pub fn axum_std_mem_replace_summary_records(call_site_id: Uuid) -> Vec<serde_json::Value> {
+    let site = call_site_id.to_string();
+    let mut records = axum_call_graph_domain_records(AXUM_CALL_GRAPH_DOMAIN_ID);
+    records.extend([
+        serde_json::json!({
+            "fact_kind": "call_resolution",
+            "schema_version": "ploke-proof-facts.v1",
+            "call_site_id": site,
+            "resolution_state": "externally_summarized",
+            "external_summary_id": AXUM_STD_MEM_REPLACE_SUMMARY_ID,
+            "evidence_use": "proof_and_navigation"
+        }),
+        serde_json::json!({
+            "fact_kind": "external_summary",
+            "schema_version": "ploke-proof-facts.v1",
+            "external_summary_id": AXUM_STD_MEM_REPLACE_SUMMARY_ID,
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "summary_class": "audited_no_process_effects",
+            "artifact_hash": "sha256:axum-std-mem-replace-summary",
+            "version": "axum-call-graph-summary-v1",
+            "review_method": "source-oracle-review",
+            "scope_of_validity": "axum std::mem::replace frontier in corpus_axum_call_graph",
+            "allowed_effects": ["external_summary_boundary"],
+            "required_containment": "none",
+            "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+    ]);
+    records
+}
+
+pub fn axum_serde_json_from_slice_summary_records(call_site_id: Uuid) -> Vec<serde_json::Value> {
+    let site = call_site_id.to_string();
+    let mut records = axum_call_graph_domain_records(AXUM_CALL_GRAPH_DOMAIN_ID);
+    records.extend([
+        serde_json::json!({
+            "fact_kind": "call_resolution",
+            "schema_version": "ploke-proof-facts.v1",
+            "call_site_id": site,
+            "resolution_state": "externally_summarized",
+            "external_summary_id": AXUM_SERDE_JSON_FROM_SLICE_SUMMARY_ID,
+            "evidence_use": "proof_and_navigation"
+        }),
+        serde_json::json!({
+            "fact_kind": "external_summary",
+            "schema_version": "ploke-proof-facts.v1",
+            "external_summary_id": AXUM_SERDE_JSON_FROM_SLICE_SUMMARY_ID,
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "summary_class": "audited_no_process_effects",
+            "artifact_hash": "sha256:axum-serde-json-from-slice-summary",
+            "version": "axum-call-graph-summary-v1",
+            "review_method": "source-oracle-review",
+            "scope_of_validity": "axum serde_json::Deserializer::from_slice frontier in corpus_axum_call_graph",
+            "allowed_effects": ["external_summary_boundary"],
+            "required_containment": "none",
+            "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+    ]);
+    records
+}
+
+pub fn axum_body_size_hint_summary_records(call_site_id: Uuid) -> Vec<serde_json::Value> {
+    let site = call_site_id.to_string();
+    let mut records = axum_call_graph_domain_records(AXUM_CALL_GRAPH_DOMAIN_ID);
+    records.extend([
+        serde_json::json!({
+            "fact_kind": "call_resolution",
+            "schema_version": "ploke-proof-facts.v1",
+            "call_site_id": site,
+            "resolution_state": "externally_summarized",
+            "external_summary_id": AXUM_BODY_SIZE_HINT_SUMMARY_ID,
+            "evidence_use": "proof_and_navigation"
+        }),
+        serde_json::json!({
+            "fact_kind": "external_summary",
+            "schema_version": "ploke-proof-facts.v1",
+            "external_summary_id": AXUM_BODY_SIZE_HINT_SUMMARY_ID,
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "summary_class": "audited_no_process_effects",
+            "artifact_hash": "sha256:axum-body-size-hint-summary",
+            "version": "axum-call-graph-summary-v1",
+            "review_method": "source-oracle-review",
+            "scope_of_validity": "axum Body::size_hint tuple-field external frontier in corpus_axum_call_graph",
+            "allowed_effects": ["external_summary_boundary"],
+            "required_containment": "none",
+            "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+    ]);
+    records
+}
+
+pub fn axum_route_oneshot_summary_records(call_site_id: Uuid) -> Vec<serde_json::Value> {
+    let site = call_site_id.to_string();
+    let mut records = axum_call_graph_domain_records(AXUM_CALL_GRAPH_DOMAIN_ID);
+    records.extend([
+        serde_json::json!({
+            "fact_kind": "call_resolution",
+            "schema_version": "ploke-proof-facts.v1",
+            "call_site_id": site,
+            "resolution_state": "externally_summarized",
+            "external_summary_id": AXUM_ROUTE_ONESHOT_SUMMARY_ID,
+            "evidence_use": "proof_and_navigation"
+        }),
+        serde_json::json!({
+            "fact_kind": "external_summary",
+            "schema_version": "ploke-proof-facts.v1",
+            "external_summary_id": AXUM_ROUTE_ONESHOT_SUMMARY_ID,
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "summary_class": "audited_no_process_effects",
+            "artifact_hash": "sha256:axum-route-oneshot-summary",
+            "version": "axum-call-graph-summary-v1",
+            "review_method": "source-oracle-review",
+            "scope_of_validity": "axum Route::oneshot tower ServiceExt external frontier in corpus_axum_call_graph",
+            "allowed_effects": ["external_summary_boundary"],
+            "required_containment": "none",
+            "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+    ]);
+    records
+}
+
+pub fn axum_dependency_record(
+    domain_id: &str,
+    call_site_id: Uuid,
+    caller_def_id: Uuid,
+    resolved_def_id: Uuid,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "dependency_root",
+        "schema_version": "ploke-proof-facts.v1",
+        "dependency_root_id": format!("dependency-root:axum-core-from-ref:{call_site_id}"),
+        "build_domain_id": domain_id,
+        "call_site_id": call_site_id.to_string(),
+        "caller_def_id": caller_def_id.to_string(),
+        "resolved_def_id": resolved_def_id.to_string(),
+        "dependency_name": "axum_core",
+        "target_kind": "workspace_trait_method",
+        "target_name": "axum_core::extract::FromRef::from_ref",
+        "target_root": "axum-core/src/extract/from_ref.rs",
+        "import_path": ["axum_core", "extract", "FromRef"],
+        "resolved_path": ["axum_core", "extract", "FromRef", "from_ref"],
+        "artifact_hash": "sha256:axum-core-from-ref-dependency-root",
+        "version": "axum-call-graph-dependency-root-v1",
+        "review_method": "source-oracle-review",
+        "scope_of_validity": "axum dependency-root FromRef::from_ref source oracle in corpus_axum_call_graph",
+        "status": "admitted",
+        "evidence_use": "proof_only"
+    })
+}
+
+pub fn axum_test_client_dependency_record(
+    domain_id: &str,
+    call_site_id: Uuid,
+    caller_def_id: Uuid,
+    resolved_def_id: Uuid,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "dependency_root",
+        "schema_version": "ploke-proof-facts.v1",
+        "dependency_root_id": format!("dependency-root:axum-test-client-new:{call_site_id}"),
+        "build_domain_id": domain_id,
+        "call_site_id": call_site_id.to_string(),
+        "caller_def_id": caller_def_id.to_string(),
+        "resolved_def_id": resolved_def_id.to_string(),
+        "dependency_name": "axum",
+        "target_kind": "workspace_inherent_method",
+        "target_name": "axum::test_helpers::TestClient::new",
+        "target_root": "axum/src/test_helpers/test_client.rs",
+        "import_path": ["axum", "test_helpers", "*"],
+        "resolved_path": ["axum", "test_helpers", "TestClient", "new"],
+        "artifact_hash": "sha256:axum-test-client-new-dependency-root",
+        "version": "axum-call-graph-dependency-root-v1",
+        "review_method": "source-oracle-review",
+        "scope_of_validity": "axum-core request_parts TestClient::new workspace dependency-root source oracle in corpus_axum_call_graph",
+        "status": "admitted",
+        "evidence_use": "proof_only"
+    })
+}
+
+pub fn axum_router_new_dependency_record(
+    domain_id: &str,
+    call_site_id: Uuid,
+    caller_def_id: Uuid,
+    resolved_def_id: Uuid,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "dependency_root",
+        "schema_version": "ploke-proof-facts.v1",
+        "dependency_root_id": format!("dependency-root:axum-router-new:{call_site_id}"),
+        "build_domain_id": domain_id,
+        "call_site_id": call_site_id.to_string(),
+        "caller_def_id": caller_def_id.to_string(),
+        "resolved_def_id": resolved_def_id.to_string(),
+        "dependency_name": "axum",
+        "target_kind": "workspace_inherent_method",
+        "target_name": "axum::routing::Router::new",
+        "target_root": "axum/src/routing/mod.rs",
+        "import_path": ["axum", "Router"],
+        "resolved_path": ["axum", "routing", "Router", "new"],
+        "artifact_hash": "sha256:axum-router-new-dependency-root",
+        "version": "axum-call-graph-dependency-root-v1",
+        "review_method": "source-oracle-review",
+        "scope_of_validity": "axum-core request_parts Router::new workspace dependency-root source oracle in corpus_axum_call_graph",
+        "status": "admitted",
+        "evidence_use": "proof_only"
+    })
+}
+
+pub fn axum_body_empty_dependency_record(
+    domain_id: &str,
+    call_site_id: Uuid,
+    caller_def_id: Uuid,
+    resolved_def_id: Uuid,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "dependency_root",
+        "schema_version": "ploke-proof-facts.v1",
+        "dependency_root_id": format!("dependency-root:axum-core-body-empty:{call_site_id}"),
+        "build_domain_id": domain_id,
+        "call_site_id": call_site_id.to_string(),
+        "caller_def_id": caller_def_id.to_string(),
+        "resolved_def_id": resolved_def_id.to_string(),
+        "dependency_name": "axum_core",
+        "target_kind": "workspace_inherent_method",
+        "target_name": "axum_core::body::Body::empty",
+        "target_root": "axum-core/src/body.rs",
+        "import_path": ["axum_core", "body", "Body"],
+        "resolved_path": ["axum_core", "body", "Body", "empty"],
+        "artifact_hash": "sha256:axum-core-body-empty-dependency-root",
+        "version": "axum-call-graph-dependency-root-v1",
+        "review_method": "source-oracle-review",
+        "scope_of_validity": "axum form.rs direct Body::empty workspace dependency-root source oracle in corpus_axum_call_graph",
+        "status": "admitted",
+        "evidence_use": "proof_only"
+    })
+}
+
+pub fn axum_body_empty_reexport_dependency_record(
+    domain_id: &str,
+    call_site_id: Uuid,
+    caller_def_id: Uuid,
+    resolved_def_id: Uuid,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "dependency_root",
+        "schema_version": "ploke-proof-facts.v1",
+        "dependency_root_id": format!("dependency-root:axum-body-empty-reexport:{call_site_id}"),
+        "build_domain_id": domain_id,
+        "call_site_id": call_site_id.to_string(),
+        "caller_def_id": caller_def_id.to_string(),
+        "resolved_def_id": resolved_def_id.to_string(),
+        "dependency_name": "axum_core",
+        "target_kind": "workspace_inherent_method",
+        "target_name": "axum_core::body::Body::empty",
+        "target_root": "axum-core/src/body.rs",
+        "import_path": ["crate", "body", "Body"],
+        "resolved_path": ["axum_core", "body", "Body", "empty"],
+        "artifact_hash": "sha256:axum-body-empty-reexport-dependency-root",
+        "version": "axum-call-graph-dependency-root-v1",
+        "review_method": "source-oracle-review",
+        "scope_of_validity": "axum raw_form.rs crate::body::Body re-export Body::empty workspace dependency-root source oracle in corpus_axum_call_graph",
+        "status": "admitted",
+        "evidence_use": "proof_only"
+    })
+}
+
+pub fn axum_call_graph_domain_records(domain_id: &str) -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({
+            "fact_kind": "build_domain",
+            "schema_version": "ploke-proof-facts.v1",
+            "build_domain_id": domain_id,
+            "cargo_metadata_hash": "sha256:axum-metadata",
+            "cargo_lock_hash": "sha256:axum-lock",
+            "package_id": "github:tokio-rs/axum",
+            "target_kind": "library",
+            "target_name": "axum",
+            "target_root": "axum/src/lib.rs",
+            "target_triple": "x86_64-unknown-linux-gnu",
+            "host_triple": "x86_64-unknown-linux-gnu",
+            "profile": "dev",
+            "features_hash": "sha256:axum-features",
+            "active_cfg_hash": "sha256:axum-cfg",
+            "rustc_version": "rustc fixture",
+            "extractor_version": "ploke-test",
+            "proof_policy_version": "proof-policy-test",
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "cfg_domain",
+            "schema_version": "ploke-proof-facts.v1",
+            "cfg_domain_id": "cfg:corpus-axum-call-graph",
+            "build_domain_id": domain_id,
+            "active_cfg_hash": "sha256:axum-cfg",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "rustc_invocation",
+            "schema_version": "ploke-proof-facts.v1",
+            "invocation_id": "rustc:corpus-axum-call-graph",
+            "build_domain_id": domain_id,
+            "rustc_program": "rustc",
+            "rustc_version": "rustc fixture",
+            "working_directory": "/workspace/axum",
+            "argument_vector_hash": "sha256:axum-rustc-argv",
+            "environment_hash": "sha256:axum-rustc-env",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+    ]
+}
+
+pub fn axum_dyn_future_poll_blocker(call_site_id: Uuid) -> serde_json::Value {
+    axum_future_poll_blocker(
+        call_site_id,
+        "axum/src/error_handling/mod.rs:251 dyn Future::poll",
+    )
+}
+
+pub fn axum_future_poll_blocker(call_site_id: Uuid, source: &str) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": "ploke-proof-facts.v1",
+        "blocker_id": format!("blocker:axum-dyn-future-poll-runtime-dispatch:{call_site_id}"),
+        "reason": "dynamic_dispatch_unbounded",
+        "status": "blocked",
+        "call_site_id": call_site_id.to_string(),
+        "detail": format!("{source} concrete runtime future unresolved"),
+        "evidence_use": "proof_only"
+    })
+}
+
+pub fn axum_dyn_future_poll_runtime_dispatch_summary(call_site_id: Uuid) -> serde_json::Value {
+    axum_future_poll_runtime_dispatch_summary(
+        call_site_id,
+        "axum/src/error_handling/mod.rs:251 dyn Future::poll",
+    )
+}
+
+pub fn axum_future_poll_runtime_dispatch_summary(
+    call_site_id: Uuid,
+    source: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "runtime_dispatch_summary",
+        "schema_version": "ploke-proof-facts.v1",
+        "dispatch_summary_id": format!("runtime-dispatch-summary:axum-dyn-future-poll:{call_site_id}"),
+        "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+        "call_site_id": call_site_id.to_string(),
+        "summary_class": "allowed_only_under_containment",
+        "artifact_hash": "sha256:axum-dyn-future-poll-runtime-dispatch",
+        "version": "axum-dyn-future-poll-runtime-dispatch-summary-v1",
+        "review_method": "source-oracle-review",
+        "scope_of_validity": format!("{source} targetless runtime dispatch frontier in corpus_axum_call_graph"),
+        "required_containment": "runtime-dispatch summary does not create local traversal edges",
+        "invalidation_conditions": "source oracle, fixture hash, async poll/resume modeling, or proof policy changes",
+        "status": "admitted",
+        "evidence_use": "proof_only"
+    })
+}
+
+pub fn axum_callable_field_runtime_dispatch_blocker(
+    call_site_id: Uuid,
+    field: &str,
+    source: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": "ploke-proof-facts.v1",
+        "blocker_id": format!("blocker:axum-callable-field-runtime-dispatch:{field}:{call_site_id}"),
+        "reason": "dynamic_dispatch_unbounded",
+        "status": "blocked",
+        "call_site_id": call_site_id.to_string(),
+        "detail": format!("{source} callable field `{field}` remains targetless until callable-field value-flow proof is modeled"),
+        "evidence_use": "proof_only"
+    })
+}
+
+pub fn axum_callable_field_runtime_dispatch_summary(
+    call_site_id: Uuid,
+    field: &str,
+    source: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "runtime_dispatch_summary",
+        "schema_version": "ploke-proof-facts.v1",
+        "dispatch_summary_id": format!("runtime-dispatch-summary:axum-callable-field:{field}:{call_site_id}"),
+        "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+        "call_site_id": call_site_id.to_string(),
+        "summary_class": "allowed_only_under_containment",
+        "artifact_hash": format!("sha256:axum-callable-field-runtime-dispatch-{field}"),
+        "version": "axum-callable-field-runtime-dispatch-summary-v1",
+        "review_method": "source-oracle-review",
+        "scope_of_validity": format!("{source} callable field `{field}` targetless runtime dispatch frontier in corpus_axum_call_graph"),
+        "required_containment": "runtime-dispatch summary does not create local traversal edges",
+        "invalidation_conditions": "source oracle, fixture hash, callable field value-flow modeling, or proof policy changes",
+        "status": "admitted",
+        "evidence_use": "proof_only"
+    })
+}
+
+pub fn axum_handler_async_block_poll_resume_blocker(
+    call_site_id: Uuid,
+    callee: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": "ploke-proof-facts.v1",
+        "blocker_id": format!("blocker:axum-handler-async-block-poll-resume:{callee}:{call_site_id}"),
+        "reason": "dynamic_dispatch_unbounded",
+        "status": "blocked",
+        "call_site_id": call_site_id.to_string(),
+        "detail": format!("axum/src/handler/mod.rs:217 async-block `{callee}` remains targetless until callable binding and async poll/resume proof are modeled"),
+        "evidence_use": "proof_only"
+    })
+}
+
+pub fn axum_callback_parameter_blocker(call_site_id: Uuid) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": "ploke-proof-facts.v1",
+        "blocker_id": format!("blocker:axum-callback-parameter-dispatch:{call_site_id}"),
+        "reason": "dynamic_dispatch_unbounded",
+        "status": "blocked",
+        "call_site_id": call_site_id.to_string(),
+        "detail": "axum-macros/src/lib.rs:737 f(attr, input) captures a callable parameter; traversal remains targetless until interprocedural callback argument proof is modeled",
+        "evidence_use": "proof_only"
+    })
+}
+
+pub fn memchr_callable_trait_object_runtime_dispatch_blocker(
+    call_site_id: Uuid,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": "ploke-proof-facts.v1",
+        "blocker_id": format!("blocker:memchr-callable-trait-object-dispatch:{call_site_id}"),
+        "reason": "dynamic_dispatch_unbounded",
+        "status": "blocked",
+        "call_site_id": call_site_id.to_string(),
+        "detail": "memchr/src/tests/substring/mod.rs Runner.fwd/rev boxed dyn FnMut dispatch remains targetless until callable trait-object value-flow proof is modeled",
+        "evidence_use": "proof_only"
+    })
+}
+
+pub fn memchr_callable_trait_object_runtime_dispatch_summary(
+    call_site_id: Uuid,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "runtime_dispatch_summary",
+        "schema_version": "ploke-proof-facts.v1",
+        "dispatch_summary_id": format!("runtime-dispatch-summary:memchr-callable-trait-object:{call_site_id}"),
+        "build_domain_id": MEMCHR_CALL_GRAPH_DOMAIN_ID,
+        "call_site_id": call_site_id.to_string(),
+        "summary_class": "allowed_only_under_containment",
+        "artifact_hash": "sha256:memchr-callable-trait-object-runtime-dispatch",
+        "version": "memchr-callable-trait-object-runtime-dispatch-summary-v1",
+        "review_method": "source-oracle-review",
+        "scope_of_validity": "memchr/src/tests/substring/mod.rs Runner.fwd/rev boxed dyn FnMut targetless runtime dispatch frontier in corpus_memchr_call_graph",
+        "required_containment": "runtime-dispatch summary does not create local traversal edges",
+        "invalidation_conditions": "source oracle, fixture hash, callable trait-object value-flow modeling, or proof policy changes",
+        "status": "admitted",
+        "evidence_use": "proof_only"
+    })
+}
+
+pub fn fixture_async_closure_poll_resume_blocker(
+    call_site_id: Uuid,
+    owner_name: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": "ploke-proof-facts.v1",
+        "blocker_id": format!("blocker:fixture-async-closure-poll-resume:{owner_name}:{call_site_id}"),
+        "reason": "dynamic_dispatch_unbounded",
+        "status": "blocked",
+        "call_site_id": call_site_id.to_string(),
+        "detail": format!("fixture_call_graph::{owner_name} calls an async closure without awaiting the returned future; traversal remains targetless until async poll/resume proof is modeled"),
+        "evidence_use": "proof_only"
+    })
+}
+
+pub fn generic_array_size_hint_guard_blocker(call_site_id: Uuid) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": "ploke-proof-facts.v1",
+        "blocker_id": format!("blocker:generic-array-size-hint-guard-receiver:{call_site_id}"),
+        "reason": "type_resolution_missing",
+        "status": "blocked",
+        "call_site_id": call_site_id.to_string(),
+        "detail": "generic-array/src/lib.rs guarded match receiver `iter.size_hint()` needs exact iterator receiver type proof before it can resolve",
+        "evidence_use": "proof_only"
+    })
+}
+
+pub fn generic_array_iter_summary_blocker(call_site_id: Uuid) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": "ploke-proof-facts.v1",
+        "blocker_id": format!("blocker:generic-array-into-iter-summary:{call_site_id}"),
+        "reason": "external_dependency_summary_missing",
+        "status": "blocked",
+        "call_site_id": call_site_id.to_string(),
+        "detail": "generic-array/src/lib.rs guarded `iter.size_hint()` needs an external summary for `IntoIterator::into_iter` proving the returned iterator supports `Iterator::size_hint`",
+        "evidence_use": "proof_only"
+    })
+}
+
+pub fn fixture_extern_c_abs_effect_record(call_site_id: Uuid) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "effect_seed",
+        "schema_version": "ploke-proof-facts.v1",
+        "effect_seed_id": "effect:fixture-extern-c-abs",
+        "call_site_id": call_site_id.to_string(),
+        "effect_class": "ffi_boundary",
+        "confidence": "fixture-source-oracle",
+        "blocker_if_unresolved": true,
+        "evidence_use": "proof_only"
+    })
+}

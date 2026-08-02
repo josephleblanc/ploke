@@ -74,10 +74,9 @@ mod modules;
 mod statics;
 mod structs;
 mod traits;
-#[cfg(not(feature = "typed_type_graph"))]
-mod type_alias;
-#[cfg(not(feature = "typed_type_graph"))]
-mod unions;
+
+// Legacy v1 `TypeId`-based node tests for type aliases and unions are not part
+// of the typed type-graph baseline.
 
 // -- Files that have yet to be updated are gated behind the cfgs below:
 #[cfg(not(feature = "type_bearing_ids"))]

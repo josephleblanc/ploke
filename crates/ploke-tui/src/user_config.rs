@@ -735,6 +735,10 @@ pub struct RagUserConfig {
     pub rrf: RrfConfig,
     #[serde(default)]
     pub mmr: Option<MmrConfig>,
+    #[serde(default)]
+    pub call_context: CallContextUserConfig,
+    #[serde(default)]
+    pub proof_context: ProofContextUserConfig,
 }
 
 impl Default for RagUserConfig {
@@ -748,6 +752,107 @@ impl Default for RagUserConfig {
             strict_bm25_by_default: false,
             rrf: RrfConfig::default(),
             mmr: None,
+            call_context: CallContextUserConfig::default(),
+            proof_context: ProofContextUserConfig::default(),
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+pub struct CallContextUserConfig {
+    #[serde(default = "default_call_context_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_call_context_max_owner_hits")]
+    pub max_owner_hits: usize,
+    #[serde(default = "default_call_context_max_sites_per_owner")]
+    pub max_sites_per_owner: usize,
+    #[serde(default = "default_call_context_max_targets_per_site")]
+    pub max_targets_per_site: usize,
+    #[serde(default = "default_call_context_max_caller_hits")]
+    pub max_caller_hits: usize,
+    #[serde(default = "default_call_context_caller_factor")]
+    pub caller_factor: f32,
+    #[serde(default = "default_call_context_path_depth")]
+    pub path_depth: u32,
+    #[serde(default = "default_call_context_path_limit")]
+    pub path_limit: usize,
+}
+impl Default for CallContextUserConfig {
+    fn default() -> Self {
+        let defaults = ploke_rag::CallContextConfig::default();
+        Self {
+            enabled: defaults.enabled,
+            max_owner_hits: defaults.max_owner_hits,
+            max_sites_per_owner: defaults.max_sites_per_owner,
+            max_targets_per_site: defaults.max_targets_per_site,
+            max_caller_hits: defaults.max_caller_hits,
+            caller_factor: defaults.caller_factor,
+            path_depth: defaults.path_depth,
+            path_limit: defaults.path_limit,
+        }
+    }
+}
+impl CallContextUserConfig {
+    pub fn validated(self) -> Self {
+        Self {
+            enabled: self.enabled,
+            max_owner_hits: self.max_owner_hits.min(1024),
+            max_sites_per_owner: self.max_sites_per_owner.min(1024),
+            max_targets_per_site: self.max_targets_per_site.min(1024),
+            max_caller_hits: self.max_caller_hits.min(4096),
+            caller_factor: self.caller_factor.clamp(0.0, 10.0),
+            path_depth: self.path_depth.min(16),
+            path_limit: self.path_limit.min(4096),
+        }
+    }
+
+    pub(crate) fn to_rag_config(self) -> ploke_rag::CallContextConfig {
+        let cfg = self.validated();
+        ploke_rag::CallContextConfig {
+            enabled: cfg.enabled,
+            max_owner_hits: cfg.max_owner_hits,
+            max_sites_per_owner: cfg.max_sites_per_owner,
+            max_targets_per_site: cfg.max_targets_per_site,
+            max_caller_hits: cfg.max_caller_hits,
+            caller_factor: cfg.caller_factor,
+            path_depth: cfg.path_depth,
+            path_limit: cfg.path_limit,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+pub struct ProofContextUserConfig {
+    #[serde(default = "default_proof_context_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_proof_context_max_seed_hits")]
+    pub max_seed_hits: usize,
+    #[serde(default = "default_proof_context_max_rows_per_part")]
+    pub max_rows_per_part: usize,
+}
+impl Default for ProofContextUserConfig {
+    fn default() -> Self {
+        let defaults = ploke_rag::ProofContextConfig::default();
+        Self {
+            enabled: defaults.enabled,
+            max_seed_hits: defaults.max_seed_hits,
+            max_rows_per_part: defaults.max_rows_per_part,
+        }
+    }
+}
+impl ProofContextUserConfig {
+    pub fn validated(self) -> Self {
+        Self {
+            enabled: self.enabled,
+            max_seed_hits: self.max_seed_hits.min(1024),
+            max_rows_per_part: self.max_rows_per_part.min(1024),
+        }
+    }
+
+    pub(crate) fn to_rag_config(self) -> ploke_rag::ProofContextConfig {
+        let cfg = self.validated();
+        ploke_rag::ProofContextConfig {
+            enabled: cfg.enabled,
+            max_seed_hits: cfg.max_seed_hits,
+            max_rows_per_part: cfg.max_rows_per_part,
         }
     }
 }
@@ -781,6 +886,8 @@ impl RagUserConfig {
             strict_bm25_by_default: self.strict_bm25_by_default,
             rrf,
             mmr,
+            call_context: self.call_context.validated(),
+            proof_context: self.proof_context.validated(),
         }
     }
 }
@@ -982,6 +1089,39 @@ fn default_bm25_timeout_ms() -> u64 {
 fn default_bm25_retry_backoff_ms() -> Vec<u64> {
     vec![50, 100]
 }
+fn default_call_context_enabled() -> bool {
+    ploke_rag::CallContextConfig::default().enabled
+}
+fn default_call_context_max_owner_hits() -> usize {
+    ploke_rag::CallContextConfig::default().max_owner_hits
+}
+fn default_call_context_max_sites_per_owner() -> usize {
+    ploke_rag::CallContextConfig::default().max_sites_per_owner
+}
+fn default_call_context_max_targets_per_site() -> usize {
+    ploke_rag::CallContextConfig::default().max_targets_per_site
+}
+fn default_call_context_max_caller_hits() -> usize {
+    ploke_rag::CallContextConfig::default().max_caller_hits
+}
+fn default_call_context_caller_factor() -> f32 {
+    ploke_rag::CallContextConfig::default().caller_factor
+}
+fn default_call_context_path_depth() -> u32 {
+    ploke_rag::CallContextConfig::default().path_depth
+}
+fn default_call_context_path_limit() -> usize {
+    ploke_rag::CallContextConfig::default().path_limit
+}
+fn default_proof_context_enabled() -> bool {
+    ploke_rag::ProofContextConfig::default().enabled
+}
+fn default_proof_context_max_seed_hits() -> usize {
+    ploke_rag::ProofContextConfig::default().max_seed_hits
+}
+fn default_proof_context_max_rows_per_part() -> usize {
+    ploke_rag::ProofContextConfig::default().max_rows_per_part
+}
 
 fn default_token_limit() -> u32 {
     8_196
@@ -1070,6 +1210,55 @@ mod tests {
     fn runtime_config_preserves_default_llm_timeout() {
         let runtime_cfg: RuntimeConfig = UserConfig::default().into();
         assert_eq!(runtime_cfg.llm_timeout_secs, ploke_llm::LLM_TIMEOUT_SECS);
+    }
+    #[test]
+    fn rag_call_graph_context_config_round_trips_and_validates() {
+        let toml = r#"
+            [rag.call_context]
+            enabled = true
+            max_owner_hits = 64
+            max_sites_per_owner = 24
+            max_targets_per_site = 12
+            max_caller_hits = 2048
+            caller_factor = 0.75
+            path_depth = 4
+            path_limit = 128
+
+            [rag.proof_context]
+            enabled = true
+            max_seed_hits = 32
+            max_rows_per_part = 96
+        "#;
+
+        let cfg: UserConfig = toml::from_str(toml).expect("toml parses");
+        let validated_rag = cfg.rag.validated();
+        let validated = validated_rag.call_context;
+        assert!(validated.enabled);
+        assert_eq!(validated.max_owner_hits, 64);
+        assert_eq!(validated.max_sites_per_owner, 24);
+        assert_eq!(validated.max_targets_per_site, 12);
+        assert_eq!(validated.max_caller_hits, 2048);
+        assert!((validated.caller_factor - 0.75).abs() < f32::EPSILON);
+        assert_eq!(validated.path_depth, 4);
+        assert_eq!(validated.path_limit, 128);
+
+        let rag_cfg = validated.to_rag_config();
+        assert_eq!(rag_cfg.max_owner_hits, 64);
+        assert_eq!(rag_cfg.max_sites_per_owner, 24);
+        assert_eq!(rag_cfg.max_targets_per_site, 12);
+        assert_eq!(rag_cfg.max_caller_hits, 2048);
+        assert!((rag_cfg.caller_factor - 0.75).abs() < f32::EPSILON);
+        assert_eq!(rag_cfg.path_depth, 4);
+        assert_eq!(rag_cfg.path_limit, 128);
+
+        let proof = validated_rag.proof_context;
+        assert!(proof.enabled);
+        assert_eq!(proof.max_seed_hits, 32);
+        assert_eq!(proof.max_rows_per_part, 96);
+
+        let proof_cfg = proof.to_rag_config();
+        assert_eq!(proof_cfg.max_seed_hits, 32);
+        assert_eq!(proof_cfg.max_rows_per_part, 96);
     }
 
     #[test]

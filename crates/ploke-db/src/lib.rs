@@ -4,21 +4,40 @@
 extern crate self as ploke_db;
 
 pub mod bm25_index;
+pub mod call_graph;
 mod database;
 mod error;
 pub mod get_by_id;
 pub mod helpers;
 mod index;
 pub mod observability;
+pub mod proof_graph;
 mod query;
 mod result;
 pub(crate) mod utils;
 
 pub mod tool_query;
 pub mod type_graph;
+pub mod workspace;
 
 pub mod multi_embedding;
-
+pub use call_graph::{
+    CallBuildDomain, CallCalleeEvidenceRow, CallCallerRow, CallContextCandidate,
+    CallContextOptions, CallContextRelation, CallContextRow, CallContextSeed,
+    CallEffectGuardReport, CallEffectPolicyViolation, CallGuardReport, CallImpactReport,
+    CallNodeContext, CallNodeInfo, CallNodeKind, CallPath, CallPathEdge, CallPathOptions,
+    CallProofInvariantFinding, CallReachEffect, CallReachReport, CallReceiver, CallRelationKind,
+    CallResolutionKind, CallResolutionRow, CallSiteBucket, CallSiteKind, CallSiteRow,
+    CallStatusKind, CallTargetKind, CallTargetRow, CallTestEntrypoint, CallTestSelectionReport,
+    CrateBoundaryEdge, CrateBoundaryPolicyRule, CrateBoundaryPolicyViolation, ExternalSummaryNeed,
+    FuturePollFieldProducerFlow, LocalBindingEdgeRow, LocalBindingRelationKind, LocalBindingRow,
+    ModuleBoundaryEdge, ModuleBoundaryPolicyRule, ModuleBoundaryPolicyViolation,
+    ReturnedCallBinding, ReturnedCallBindingFlow, ReturnedCallProducer, ReturnedCallSite,
+    ReturnedCallSource, ReturnedFutureExecutionFlow, ReturnedFutureFlow, ReturnedFutureSite,
+    RuntimeDispatchNeed, SelfFieldAssignmentArgumentFlow, SelfFieldAssignmentFlow,
+    SelfFieldParameterFlow, UnsafeBlockCall, call_target_endpoint_relation,
+    valid_call_target_family,
+};
 pub use database::RestoredEmbeddingSet;
 pub use database::{
     CrateContextRow, Database, NamespaceExportArtifact, NamespaceImportConflictReport,
@@ -36,6 +55,10 @@ pub use observability::{
     Validity,
 };
 pub use ploke_error::PrettyDebug;
+pub use proof_graph::{
+    ProofBindingEvidenceRow, ProofBlockerRow, ProofCheckerEdgeRow, ProofGraphContextRow,
+    ProofGraphStore, ProofInvariantFinding, ProofInvariantStatus, ProofSourceProvenanceRow,
+};
 pub use query::{
     QueryBuilder,
     builder::FieldValue,
@@ -51,3 +74,4 @@ pub use type_graph::{
     TypeContextRelation, TypeContextSeed, TypeRelationKind, TypeTargetPath, TypeUseCoordinate,
     TypeUseRole, TypeUseRoot,
 };
+pub use workspace::{CrateDependencyRow, WorkspaceDependencyCandidate};

@@ -1,8 +1,11 @@
+mod call;
 mod consts;
 mod enums;
+mod executable;
 mod function;
 mod impls;
 mod import;
+mod local_binding;
 mod macros;
 mod method;
 mod module;
@@ -31,11 +34,19 @@ use ploke_core::TypeId;
 use serde::{Deserialize, Serialize};
 
 // Re-export all node types from submodules
+pub use call::{
+    ArgumentFieldInit, CallArgument, CallNode, DynamicBranchTarget, DynamicCallCallee,
+    DynamicCallNode, MacroCallNode, MethodCallNode, MethodCallReceiver, PathCallCallee,
+    PathCallNode,
+};
 pub use consts::ConstNode;
 pub use enums::{EnumNode, VariantNode};
+pub use executable::{ExecutableBodyNode, ExecutableWherePredicate};
 pub use function::{FunctionNode, ParamData};
 pub use impls::ImplNode;
 pub use import::{ImportKind, ImportNode};
+pub(in crate::parser) use local_binding::generate_local_binding_id;
+pub use local_binding::{LocalBindingId, LocalBindingKind, LocalBindingNode, LocalBindingSource};
 pub use macros::{MacroKind, MacroNode, ProcMacroKind};
 pub use method::{ExpectedMethodNode, MethodNode};
 pub use module::{ModDisc, ModuleKind, ModuleNode};

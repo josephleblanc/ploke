@@ -1,5 +1,3 @@
-#![cfg(feature = "typed_type_graph")]
-
 //! Integration tests for the typed type-resolution v2 relation surface.
 //!
 //! These cases assert exact typed relation endpoints rather than legacy

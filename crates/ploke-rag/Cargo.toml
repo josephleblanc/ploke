@@ -25,7 +25,9 @@ ploke-test-utils = { path = "../test-utils" }
 cozo = { workspace = true }
 lazy_static = "1.5.0"
 criterion = { version = "0.7", features = ["async_tokio"] }
+serde_json = { workspace = true }
 
 [features]
 default = []
-typed_type_graph = ["ploke-db/typed_type_graph"]
+# Compatibility alias; call graph context is baseline.
+call_graph = []

@@ -20,6 +20,7 @@ tokio = { workspace = true }
 
 uuid = { workspace = true, features = ["v5", "serde"] }
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 proc-macro2 = { workspace = true, features = ["span-locations"] }
 log = { workspace = true }
 ploke-db = { path = "../ploke-db" }
@@ -36,4 +37,6 @@ once_cell = "1.19"
 [features]
 default = ["test_setup"]
 test_setup = []
+# Compatibility alias; call graph fixture helpers are baseline.
+call_graph = []
 # Feature flag for the UUID refactor in test-utils (REMOVED)

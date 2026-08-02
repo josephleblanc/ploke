@@ -1073,6 +1073,7 @@ mod tests {
 | `read_file` | Read a file (with optional line‑range and byte limits). | `file`, optional `start_line`, `end_line`, `max_bytes` |
 | `code_item_lookup` | Look up the definition of a known code item (better than grep). | `file_path`, `item_name`, `module_path`, `node_kind` |
 | `code_item_edges` | Show all graph edges for a target item (discover nearby code items). | Same args as `code_item_lookup` |
+| `code_private_uncalled` | List private code items with no incoming persisted local callers. | optional `max_results` |
 | `cargo` | Run `cargo check` or `cargo test` with JSON diagnostics. | `command` (`"check"` or `"test"`), many optional flags (`all_features`, `bins`, `features`, `release`, etc.) |
 
 All of these tools are defined in the `functions` namespace and can be called directly from the chat by providing a JSON payload matching the parameter schema shown above. If you’d like me to invoke any of them (e.g., read a file, run a cargo command, or request code context), just let me know what you need!"#;

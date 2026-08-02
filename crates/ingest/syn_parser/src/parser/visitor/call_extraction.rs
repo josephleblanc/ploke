@@ -1,0 +1,3649 @@
+//! Structural call-site extraction from already-parsed `syn` bodies.
+//!
+//! This module records parser-owned call expression occurrences. It deliberately
+//! stops at structural facts: no target method/function resolution is attempted
+//! here.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use syn::spanned::Spanned;
+use syn::visit::{self, Visit};
+
+mod dynamic;
+mod field_projection;
+mod macro_expansion;
+mod model;
+mod parameter_binding;
+mod receiver;
+
+use dynamic::classify_dynamic_callee;
+use field_projection::field_projection_binding;
+use macro_expansion::GeneratedCall;
+pub(super) use macro_expansion::MacroExpansionContext;
+use model::{ConstructedFields, FieldInitProof, LocalBindingProof};
+pub(super) use parameter_binding::{extract_parameter_bindings, parameter_names};
+use receiver::classify_method_receiver;
+
+use crate::parser::nodes::{
+    AnyCallSiteId, ArgumentFieldInit, CallArgument, CallBodyOwnerId, CallNode, DynamicCallCallee,
+    DynamicCallNode, ExecutableBodyId, ExecutableBodyNode, MacroCallNode, MethodCallNode,
+    PathCallCallee, PathCallNode, generate_async_block_body_id, generate_closure_body_id,
+    generate_dynamic_call_site_id, generate_local_binding_id, generate_local_item_body_id,
+    generate_macro_call_site_id, generate_method_call_site_id, generate_path_call_site_id,
+};
+use crate::parser::nodes::{
+    LocalBindingId, LocalBindingKind, LocalBindingNode, LocalBindingSource,
+};
+use crate::parser::{
+    nodes::CallSiteKind,
+    relations::{CallSiteRelation, LocalBindingRelation},
+};
+
+/// Extracts structural call-site facts from one function-like body.
+///
+/// The caller supplies the typed owner after the surrounding function or method
+/// ID has already been generated. The returned facts are ready to append to
+/// `CodeGraph.call_sites` and `CodeGraph.call_site_relations`.
+pub(super) fn extract_body_call_sites(
+    owner: CallBodyOwnerId,
+    block: &syn::Block,
+    cfgs: &[String],
+    receiver_names: &[String],
+    macro_expansions: &MacroExpansionContext,
+) -> (
+    Vec<CallNode>,
+    Vec<CallSiteRelation>,
+    Vec<LocalBindingRelation>,
+    Vec<ExecutableBodyNode>,
+    Vec<LocalBindingNode>,
+) {
+    let mut visitor = BodyCallVisitor {
+        owner,
+        cfgs,
+        param_names: receiver_names,
+        macro_expansions,
+        local_scopes: Vec::new(),
+        calls: Vec::new(),
+        relations: Vec::new(),
+        local_binding_relations: Vec::new(),
+        executable_bodies: Vec::new(),
+        local_bindings: Vec::new(),
+        awaited_call_spans: Vec::new(),
+        callee_names: Vec::new(),
+        zero_span_keys: BTreeMap::new(),
+        unsafe_depth: 0,
+    };
+    visitor.visit_block(block);
+    (
+        visitor.calls,
+        visitor.relations,
+        visitor.local_binding_relations,
+        visitor.executable_bodies,
+        visitor.local_bindings,
+    )
+}
+
+/// Extracts structural call-site facts from one item initializer expression.
+pub(super) fn extract_expr_call_sites(
+    owner: CallBodyOwnerId,
+    expr: &syn::Expr,
+    cfgs: &[String],
+) -> (
+    Vec<CallNode>,
+    Vec<CallSiteRelation>,
+    Vec<LocalBindingRelation>,
+    Vec<ExecutableBodyNode>,
+    Vec<LocalBindingNode>,
+) {
+    let macro_expansions = MacroExpansionContext::default();
+    let mut visitor = BodyCallVisitor {
+        owner,
+        cfgs,
+        param_names: &[],
+        macro_expansions: &macro_expansions,
+        local_scopes: Vec::new(),
+        calls: Vec::new(),
+        relations: Vec::new(),
+        local_binding_relations: Vec::new(),
+        executable_bodies: Vec::new(),
+        local_bindings: Vec::new(),
+        awaited_call_spans: Vec::new(),
+        callee_names: Vec::new(),
+        zero_span_keys: BTreeMap::new(),
+        unsafe_depth: 0,
+    };
+    visitor.visit_expr(expr);
+    (
+        visitor.calls,
+        visitor.relations,
+        visitor.local_binding_relations,
+        visitor.executable_bodies,
+        visitor.local_bindings,
+    )
+}
+
+struct BodyCallVisitor<'a> {
+    owner: CallBodyOwnerId,
+    cfgs: &'a [String],
+    param_names: &'a [String],
+    macro_expansions: &'a MacroExpansionContext,
+    local_scopes: Vec<Vec<LocalBindingProof>>,
+    calls: Vec<CallNode>,
+    relations: Vec<CallSiteRelation>,
+    local_binding_relations: Vec<LocalBindingRelation>,
+    executable_bodies: Vec<ExecutableBodyNode>,
+    local_bindings: Vec<LocalBindingNode>,
+    awaited_call_spans: Vec<(usize, usize)>,
+    callee_names: Vec<BTreeSet<String>>,
+    zero_span_keys: BTreeMap<(CallSiteKind, String), usize>,
+    unsafe_depth: usize,
+}
+
+struct SelfFieldAssignment {
+    name: String,
+    span: (usize, usize),
+    field_path: Vec<String>,
+    source_path: Vec<String>,
+}
+
+impl BodyCallVisitor<'_> {
+    fn record_macro_call(&mut self, mac: &syn::Macro) {
+        let macro_name = path_discriminator(&mac.path);
+        if macro_name.is_empty() {
+            return;
+        }
+
+        let byte_range = mac.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
+        let id = generate_macro_call_site_id(self.owner, &macro_name, span, self.cfgs);
+        let target = id.into();
+
+        self.calls.push(CallNode::MacroCall(MacroCallNode {
+            id,
+            owner: self.owner,
+            span,
+            cfgs: self.cfgs.to_vec(),
+            unsafe_block: self.unsafe_depth > 0,
+            macro_name,
+        }));
+        self.relations.push(CallSiteRelation::BodyContainsCall {
+            source: self.owner,
+            target,
+        });
+    }
+
+    fn record_awaited_call_result(&mut self, target: AnyCallSiteId, span: (usize, usize)) {
+        if self.awaited_call_spans.contains(&span) {
+            self.relations.push(CallSiteRelation::CallResultAwaited {
+                source: self.owner,
+                target,
+            });
+        }
+    }
+
+    fn record_macro_path_expr_call(&mut self, expr: &syn::Expr, span: (usize, usize)) {
+        let syn::Expr::Call(call) = expr else {
+            return;
+        };
+        let syn::Expr::Path(callee) = call.func.as_ref() else {
+            return;
+        };
+
+        let path = path_call_segments(callee);
+        if path.is_empty() {
+            return;
+        }
+
+        let id = generate_path_call_site_id(self.owner, &path, span, self.cfgs);
+        let target = id.into();
+
+        self.calls.push(CallNode::PathCall(PathCallNode {
+            id,
+            owner: self.owner,
+            span,
+            cfgs: self.cfgs.to_vec(),
+            unsafe_block: self.unsafe_depth > 0,
+            callee: classify_path_callee(
+                &path,
+                callee,
+                self.param_names,
+                &self.local_scopes,
+                false,
+            ),
+            path,
+            arg_count: call.args.len(),
+            generic_arg_count: path_generic_arg_count(&callee.path),
+            arguments: call_arguments(
+                &call.args,
+                self.owner,
+                self.cfgs,
+                self.param_names,
+                &self.local_scopes,
+            ),
+        }));
+        self.relations.push(CallSiteRelation::BodyContainsCall {
+            source: self.owner,
+            target,
+        });
+    }
+
+    fn record_generated_call(&mut self, call: GeneratedCall, span: (usize, usize)) {
+        let unsafe_block = self.unsafe_depth > 0 || call.unsafe_block;
+        let path_id = generate_path_call_site_id(self.owner, &call.path, span, self.cfgs);
+        let path_target = path_id.into();
+
+        self.calls.push(CallNode::PathCall(PathCallNode {
+            id: path_id,
+            owner: self.owner,
+            span,
+            cfgs: self.cfgs.to_vec(),
+            unsafe_block,
+            callee: PathCallCallee::ItemPath,
+            path: call.path.clone(),
+            arg_count: call.path_arg_count,
+            generic_arg_count: call.generic_arg_count,
+            arguments: vec![CallArgument::Other; call.path_arg_count],
+        }));
+        self.relations.push(CallSiteRelation::BodyContainsCall {
+            source: self.owner,
+            target: path_target,
+        });
+
+        let dynamic_id = generate_dynamic_call_site_id(self.owner, span, self.cfgs);
+        let dynamic_target = dynamic_id.into();
+        self.calls.push(CallNode::DynamicCall(DynamicCallNode {
+            id: dynamic_id,
+            owner: self.owner,
+            span,
+            cfgs: self.cfgs.to_vec(),
+            unsafe_block,
+            arg_count: call.dynamic_arg_count,
+            callee: DynamicCallCallee::ReturnedPathCall {
+                path: call.path,
+                is_awaited: false,
+            },
+        }));
+        self.relations.push(CallSiteRelation::BodyContainsCall {
+            source: self.owner,
+            target: dynamic_target,
+        });
+    }
+
+    fn record_path_call(&mut self, call: &syn::ExprCall) {
+        let syn::Expr::Path(callee) = call.func.as_ref() else {
+            return;
+        };
+
+        let path = path_call_segments(callee);
+        if path.is_empty() {
+            return;
+        }
+
+        let byte_range = call.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
+        let id = generate_path_call_site_id(self.owner, &path, span, self.cfgs);
+        let target = id.into();
+        let is_awaited = self.awaited_call_spans.contains(&span);
+
+        self.calls.push(CallNode::PathCall(PathCallNode {
+            id,
+            owner: self.owner,
+            span,
+            cfgs: self.cfgs.to_vec(),
+            unsafe_block: self.unsafe_depth > 0,
+            callee: classify_path_callee(
+                &path,
+                callee,
+                self.param_names,
+                &self.local_scopes,
+                is_awaited,
+            ),
+            path,
+            arg_count: call.args.len(),
+            generic_arg_count: path_generic_arg_count(&callee.path),
+            arguments: call_arguments(
+                &call.args,
+                self.owner,
+                self.cfgs,
+                self.param_names,
+                &self.local_scopes,
+            ),
+        }));
+        self.relations.push(CallSiteRelation::BodyContainsCall {
+            source: self.owner,
+            target,
+        });
+        self.record_awaited_call_result(target, span);
+    }
+
+    fn record_dynamic_call(&mut self, call: &syn::ExprCall) {
+        let byte_range = call.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
+        let id = generate_dynamic_call_site_id(self.owner, span, self.cfgs);
+        let target = id.into();
+        let is_awaited = self.awaited_call_spans.contains(&span);
+        let callee = classify_dynamic_callee(
+            &call.func,
+            self.owner,
+            self.cfgs,
+            self.param_names,
+            &self.local_scopes,
+            is_awaited,
+        );
+        self.record_field_projection_binding(call.func.as_ref(), &callee);
+
+        self.calls.push(CallNode::DynamicCall(DynamicCallNode {
+            id,
+            owner: self.owner,
+            span,
+            cfgs: self.cfgs.to_vec(),
+            unsafe_block: self.unsafe_depth > 0,
+            arg_count: call.args.len(),
+            callee,
+        }));
+        self.relations.push(CallSiteRelation::BodyContainsCall {
+            source: self.owner,
+            target,
+        });
+        self.record_awaited_call_result(target, span);
+    }
+
+    fn record_tail_binding(&mut self, block: &syn::Block) {
+        let Some(syn::Stmt::Expr(expr, None)) = block.stmts.last() else {
+            return;
+        };
+        let call_result_field_bindings = returned_call_result_field_bindings(
+            block,
+            self.owner,
+            self.cfgs,
+            self.param_names,
+            &self.local_scopes,
+        );
+        if let Some((type_path, field_inits)) =
+            constructed_parameter_field_inits(Some(expr), self.param_names)
+        {
+            let byte_range = expr.span().byte_range();
+            let span = (byte_range.start, byte_range.end);
+            let binding_id = self.record_local_binding(
+                "return",
+                span,
+                LocalBindingKind::ReturnExpression,
+                LocalBindingSource::Constructed { type_path },
+            );
+            self.record_constructed_field_projection_bindings(
+                "return",
+                binding_id,
+                span,
+                field_inits,
+            );
+            for binding in call_result_field_bindings {
+                self.record_local_binding(
+                    &binding.name,
+                    binding.span,
+                    LocalBindingKind::LetBinding,
+                    binding.source,
+                );
+            }
+            return;
+        }
+        if let Some((type_path, field_bindings)) = constructed_return_type_path(expr)
+            .zip((!call_result_field_bindings.is_empty()).then_some(call_result_field_bindings))
+        {
+            let byte_range = expr.span().byte_range();
+            let span = (byte_range.start, byte_range.end);
+            self.record_local_binding(
+                "return",
+                span,
+                LocalBindingKind::ReturnExpression,
+                LocalBindingSource::Constructed { type_path },
+            );
+            for binding in field_bindings {
+                self.record_local_binding(
+                    &binding.name,
+                    binding.span,
+                    LocalBindingKind::LetBinding,
+                    binding.source,
+                );
+            }
+            return;
+        }
+        let Some(source) = return_binding_source(
+            expr,
+            self.owner,
+            self.cfgs,
+            self.param_names,
+            &self.local_scopes,
+            false,
+        ) else {
+            return;
+        };
+
+        let byte_range = expr.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
+        self.record_local_binding("return", span, LocalBindingKind::ReturnExpression, source);
+    }
+
+    fn record_let_binding(
+        &mut self,
+        binding: &LocalBindingProof,
+        pat: &syn::Pat,
+        init_expr: Option<&syn::Expr>,
+    ) {
+        let source = match binding {
+            LocalBindingProof::Closure {
+                closure_id,
+                is_async,
+                ..
+            } => {
+                if *is_async {
+                    LocalBindingSource::AsyncClosure {
+                        body_id: *closure_id,
+                    }
+                } else {
+                    LocalBindingSource::Closure {
+                        body_id: *closure_id,
+                    }
+                }
+            }
+            LocalBindingProof::Initialized { init_path, .. } => {
+                LocalBindingSource::InitializedPath {
+                    init_path: init_path.clone(),
+                }
+            }
+            LocalBindingProof::Typed {
+                type_path,
+                init_path,
+                ..
+            } => match init_path {
+                Some(init_path) => LocalBindingSource::InitializedPath {
+                    init_path: init_path.clone(),
+                },
+                None if self.binding_is_called(binding.name()) => LocalBindingSource::Typed {
+                    type_path: type_path.clone(),
+                },
+                None => return,
+            },
+            LocalBindingProof::TypedAmbiguous { type_path, .. } => {
+                if !self.binding_is_called(binding.name()) {
+                    return;
+                }
+                LocalBindingSource::Typed {
+                    type_path: type_path.clone(),
+                }
+            }
+            LocalBindingProof::ValueAlias { source_path, .. } => LocalBindingSource::ValueAlias {
+                source_path: source_path.clone(),
+            },
+            _ => {
+                let Some(init_expr) = init_expr else {
+                    return;
+                };
+                let Some(span) = future_call_span(init_expr) else {
+                    return;
+                };
+                if !self.awaited_call_spans.contains(&span) {
+                    return;
+                }
+                let Some(source) = return_binding_source(
+                    init_expr,
+                    self.owner,
+                    self.cfgs,
+                    self.param_names,
+                    &self.local_scopes,
+                    true,
+                ) else {
+                    return;
+                };
+                match source {
+                    LocalBindingSource::PathCallResult { .. }
+                    | LocalBindingSource::DynamicCallResult { .. } => source,
+                    _ => return,
+                }
+            }
+        };
+        let byte_range = pat.span().byte_range();
+        self.record_local_binding(
+            binding.name(),
+            (byte_range.start, byte_range.end),
+            LocalBindingKind::LetBinding,
+            source,
+        );
+    }
+
+    fn record_awaited_future_storage_bindings(&mut self, local: &syn::Local) {
+        for binding in future_storage_bindings(
+            local,
+            self.owner,
+            self.cfgs,
+            self.param_names,
+            &self.local_scopes,
+        ) {
+            if !self.awaited_call_spans.contains(&binding.span) {
+                continue;
+            }
+            self.record_local_binding(
+                &binding.name,
+                binding.span,
+                LocalBindingKind::LetBinding,
+                binding.source,
+            );
+        }
+    }
+
+    fn record_field_projection_binding(
+        &mut self,
+        callee_expr: &syn::Expr,
+        callee: &DynamicCallCallee,
+    ) {
+        let Some(binding) = field_projection_binding(callee_expr, callee, &self.local_scopes)
+        else {
+            return;
+        };
+
+        let base_binding_id = self.record_constructed_binding(
+            &binding.base_name,
+            binding.base_span,
+            &binding.base_type_path,
+        );
+        self.record_local_binding(
+            &binding.name,
+            binding.span,
+            LocalBindingKind::FieldProjection,
+            LocalBindingSource::FieldProjection {
+                base_binding_id,
+                field_path: binding.field_path,
+                init_path: binding.init_path,
+            },
+        );
+    }
+
+    fn record_self_field_assignment(&mut self, assign: &syn::ExprAssign) {
+        let Some(binding) = self_field_assignment(
+            assign.left.as_ref(),
+            assign.right.as_ref(),
+            self.param_names,
+        ) else {
+            return;
+        };
+        self.record_local_binding(
+            &binding.name,
+            binding.span,
+            LocalBindingKind::FieldAssignment,
+            LocalBindingSource::SelfFieldAssignment {
+                field_path: binding.field_path,
+                source_path: binding.source_path,
+            },
+        );
+    }
+
+    fn record_constructed_binding(
+        &mut self,
+        name: &str,
+        span: (usize, usize),
+        type_path: &[String],
+    ) -> LocalBindingId {
+        let id = generate_local_binding_id(
+            self.owner,
+            name,
+            span,
+            LocalBindingKind::LetBinding,
+            self.cfgs,
+        );
+        if self.local_bindings.iter().any(|binding| binding.id == id) {
+            return id;
+        }
+
+        self.local_binding_relations
+            .push(LocalBindingRelation::OwnerContainsBinding {
+                source: self.owner,
+                target: id,
+            });
+        self.local_bindings.push(LocalBindingNode {
+            id,
+            owner: self.owner,
+            span,
+            cfgs: self.cfgs.to_vec(),
+            kind: LocalBindingKind::LetBinding,
+            name: name.to_string(),
+            source: LocalBindingSource::Constructed {
+                type_path: type_path.to_vec(),
+            },
+        });
+        id
+    }
+
+    fn record_constructed_field_projection_bindings(
+        &mut self,
+        base_name: &str,
+        base_binding_id: LocalBindingId,
+        span: (usize, usize),
+        field_inits: Vec<ArgumentFieldInit>,
+    ) {
+        for field in field_inits {
+            let mut name = Vec::with_capacity(field.field_path.len() + 1);
+            name.push(base_name.to_string());
+            name.extend(field.field_path.iter().cloned());
+            self.record_local_binding(
+                &name.join("."),
+                span,
+                LocalBindingKind::FieldProjection,
+                LocalBindingSource::FieldProjection {
+                    base_binding_id,
+                    field_path: field.field_path,
+                    init_path: field.init_path,
+                },
+            );
+        }
+    }
+
+    fn record_local_binding(
+        &mut self,
+        name: &str,
+        span: (usize, usize),
+        kind: LocalBindingKind,
+        source: LocalBindingSource,
+    ) -> LocalBindingId {
+        let id = generate_local_binding_id(self.owner, name, span, kind, self.cfgs);
+        self.local_binding_relations
+            .push(LocalBindingRelation::OwnerContainsBinding {
+                source: self.owner,
+                target: id,
+            });
+        if let Some(relation) = local_binding_source_relation(id, &source) {
+            self.local_binding_relations.push(relation);
+        }
+        self.local_bindings.push(LocalBindingNode {
+            id,
+            owner: self.owner,
+            span,
+            cfgs: self.cfgs.to_vec(),
+            kind,
+            name: name.to_string(),
+            source,
+        });
+        id
+    }
+
+    fn record_method_call(&mut self, call: &syn::ExprMethodCall) {
+        let receiver =
+            classify_method_receiver(&call.receiver, self.param_names, &self.local_scopes);
+
+        let method_name = call.method.to_string();
+        let byte_range = call.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
+        let id_key = self.method_call_key(&method_name, span);
+        let id = generate_method_call_site_id(self.owner, &id_key, span, self.cfgs);
+        let target = id.into();
+
+        self.calls.push(CallNode::MethodCall(MethodCallNode {
+            id,
+            owner: self.owner,
+            span,
+            cfgs: self.cfgs.to_vec(),
+            unsafe_block: self.unsafe_depth > 0,
+            method_name,
+            receiver,
+            arg_count: call.args.len(),
+            generic_arg_count: call
+                .turbofish
+                .as_ref()
+                .map_or(0, |turbofish| turbofish.args.len()),
+            arguments: call_arguments(
+                &call.args,
+                self.owner,
+                self.cfgs,
+                self.param_names,
+                &self.local_scopes,
+            ),
+        }));
+        self.relations.push(CallSiteRelation::BodyContainsCall {
+            source: self.owner,
+            target,
+        });
+        self.record_awaited_call_result(target, span);
+    }
+
+    fn method_call_key(&mut self, method_name: &str, span: (usize, usize)) -> String {
+        if span != (0, 0) {
+            return method_name.to_string();
+        }
+
+        // Quoted generated bodies can assign (0, 0) to repeated call
+        // expressions. Keep the public method name unchanged on MethodCallNode,
+        // but make the parser-local call-site identity key occurrence-aware.
+        let count = self
+            .zero_span_keys
+            .entry((CallSiteKind::Method, method_name.to_string()))
+            .or_insert(0);
+        let key = if *count == 0 {
+            method_name.to_string()
+        } else {
+            format!("{method_name}#{}", *count)
+        };
+        *count += 1;
+        key
+    }
+
+    fn binding_is_called(&self, name: &str) -> bool {
+        self.callee_names
+            .last()
+            .is_some_and(|names| names.contains(name))
+    }
+}
+
+fn block_callee_names(block: &syn::Block) -> BTreeSet<String> {
+    let mut visitor = PathCalleeVisitor {
+        names: BTreeSet::new(),
+    };
+    for stmt in &block.stmts {
+        visitor.visit_stmt(stmt);
+    }
+    visitor.names
+}
+
+struct PathCalleeVisitor {
+    names: BTreeSet<String>,
+}
+
+impl<'ast> Visit<'ast> for PathCalleeVisitor {
+    fn visit_block(&mut self, _block: &'ast syn::Block) {}
+
+    fn visit_expr_closure(&mut self, _closure: &'ast syn::ExprClosure) {}
+
+    fn visit_expr_async(&mut self, _async_block: &'ast syn::ExprAsync) {}
+
+    fn visit_item_fn(&mut self, _item_fn: &'ast syn::ItemFn) {}
+
+    fn visit_item_impl(&mut self, _item_impl: &'ast syn::ItemImpl) {}
+
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(path) = call.func.as_ref()
+            && path.qself.is_none()
+            && path.path.segments.len() == 1
+            && let Some(segment) = path.path.segments.first()
+        {
+            self.names.insert(segment.ident.to_string());
+        }
+        visit::visit_expr_call(self, call);
+    }
+}
+
+impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
+    fn visit_block(&mut self, block: &'ast syn::Block) {
+        self.local_scopes.push(local_function_bindings_in_block(
+            block, self.owner, self.cfgs,
+        ));
+        self.callee_names.push(block_callee_names(block));
+        self.record_tail_binding(block);
+        let original_awaits = self.awaited_call_spans.len();
+        self.awaited_call_spans.extend(awaited_future_spans(block));
+        for stmt in &block.stmts {
+            self.visit_stmt(stmt);
+        }
+        self.awaited_call_spans.truncate(original_awaits);
+        self.callee_names.pop();
+        self.local_scopes.pop();
+    }
+
+    fn visit_local(&mut self, local: &'ast syn::Local) {
+        let init_expr = local.init.as_ref().map(|init| init.expr.as_ref());
+
+        if let Some(init) = &local.init {
+            self.visit_expr(init.expr.as_ref());
+            if let Some((_else_token, diverge)) = &init.diverge {
+                self.visit_expr(diverge.as_ref());
+            }
+        }
+
+        let bindings = local_binding_proofs(
+            &local.pat,
+            init_expr,
+            self.owner,
+            self.cfgs,
+            self.param_names,
+            &self.local_scopes,
+        );
+        for binding in &bindings {
+            self.record_let_binding(binding, &local.pat, init_expr);
+        }
+        self.record_awaited_future_storage_bindings(local);
+        if let Some(scope) = self.local_scopes.last_mut() {
+            scope.extend(bindings);
+        }
+    }
+
+    fn visit_expr_macro(&mut self, call: &'ast syn::ExprMacro) {
+        self.record_macro_call(&call.mac);
+        if let Some(generated) = self.macro_expansions.generated_call_for(&call.mac) {
+            let byte_range = call.mac.span().byte_range();
+            self.record_generated_call(generated, (byte_range.start, byte_range.end));
+        } else if let Some(block) = self.macro_expansions.transparent_stmt_block_for(&call.mac) {
+            self.visit_block(&block);
+        } else if let Some(expr) = self.macro_expansions.transparent_expr_for(&call.mac) {
+            self.visit_expr(&expr);
+        }
+        visit::visit_expr_macro(self, call);
+    }
+
+    fn visit_stmt_macro(&mut self, call: &'ast syn::StmtMacro) {
+        self.record_macro_call(&call.mac);
+        let byte_range = call.mac.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
+        if let Some(item) = self.macro_expansions.single_local_item_for(&call.mac) {
+            self.record_macro_local_item(item, span);
+        } else if let Some(expr) = self.macro_expansions.single_path_expr_for(&call.mac) {
+            self.record_macro_path_expr_call(expr, span);
+        } else if let Some(expr) = self.macro_expansions.transparent_expr_for(&call.mac) {
+            self.visit_expr(&expr);
+        }
+        visit::visit_stmt_macro(self, call);
+    }
+
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if matches!(call.func.as_ref(), syn::Expr::Path(_)) {
+            self.record_path_call(call);
+        } else {
+            self.record_dynamic_call(call);
+        }
+        visit::visit_expr_call(self, call);
+    }
+
+    fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
+        self.record_self_field_assignment(assign);
+        visit::visit_expr_assign(self, assign);
+    }
+
+    fn visit_expr_await(&mut self, await_expr: &'ast syn::ExprAwait) {
+        let span = match unparen_expr(await_expr.base.as_ref()) {
+            syn::Expr::Call(call) => Some(call.span().byte_range()),
+            syn::Expr::MethodCall(call) => Some(call.span().byte_range()),
+            _ => None,
+        };
+        if let Some(byte_range) = span {
+            self.awaited_call_spans
+                .push((byte_range.start, byte_range.end));
+            visit::visit_expr_await(self, await_expr);
+            self.awaited_call_spans.pop();
+            return;
+        }
+        visit::visit_expr_await(self, await_expr);
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        self.record_method_call(call);
+        visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_expr_match(&mut self, expr_match: &'ast syn::ExprMatch) {
+        self.visit_expr(expr_match.expr.as_ref());
+
+        for arm in &expr_match.arms {
+            let bindings = match_arm_binding_proofs(
+                &arm.pat,
+                expr_match.expr.as_ref(),
+                self.owner,
+                self.cfgs,
+                self.param_names,
+                &self.local_scopes,
+            );
+            self.local_scopes.push(bindings);
+            if let Some((_if_token, guard)) = &arm.guard {
+                self.visit_expr(guard.as_ref());
+            }
+            self.visit_expr(arm.body.as_ref());
+            self.local_scopes.pop();
+        }
+    }
+
+    fn visit_expr_if(&mut self, expr_if: &'ast syn::ExprIf) {
+        let syn::Expr::Let(expr_let) = unparen_expr(expr_if.cond.as_ref()) else {
+            visit::visit_expr_if(self, expr_if);
+            return;
+        };
+
+        let bindings =
+            option_self_field_binding_proofs(expr_let.pat.as_ref(), expr_let.expr.as_ref());
+        if bindings.is_empty()
+            || !block_contains_direct_path_call_to_binding(&expr_if.then_branch, &bindings)
+        {
+            visit::visit_expr_if(self, expr_if);
+            return;
+        }
+
+        self.visit_expr(expr_let.expr.as_ref());
+        self.local_scopes.push(bindings);
+        self.visit_block(&expr_if.then_branch);
+        self.local_scopes.pop();
+
+        if let Some((_else_token, else_branch)) = &expr_if.else_branch {
+            self.visit_expr(else_branch.as_ref());
+        }
+    }
+
+    fn visit_expr_unsafe(&mut self, unsafe_expr: &'ast syn::ExprUnsafe) {
+        self.unsafe_depth += 1;
+        visit::visit_expr_unsafe(self, unsafe_expr);
+        self.unsafe_depth -= 1;
+    }
+
+    fn visit_item_const(&mut self, item_const: &'ast syn::ItemConst) {
+        let byte_range = item_const.span().byte_range();
+        self.record_local_const_item(item_const, (byte_range.start, byte_range.end));
+    }
+
+    fn visit_item_fn(&mut self, item_fn: &'ast syn::ItemFn) {
+        let byte_range = item_fn.span().byte_range();
+        self.record_local_fn_item(item_fn, (byte_range.start, byte_range.end));
+    }
+
+    fn visit_item_impl(&mut self, item_impl: &'ast syn::ItemImpl) {
+        for item in &item_impl.items {
+            let syn::ImplItem::Fn(method) = item else {
+                continue;
+            };
+            let byte_range = method.span().byte_range();
+            let span = (byte_range.start, byte_range.end);
+            let label = format!("local_impl_method:{}", method.sig.ident);
+            let owner = self.record_local_item_owner(span, &label);
+
+            let params = impl_method_param_names(method);
+            let mut visitor = BodyCallVisitor {
+                owner,
+                cfgs: self.cfgs,
+                param_names: &params,
+                macro_expansions: self.macro_expansions,
+                local_scopes: Vec::new(),
+                calls: Vec::new(),
+                relations: Vec::new(),
+                local_binding_relations: Vec::new(),
+                executable_bodies: Vec::new(),
+                local_bindings: Vec::new(),
+                awaited_call_spans: Vec::new(),
+                callee_names: Vec::new(),
+                zero_span_keys: BTreeMap::new(),
+                unsafe_depth: 0,
+            };
+            visitor.visit_block(&method.block);
+            self.append_child(visitor);
+        }
+    }
+
+    fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
+        let byte_range = closure.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
+        let closure_id = generate_closure_body_id(self.owner, span, self.cfgs);
+        let owner = CallBodyOwnerId::Executable(ExecutableBodyId::Closure(closure_id));
+        self.executable_bodies.push(ExecutableBodyNode::new(
+            closure_id.into(),
+            self.owner,
+            span,
+            self.cfgs.to_vec(),
+            Some(
+                if closure.asyncness.is_some() {
+                    "async_closure"
+                } else {
+                    "closure"
+                }
+                .to_string(),
+            ),
+        ));
+
+        let params = closure_visible_param_names(self.param_names, closure);
+        let mut visitor = BodyCallVisitor {
+            owner,
+            cfgs: self.cfgs,
+            param_names: &params,
+            macro_expansions: self.macro_expansions,
+            local_scopes: Vec::new(),
+            calls: Vec::new(),
+            relations: Vec::new(),
+            local_binding_relations: Vec::new(),
+            executable_bodies: Vec::new(),
+            local_bindings: Vec::new(),
+            awaited_call_spans: Vec::new(),
+            callee_names: Vec::new(),
+            zero_span_keys: BTreeMap::new(),
+            unsafe_depth: self.unsafe_depth,
+        };
+        visitor.visit_expr(closure.body.as_ref());
+        self.calls.append(&mut visitor.calls);
+        self.relations.append(&mut visitor.relations);
+        self.local_binding_relations
+            .append(&mut visitor.local_binding_relations);
+        self.executable_bodies
+            .append(&mut visitor.executable_bodies);
+        self.local_bindings.append(&mut visitor.local_bindings);
+    }
+
+    fn visit_expr_async(&mut self, async_block: &'ast syn::ExprAsync) {
+        let byte_range = async_block.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
+        let body_id = generate_async_block_body_id(self.owner, span, self.cfgs);
+        let owner = CallBodyOwnerId::Executable(ExecutableBodyId::AsyncBlock(body_id));
+        self.executable_bodies.push(ExecutableBodyNode::new(
+            body_id.into(),
+            self.owner,
+            span,
+            self.cfgs.to_vec(),
+            Some("async_block".to_string()),
+        ));
+
+        let mut visitor = BodyCallVisitor {
+            owner,
+            cfgs: self.cfgs,
+            param_names: &[],
+            macro_expansions: self.macro_expansions,
+            local_scopes: Vec::new(),
+            calls: Vec::new(),
+            relations: Vec::new(),
+            local_binding_relations: Vec::new(),
+            executable_bodies: Vec::new(),
+            local_bindings: Vec::new(),
+            awaited_call_spans: Vec::new(),
+            callee_names: Vec::new(),
+            zero_span_keys: BTreeMap::new(),
+            unsafe_depth: self.unsafe_depth,
+        };
+        visitor.visit_block(&async_block.block);
+        self.calls.append(&mut visitor.calls);
+        self.relations.append(&mut visitor.relations);
+        self.local_binding_relations
+            .append(&mut visitor.local_binding_relations);
+        self.executable_bodies
+            .append(&mut visitor.executable_bodies);
+        self.local_bindings.append(&mut visitor.local_bindings);
+    }
+
+    fn visit_item_static(&mut self, item_static: &'ast syn::ItemStatic) {
+        let byte_range = item_static.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
+        self.record_local_static_item(item_static, span);
+    }
+}
+
+impl BodyCallVisitor<'_> {
+    fn record_macro_local_item(&mut self, item: &syn::Item, span: (usize, usize)) {
+        match item {
+            syn::Item::Fn(item_fn) => self.record_local_fn_item(item_fn, span),
+            syn::Item::Const(item_const) => self.record_local_const_item(item_const, span),
+            syn::Item::Static(item_static) => self.record_local_static_item(item_static, span),
+            _ => {}
+        }
+    }
+
+    fn record_local_const_item(&mut self, item_const: &syn::ItemConst, span: (usize, usize)) {
+        let owner = self.record_local_item_owner(span, "local_const");
+
+        let mut visitor = BodyCallVisitor {
+            owner,
+            cfgs: self.cfgs,
+            param_names: &[],
+            macro_expansions: self.macro_expansions,
+            local_scopes: Vec::new(),
+            calls: Vec::new(),
+            relations: Vec::new(),
+            local_binding_relations: Vec::new(),
+            executable_bodies: Vec::new(),
+            local_bindings: Vec::new(),
+            awaited_call_spans: Vec::new(),
+            callee_names: Vec::new(),
+            zero_span_keys: BTreeMap::new(),
+            unsafe_depth: 0,
+        };
+        visitor.visit_expr(item_const.expr.as_ref());
+        self.append_child(visitor);
+    }
+
+    fn record_local_static_item(&mut self, item_static: &syn::ItemStatic, span: (usize, usize)) {
+        let owner = self.record_local_item_owner(span, "local_static");
+
+        let mut visitor = BodyCallVisitor {
+            owner,
+            cfgs: self.cfgs,
+            param_names: &[],
+            macro_expansions: self.macro_expansions,
+            local_scopes: Vec::new(),
+            calls: Vec::new(),
+            relations: Vec::new(),
+            local_binding_relations: Vec::new(),
+            executable_bodies: Vec::new(),
+            local_bindings: Vec::new(),
+            awaited_call_spans: Vec::new(),
+            callee_names: Vec::new(),
+            zero_span_keys: BTreeMap::new(),
+            unsafe_depth: 0,
+        };
+        visitor.visit_expr(item_static.expr.as_ref());
+        self.append_child(visitor);
+    }
+
+    fn record_local_fn_item(&mut self, item_fn: &syn::ItemFn, span: (usize, usize)) {
+        let name = item_fn.sig.ident.to_string();
+        let label = format!("local_fn:{name}");
+        let owner = self.record_local_item_owner(span, &label);
+        let CallBodyOwnerId::Executable(body_id @ ExecutableBodyId::LocalItem(local_item_id)) =
+            owner
+        else {
+            unreachable!("record_local_item_owner must return a local-item executable owner")
+        };
+
+        self.record_local_binding(
+            &name,
+            span,
+            LocalBindingKind::LocalFunctionBinding,
+            LocalBindingSource::LocalFunction {
+                body_id: local_item_id,
+            },
+        );
+
+        if let Some(scope) = self.local_scopes.last_mut() {
+            scope.push(LocalBindingProof::LocalFunction {
+                name: name.clone(),
+                body_id,
+            });
+        }
+
+        let params = local_fn_param_names(item_fn);
+        let mut visitor = BodyCallVisitor {
+            owner,
+            cfgs: self.cfgs,
+            param_names: &params,
+            macro_expansions: self.macro_expansions,
+            local_scopes: vec![vec![LocalBindingProof::LocalFunction { name, body_id }]],
+            calls: Vec::new(),
+            relations: Vec::new(),
+            local_binding_relations: Vec::new(),
+            executable_bodies: Vec::new(),
+            local_bindings: Vec::new(),
+            awaited_call_spans: Vec::new(),
+            callee_names: Vec::new(),
+            zero_span_keys: BTreeMap::new(),
+            unsafe_depth: 0,
+        };
+        visitor.visit_block(item_fn.block.as_ref());
+        let (mut parameter_relations, mut parameter_bindings) =
+            extract_parameter_bindings(owner, &item_fn.sig.inputs, self.cfgs);
+        visitor
+            .local_binding_relations
+            .append(&mut parameter_relations);
+        visitor.local_bindings.append(&mut parameter_bindings);
+        self.append_child(visitor);
+    }
+    fn record_local_item_owner(&mut self, span: (usize, usize), label: &str) -> CallBodyOwnerId {
+        let body_id = generate_local_item_body_id(self.owner, span, self.cfgs);
+        let owner = CallBodyOwnerId::Executable(ExecutableBodyId::LocalItem(body_id));
+        self.executable_bodies.push(ExecutableBodyNode::new(
+            body_id.into(),
+            self.owner,
+            span,
+            self.cfgs.to_vec(),
+            Some(label.to_string()),
+        ));
+        owner
+    }
+
+    fn append_child(&mut self, mut visitor: BodyCallVisitor<'_>) {
+        self.calls.append(&mut visitor.calls);
+        self.relations.append(&mut visitor.relations);
+        self.local_binding_relations
+            .append(&mut visitor.local_binding_relations);
+        self.executable_bodies
+            .append(&mut visitor.executable_bodies);
+        self.local_bindings.append(&mut visitor.local_bindings);
+    }
+}
+
+fn local_binding_source_relation(
+    source: LocalBindingId,
+    binding_source: &LocalBindingSource,
+) -> Option<LocalBindingRelation> {
+    match binding_source {
+        LocalBindingSource::Parameter => None,
+        LocalBindingSource::Typed { .. } => None,
+        LocalBindingSource::Constructed { .. } => None,
+        LocalBindingSource::InitializedPath { .. } => None,
+        LocalBindingSource::ValueAlias { .. } => None,
+        LocalBindingSource::FieldProjection {
+            base_binding_id, ..
+        } => Some(LocalBindingRelation::BindingProjectsField {
+            source,
+            target: *base_binding_id,
+        }),
+        LocalBindingSource::SelfFieldAssignment { .. } => None,
+        LocalBindingSource::Closure { body_id } | LocalBindingSource::AsyncClosure { body_id } => {
+            Some(LocalBindingRelation::BindingSourceClosure {
+                source,
+                target: *body_id,
+            })
+        }
+        LocalBindingSource::LocalFunction { body_id } => {
+            Some(LocalBindingRelation::BindingSourceLocalItem {
+                source,
+                target: *body_id,
+            })
+        }
+        LocalBindingSource::PathCallResult { call_site_id, .. }
+        | LocalBindingSource::DynamicCallResult { call_site_id, .. } => {
+            Some(LocalBindingRelation::BindingSourceCallResult {
+                source,
+                target: *call_site_id,
+            })
+        }
+    }
+}
+
+fn local_function_bindings_in_block(
+    block: &syn::Block,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+) -> Vec<LocalBindingProof> {
+    block
+        .stmts
+        .iter()
+        .filter_map(|stmt| {
+            let syn::Stmt::Item(syn::Item::Fn(item_fn)) = stmt else {
+                return None;
+            };
+            let byte_range = item_fn.span().byte_range();
+            let span = (byte_range.start, byte_range.end);
+            Some(LocalBindingProof::LocalFunction {
+                name: item_fn.sig.ident.to_string(),
+                body_id: ExecutableBodyId::LocalItem(generate_local_item_body_id(
+                    owner, span, cfgs,
+                )),
+            })
+        })
+        .collect()
+}
+
+fn path_segments(path: &syn::Path) -> Vec<String> {
+    path.segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect()
+}
+
+fn path_call_segments(path: &syn::ExprPath) -> Vec<String> {
+    let Some(qself) = &path.qself else {
+        return path_segments(&path.path);
+    };
+
+    let associated_path = path
+        .path
+        .segments
+        .iter()
+        .skip(qself.position)
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>();
+    if associated_path.is_empty() {
+        return Vec::new();
+    }
+
+    let mut qualifier_path = if qself.position == 0 {
+        type_path_segments(qself.ty.as_ref()).unwrap_or_default()
+    } else {
+        path.path
+            .segments
+            .iter()
+            .take(qself.position)
+            .map(|segment| segment.ident.to_string())
+            .collect()
+    };
+    if qualifier_path.is_empty() {
+        return Vec::new();
+    }
+
+    qualifier_path.extend(associated_path);
+    qualifier_path
+}
+
+fn path_discriminator(path: &syn::Path) -> String {
+    path_segments(path).join("::")
+}
+
+fn path_generic_arg_count(path: &syn::Path) -> usize {
+    path.segments
+        .iter()
+        .map(|segment| match &segment.arguments {
+            syn::PathArguments::AngleBracketed(args) => args.args.len(),
+            syn::PathArguments::Parenthesized(_) | syn::PathArguments::None => 0,
+        })
+        .sum()
+}
+
+fn call_arguments(
+    args: &syn::punctuated::Punctuated<syn::Expr, syn::Token![,]>,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Vec<CallArgument> {
+    args.iter()
+        .map(|arg| call_argument(arg, owner, cfgs, param_names, local_scopes))
+        .collect()
+}
+
+fn return_binding_source(
+    expr: &syn::Expr,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+    is_awaited: bool,
+) -> Option<LocalBindingSource> {
+    match unparen_expr(expr) {
+        syn::Expr::Closure(closure) => {
+            let byte_range = closure.span().byte_range();
+            let span = (byte_range.start, byte_range.end);
+            let body_id = ExecutableBodyId::Closure(generate_closure_body_id(owner, span, cfgs));
+            if closure.asyncness.is_some() {
+                Some(LocalBindingSource::AsyncClosure { body_id })
+            } else {
+                Some(LocalBindingSource::Closure { body_id })
+            }
+        }
+        syn::Expr::Await(await_expr) => return_binding_source(
+            await_expr.base.as_ref(),
+            owner,
+            cfgs,
+            param_names,
+            local_scopes,
+            true,
+        ),
+        syn::Expr::Call(call) => {
+            let byte_range = call.span().byte_range();
+            let span = (byte_range.start, byte_range.end);
+            if let syn::Expr::Path(path) = unparen_expr(call.func.as_ref()) {
+                let path = path_call_segments(path);
+                if path.is_empty() {
+                    return None;
+                }
+                return Some(LocalBindingSource::PathCallResult {
+                    call_site_id: generate_path_call_site_id(owner, &path, span, cfgs).into(),
+                    path,
+                });
+            }
+
+            let callee = classify_dynamic_callee(
+                call.func.as_ref(),
+                owner,
+                cfgs,
+                param_names,
+                local_scopes,
+                is_awaited,
+            );
+            let DynamicCallCallee::ReturnedPathCall { path, is_awaited } = callee else {
+                return None;
+            };
+            let callee_kind = if is_awaited {
+                "AwaitedReturnedPathCall"
+            } else {
+                "ReturnedPathCall"
+            }
+            .to_string();
+            Some(LocalBindingSource::DynamicCallResult {
+                call_site_id: generate_dynamic_call_site_id(owner, span, cfgs).into(),
+                callee_kind,
+                callee_path: Some(path),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn call_argument(
+    arg: &syn::Expr,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> CallArgument {
+    match unparen_expr(arg) {
+        syn::Expr::Path(path) if path.qself.is_none() => {
+            let path = path_segments(&path.path);
+            if path.is_empty() {
+                CallArgument::Other
+            } else if let Some(CallArgument::ClosureBinding { closure_id, .. }) =
+                closure_binding_argument(arg, local_scopes)
+            {
+                CallArgument::ClosureBinding { path, closure_id }
+            } else {
+                CallArgument::Path { path }
+            }
+        }
+        syn::Expr::Closure(closure) if closure.asyncness.is_none() => {
+            let byte_range = closure.span().byte_range();
+            let span = (byte_range.start, byte_range.end);
+            CallArgument::Closure {
+                closure_id: ExecutableBodyId::Closure(generate_closure_body_id(owner, span, cfgs)),
+            }
+        }
+        syn::Expr::Reference(reference) => referenced_path_argument(reference),
+        _ => closure_binding_argument(arg, local_scopes)
+            .or_else(|| boxed_path_argument(arg, param_names, local_scopes))
+            .or_else(|| array_argument(arg, param_names, local_scopes))
+            .or_else(|| constructed_argument(arg, param_names, local_scopes))
+            .unwrap_or(CallArgument::Other),
+    }
+}
+
+fn referenced_path_argument(reference: &syn::ExprReference) -> CallArgument {
+    let syn::Expr::Path(path) = unparen_expr(reference.expr.as_ref()) else {
+        return CallArgument::Other;
+    };
+    if path.qself.is_some() {
+        return CallArgument::Other;
+    }
+    let path = path_segments(&path.path);
+    if path.is_empty() {
+        CallArgument::Other
+    } else {
+        CallArgument::ReferencedPath { path }
+    }
+}
+
+fn closure_binding_argument(
+    arg: &syn::Expr,
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<CallArgument> {
+    let path = closure_binding_arg_path(arg)?;
+    let [name] = path.as_slice() else {
+        return None;
+    };
+    let Some(LocalBindingProof::Closure {
+        closure_id,
+        is_async: false,
+        ..
+    }) = visible_local_binding(name, local_scopes)
+    else {
+        return None;
+    };
+    Some(CallArgument::ClosureBinding {
+        path,
+        closure_id: *closure_id,
+    })
+}
+
+fn closure_binding_arg_path(arg: &syn::Expr) -> Option<Vec<String>> {
+    match unparen_expr(arg) {
+        syn::Expr::Path(path) if path.qself.is_none() => {
+            let path = path_segments(&path.path);
+            (!path.is_empty()).then_some(path)
+        }
+        syn::Expr::MethodCall(call) if call.method == "clone" && call.args.is_empty() => {
+            let syn::Expr::Path(path) = unparen_expr(call.receiver.as_ref()) else {
+                return None;
+            };
+            if path.qself.is_some() {
+                return None;
+            }
+            let path = path_segments(&path.path);
+            (!path.is_empty()).then_some(path)
+        }
+        _ => None,
+    }
+}
+
+fn boxed_path_argument(
+    arg: &syn::Expr,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<CallArgument> {
+    boxed_init_path(Some(arg), param_names, local_scopes)
+        .map(|path| CallArgument::BoxedPath { path })
+}
+
+fn array_argument(
+    arg: &syn::Expr,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<CallArgument> {
+    array_init(Some(arg), param_names, local_scopes)
+        .map(|element_init_paths| CallArgument::Array { element_init_paths })
+}
+
+fn constructed_argument(
+    arg: &syn::Expr,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<CallArgument> {
+    let (type_path, fields) = constructed_init(Some(arg), param_names, local_scopes)?;
+    let fields = argument_field_inits(&fields);
+    (!fields.is_empty()).then_some(CallArgument::Constructed { type_path, fields })
+}
+
+fn argument_field_inits(fields: &ConstructedFields) -> Vec<ArgumentFieldInit> {
+    let mut inits = Vec::new();
+    match fields {
+        ConstructedFields::Tuple(fields) => {
+            for (index, init) in fields.iter().enumerate() {
+                push_argument_init(&mut inits, vec![index.to_string()], init);
+            }
+        }
+        ConstructedFields::Named(fields) => {
+            for (name, init) in fields {
+                push_argument_init(&mut inits, vec![name.clone()], init);
+            }
+        }
+    }
+    inits
+}
+
+fn push_argument_init(
+    inits: &mut Vec<ArgumentFieldInit>,
+    path: Vec<String>,
+    init: &Option<FieldInitProof>,
+) {
+    match init {
+        Some(FieldInitProof::Path(init_path)) => inits.push(ArgumentFieldInit {
+            field_path: path,
+            init_path: init_path.clone(),
+        }),
+        Some(FieldInitProof::Array(elements)) => {
+            for (index, init_path) in elements.iter().enumerate() {
+                if let Some(init_path) = init_path {
+                    let mut field_path = path.clone();
+                    field_path.push(index.to_string());
+                    inits.push(ArgumentFieldInit {
+                        field_path,
+                        init_path: init_path.clone(),
+                    });
+                }
+            }
+        }
+        None => {}
+    }
+}
+
+fn classify_path_callee(
+    path: &[String],
+    expr_path: &syn::ExprPath,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+    is_awaited: bool,
+) -> PathCallCallee {
+    if expr_path.qself.is_some() || path.len() != 1 {
+        return PathCallCallee::ItemPath;
+    }
+
+    let name = &path[0];
+    if let Some(binding) = visible_local_binding(name, local_scopes) {
+        match binding {
+            LocalBindingProof::Typed {
+                init_path: Some(init_path),
+                ..
+            }
+            | LocalBindingProof::Initialized { init_path, .. } => {
+                PathCallCallee::InitializedValueBinding {
+                    path: path.to_vec(),
+                    init_path: init_path.clone(),
+                }
+            }
+            LocalBindingProof::AmbiguousInitialized { init_paths, .. } => {
+                PathCallCallee::AmbiguousInitializedValueBinding {
+                    path: path.to_vec(),
+                    init_paths: init_paths.clone(),
+                }
+            }
+            LocalBindingProof::TypedAmbiguous { init_paths, .. } => {
+                PathCallCallee::AmbiguousInitializedValueBinding {
+                    path: path.to_vec(),
+                    init_paths: init_paths.clone(),
+                }
+            }
+            LocalBindingProof::SelfField { field_path, .. } => PathCallCallee::SelfFieldBinding {
+                path: path.to_vec(),
+                field_path: field_path.clone(),
+            },
+            LocalBindingProof::TraitObject {
+                trait_path,
+                init_path: Some(init_path),
+                ..
+            } if is_callable_trait(trait_path) => PathCallCallee::InitializedValueBinding {
+                path: path.to_vec(),
+                init_path: init_path.clone(),
+            },
+            LocalBindingProof::Closure {
+                closure_id,
+                is_async,
+                ..
+            } => {
+                if *is_async && is_awaited {
+                    PathCallCallee::AwaitedAsyncClosureBinding {
+                        path: path.to_vec(),
+                        closure_id: *closure_id,
+                    }
+                } else if *is_async {
+                    PathCallCallee::AsyncClosureBinding {
+                        path: path.to_vec(),
+                        closure_id: *closure_id,
+                    }
+                } else {
+                    PathCallCallee::ClosureBinding {
+                        path: path.to_vec(),
+                        closure_id: *closure_id,
+                    }
+                }
+            }
+            LocalBindingProof::LocalFunction { body_id, .. } => {
+                PathCallCallee::LocalFunctionBinding {
+                    path: path.to_vec(),
+                    body_id: *body_id,
+                }
+            }
+            LocalBindingProof::ValueAlias { source_path, .. } => {
+                PathCallCallee::AliasedValueBinding {
+                    path: path.to_vec(),
+                    source_path: source_path.clone(),
+                }
+            }
+            LocalBindingProof::Typed {
+                init_path: None, ..
+            }
+            | LocalBindingProof::TraitObject { .. }
+            | LocalBindingProof::TupleReturn { .. }
+            | LocalBindingProof::TupleMethodReturn { .. }
+            | LocalBindingProof::MethodResult { .. }
+            | LocalBindingProof::EnumVariantField { .. }
+            | LocalBindingProof::Constructed { .. }
+            | LocalBindingProof::Array { .. }
+            | LocalBindingProof::Referenced { .. }
+            | LocalBindingProof::Untyped { .. } => PathCallCallee::ValueBinding {
+                path: path.to_vec(),
+            },
+        }
+    } else if param_names.iter().any(|candidate| candidate == name) {
+        PathCallCallee::ValueBinding {
+            path: path.to_vec(),
+        }
+    } else {
+        PathCallCallee::ItemPath
+    }
+}
+
+fn block_path_expr(callee: &syn::Expr) -> Option<&syn::ExprPath> {
+    let syn::Expr::Block(block) = unparen_expr(callee) else {
+        return None;
+    };
+    let [syn::Stmt::Expr(syn::Expr::Path(path), None)] = block.block.stmts.as_slice() else {
+        return None;
+    };
+    Some(path)
+}
+
+fn if_branch_paths(
+    callee: &syn::Expr,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<Vec<String>>> {
+    let syn::Expr::If(branch) = unparen_expr(callee) else {
+        return None;
+    };
+    let mut paths = block_branch_paths(&branch.then_branch, param_names, local_scopes)?;
+    let (_else_token, else_expr) = branch.else_branch.as_ref()?;
+    paths.extend(branch_paths(else_expr.as_ref(), param_names, local_scopes)?);
+
+    paths
+        .iter()
+        .all(|path| is_unshadowed_item_path(path, param_names, local_scopes))
+        .then_some(paths)
+}
+
+fn match_arm_paths(
+    callee: &syn::Expr,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<Vec<String>>> {
+    let syn::Expr::Match(expr) = unparen_expr(callee) else {
+        return None;
+    };
+
+    let paths = expr
+        .arms
+        .iter()
+        .map(|arm| branch_paths(arm.body.as_ref(), param_names, local_scopes))
+        .collect::<Option<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    if paths.is_empty() {
+        return None;
+    }
+
+    paths
+        .iter()
+        .all(|path| is_unshadowed_item_path(path, param_names, local_scopes))
+        .then_some(paths)
+}
+
+fn branch_paths(
+    expr: &syn::Expr,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<Vec<String>>> {
+    match unparen_expr(expr) {
+        syn::Expr::Path(path) => expr_path_segments(path).map(|path| vec![path]),
+        syn::Expr::Block(block) => block_branch_paths(&block.block, param_names, local_scopes),
+        syn::Expr::If(_) => if_branch_paths(expr, param_names, local_scopes),
+        syn::Expr::Match(_) => match_arm_paths(expr, param_names, local_scopes),
+        _ => None,
+    }
+}
+
+fn block_branch_paths(
+    block: &syn::Block,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<Vec<String>>> {
+    let [syn::Stmt::Expr(expr, None)] = block.stmts.as_slice() else {
+        return None;
+    };
+    branch_paths(expr, param_names, local_scopes)
+}
+
+fn expr_path_segments(path: &syn::ExprPath) -> Option<Vec<String>> {
+    if path.qself.is_some() {
+        return None;
+    }
+
+    let path = path_segments(&path.path);
+    (!path.is_empty()).then_some(path)
+}
+
+fn is_unshadowed_item_path(
+    path: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> bool {
+    let [name] = path else {
+        return true;
+    };
+
+    visible_local_binding(name, local_scopes).is_none()
+        && !param_names.iter().any(|candidate| candidate == name)
+}
+
+fn literal_usize(expr: &syn::Expr) -> Option<usize> {
+    let syn::Expr::Lit(lit) = unparen_expr(expr) else {
+        return None;
+    };
+    let syn::Lit::Int(int) = &lit.lit else {
+        return None;
+    };
+    int.base10_parse().ok()
+}
+
+fn unparen_expr(expr: &syn::Expr) -> &syn::Expr {
+    match expr {
+        syn::Expr::Paren(paren) => unparen_expr(paren.expr.as_ref()),
+        _ => expr,
+    }
+}
+
+fn visible_local_binding<'a>(
+    name: &str,
+    local_scopes: &'a [Vec<LocalBindingProof>],
+) -> Option<&'a LocalBindingProof> {
+    local_scopes
+        .iter()
+        .rev()
+        .flat_map(|scope| scope.iter().rev())
+        .find(|binding| binding.name() == name)
+}
+
+fn pat_span(pat: &syn::Pat) -> (usize, usize) {
+    let byte_range = pat.span().byte_range();
+    (byte_range.start, byte_range.end)
+}
+
+fn local_binding_proof(
+    pat: &syn::Pat,
+    init_expr: Option<&syn::Expr>,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<LocalBindingProof> {
+    match pat {
+        syn::Pat::Ident(ident) => {
+            let name = ident.ident.to_string();
+            let span = pat_span(pat);
+            let proof = constructed_init(init_expr, param_names, local_scopes)
+                .or_else(|| constructed_binding_init(init_expr, local_scopes))
+                .map(|(type_path, fields)| LocalBindingProof::Constructed {
+                    name: name.clone(),
+                    span,
+                    type_path,
+                    fields,
+                })
+                .or_else(|| {
+                    array_init(init_expr, param_names, local_scopes).map(|element_init_paths| {
+                        LocalBindingProof::Array {
+                            name: name.clone(),
+                            element_init_paths,
+                        }
+                    })
+                })
+                .or_else(|| {
+                    array_binding_init(init_expr, local_scopes).map(|element_init_paths| {
+                        LocalBindingProof::Array {
+                            name: name.clone(),
+                            element_init_paths,
+                        }
+                    })
+                })
+                .or_else(|| {
+                    inferred_init_path(init_expr)
+                        .and_then(|path| init_target_path(&path, param_names, local_scopes))
+                        .map(|init_path| LocalBindingProof::Initialized {
+                            name: name.clone(),
+                            init_path,
+                        })
+                })
+                .or_else(|| {
+                    path_call_init_path(init_expr)
+                        .and_then(|path| init_target_path(&path, param_names, local_scopes))
+                        .map(|init_path| LocalBindingProof::Initialized {
+                            name: name.clone(),
+                            init_path,
+                        })
+                })
+                .or_else(|| {
+                    method_result_init(init_expr).map(|(method_name, method_span)| {
+                        LocalBindingProof::MethodResult {
+                            name: name.clone(),
+                            method_name,
+                            method_span,
+                        }
+                    })
+                })
+                .or_else(|| {
+                    branch_init_path(init_expr, param_names, local_scopes).map(|init_path| {
+                        LocalBindingProof::Initialized {
+                            name: name.clone(),
+                            init_path,
+                        }
+                    })
+                })
+                .or_else(|| {
+                    ambiguous_branch_init_paths(init_expr, param_names, local_scopes).map(
+                        |init_paths| LocalBindingProof::AmbiguousInitialized {
+                            name: name.clone(),
+                            init_paths,
+                        },
+                    )
+                })
+                .or_else(|| {
+                    value_alias_path(init_expr, param_names, local_scopes).map(|source_path| {
+                        LocalBindingProof::ValueAlias {
+                            name: name.clone(),
+                            source_path,
+                        }
+                    })
+                })
+                .or_else(|| {
+                    referenced_init_path(init_expr, param_names, local_scopes).map(|type_path| {
+                        LocalBindingProof::Referenced {
+                            name: name.clone(),
+                            type_path,
+                        }
+                    })
+                })
+                .or_else(|| {
+                    closure_binding_id(init_expr, owner, cfgs).map(|(closure_id, is_async)| {
+                        LocalBindingProof::Closure {
+                            name: name.clone(),
+                            closure_id,
+                            is_async,
+                        }
+                    })
+                });
+            let proof = proof.or_else(|| {
+                referenced_alias_path(init_expr, param_names, local_scopes).map(|type_path| {
+                    LocalBindingProof::Referenced {
+                        name: name.clone(),
+                        type_path,
+                    }
+                })
+            });
+            proof.or(Some(LocalBindingProof::Untyped { name }))
+        }
+        syn::Pat::Type(typed) => {
+            let name = pat_ident_name(typed.pat.as_ref())?;
+            if let Some((type_path, fields)) = constructed_binding_init(init_expr, local_scopes) {
+                return Some(LocalBindingProof::Constructed {
+                    name,
+                    span: pat_span(typed.pat.as_ref()),
+                    type_path,
+                    fields,
+                });
+            }
+            if let Some(element_init_paths) = array_init(init_expr, param_names, local_scopes)
+                .or_else(|| array_binding_init(init_expr, local_scopes))
+            {
+                return Some(LocalBindingProof::Array {
+                    name,
+                    element_init_paths,
+                });
+            }
+            let init_path = inferred_init_path(init_expr)
+                .and_then(|path| init_target_path(&path, param_names, local_scopes))
+                .or_else(|| {
+                    path_call_init_path(init_expr)
+                        .and_then(|path| init_target_path(&path, param_names, local_scopes))
+                })
+                .or_else(|| branch_init_path(init_expr, param_names, local_scopes));
+            if let Some(trait_path) = typed_local_trait_object_path_segments(typed.ty.as_ref()) {
+                return Some(LocalBindingProof::TraitObject {
+                    name,
+                    trait_path,
+                    init_path: trait_object_init_path(init_expr, param_names, local_scopes),
+                });
+            }
+            match typed_local_type_path_segments(typed.ty.as_ref()) {
+                Some(type_path) => Some(LocalBindingProof::Typed {
+                    name,
+                    type_path,
+                    init_path,
+                }),
+                None => {
+                    let ambiguous =
+                        ambiguous_branch_init_paths(init_expr, param_names, local_scopes);
+                    init_path
+                        .map(|init_path| LocalBindingProof::Initialized {
+                            name: name.clone(),
+                            init_path,
+                        })
+                        .or_else(|| {
+                            ambiguous.map(|init_paths| LocalBindingProof::AmbiguousInitialized {
+                                name: name.clone(),
+                                init_paths,
+                            })
+                        })
+                        .or(Some(LocalBindingProof::Untyped { name }))
+                }
+            }
+        }
+        _ => None,
+    }
+}
+
+fn method_result_init(init_expr: Option<&syn::Expr>) -> Option<(String, (usize, usize))> {
+    let syn::Expr::MethodCall(call) = unparen_expr(init_expr?) else {
+        return None;
+    };
+    let byte_range = call.span().byte_range();
+    Some((call.method.to_string(), (byte_range.start, byte_range.end)))
+}
+
+fn local_binding_proofs(
+    pat: &syn::Pat,
+    init_expr: Option<&syn::Expr>,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Vec<LocalBindingProof> {
+    if let Some(proof) = local_binding_proof(pat, init_expr, owner, cfgs, param_names, local_scopes)
+    {
+        return vec![proof];
+    }
+
+    let struct_proofs =
+        struct_binding_proofs(pat, init_expr, owner, cfgs, param_names, local_scopes);
+    if !struct_proofs.is_empty() {
+        return struct_proofs;
+    }
+
+    let enum_proofs = enum_variant_binding_proofs(pat, init_expr);
+    if !enum_proofs.is_empty() {
+        return enum_proofs;
+    }
+
+    tuple_binding_proofs(pat, init_expr, owner, cfgs, param_names, local_scopes)
+}
+
+fn match_arm_binding_proofs(
+    pat: &syn::Pat,
+    scrutinee: &syn::Expr,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Vec<LocalBindingProof> {
+    local_binding_proofs(pat, Some(scrutinee), owner, cfgs, param_names, local_scopes)
+}
+
+fn option_self_field_binding_proofs(
+    pat: &syn::Pat,
+    scrutinee: &syn::Expr,
+) -> Vec<LocalBindingProof> {
+    let syn::Pat::TupleStruct(pattern) = pat else {
+        return Vec::new();
+    };
+    if pattern.qself.is_some() || pattern.elems.len() != 1 {
+        return Vec::new();
+    }
+    let path = path_segments(&pattern.path);
+    if !is_option_some_variant(&path) {
+        return Vec::new();
+    }
+    let Some(name) = pattern.elems.iter().next().and_then(pat_ident_name) else {
+        return Vec::new();
+    };
+    let Some(field_path) = self_field_path(unparen_expr(scrutinee)) else {
+        return Vec::new();
+    };
+    if field_path.is_empty() {
+        return Vec::new();
+    }
+
+    vec![LocalBindingProof::SelfField { name, field_path }]
+}
+
+fn is_option_some_variant(path: &[String]) -> bool {
+    matches!(path, [variant] if variant == "Some")
+        || matches!(path, [option, variant] if option == "Option" && variant == "Some")
+        || matches!(
+            path,
+            [root, option_mod, option, variant]
+                if (root == "std" || root == "core")
+                    && option_mod == "option"
+                    && option == "Option"
+                    && variant == "Some"
+        )
+}
+
+fn block_contains_direct_path_call_to_binding(
+    block: &syn::Block,
+    bindings: &[LocalBindingProof],
+) -> bool {
+    let mut visitor = BindingPathCallVisitor {
+        bindings,
+        found: false,
+    };
+    visitor.visit_block(block);
+    visitor.found
+}
+
+struct BindingPathCallVisitor<'a> {
+    bindings: &'a [LocalBindingProof],
+    found: bool,
+}
+
+impl<'ast> Visit<'ast> for BindingPathCallVisitor<'_> {
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if self.found {
+            return;
+        }
+        let syn::Expr::Path(path) = call.func.as_ref() else {
+            visit::visit_expr_call(self, call);
+            return;
+        };
+        if path.qself.is_some() || path.path.segments.len() != 1 {
+            visit::visit_expr_call(self, call);
+            return;
+        }
+        let Some(segment) = path.path.segments.first() else {
+            visit::visit_expr_call(self, call);
+            return;
+        };
+        let name = segment.ident.to_string();
+        if self.bindings.iter().any(|binding| binding.name() == name) {
+            self.found = true;
+            return;
+        }
+        visit::visit_expr_call(self, call);
+    }
+}
+
+fn tuple_binding_proofs(
+    pat: &syn::Pat,
+    init_expr: Option<&syn::Expr>,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Vec<LocalBindingProof> {
+    if let Some(proofs) =
+        direct_tuple_binding_proofs(pat, init_expr, owner, cfgs, param_names, local_scopes)
+    {
+        return proofs;
+    }
+
+    let typed = typed_tuple_binding_proofs(pat, init_expr, param_names, local_scopes);
+    if !typed.is_empty() {
+        return typed;
+    }
+
+    tuple_return_binding_proofs(pat, init_expr)
+}
+
+fn struct_binding_proofs(
+    pat: &syn::Pat,
+    init_expr: Option<&syn::Expr>,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Vec<LocalBindingProof> {
+    let syn::Pat::Struct(pattern) = pat else {
+        return Vec::new();
+    };
+    if pattern.qself.is_some() || pattern.rest.is_some() {
+        return Vec::new();
+    }
+
+    let Some(init_expr) = init_expr else {
+        return Vec::new();
+    };
+    let syn::Expr::Struct(init) = unparen_expr(init_expr) else {
+        return Vec::new();
+    };
+    if init.qself.is_some() || init.rest.is_some() {
+        return Vec::new();
+    }
+    if path_segments(&pattern.path) != path_segments(&init.path) {
+        return Vec::new();
+    }
+
+    pattern
+        .fields
+        .iter()
+        .filter_map(|field| {
+            let field_name = member_name(&field.member);
+            let init_field = init
+                .fields
+                .iter()
+                .find(|init_field| member_name(&init_field.member) == field_name)?;
+            local_binding_proof(
+                field.pat.as_ref(),
+                Some(&init_field.expr),
+                owner,
+                cfgs,
+                param_names,
+                local_scopes,
+            )
+        })
+        .collect()
+}
+
+fn enum_variant_binding_proofs(
+    pat: &syn::Pat,
+    init_expr: Option<&syn::Expr>,
+) -> Vec<LocalBindingProof> {
+    let syn::Pat::TupleStruct(pattern) = pat else {
+        return Vec::new();
+    };
+    let Some(init_expr) = init_expr else {
+        return Vec::new();
+    };
+    let scrutinee_path = match unparen_expr(init_expr) {
+        syn::Expr::Path(path) => expr_path_segments(path),
+        _ => None,
+    };
+    if pattern.qself.is_some()
+        || !matches!(scrutinee_path.as_deref(), Some(path) if path == ["self"])
+    {
+        return Vec::new();
+    }
+
+    let path = path_segments(&pattern.path);
+    let Some((variant_name, enum_path)) = path.split_last() else {
+        return Vec::new();
+    };
+    if enum_path.is_empty() {
+        return Vec::new();
+    }
+
+    pattern
+        .elems
+        .iter()
+        .enumerate()
+        .filter_map(|(field_index, pat)| {
+            let name = pat_ident_name(pat)?;
+            Some(LocalBindingProof::EnumVariantField {
+                name,
+                enum_path: enum_path.to_vec(),
+                variant_name: variant_name.clone(),
+                field_index,
+            })
+        })
+        .collect()
+}
+
+fn direct_tuple_binding_proofs(
+    pat: &syn::Pat,
+    init_expr: Option<&syn::Expr>,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<LocalBindingProof>> {
+    let syn::Pat::Tuple(pattern) = pat else {
+        return None;
+    };
+    let init_expr = init_expr?;
+    let syn::Expr::Tuple(init) = unparen_expr(init_expr) else {
+        return None;
+    };
+    if pattern.elems.len() != init.elems.len() {
+        return None;
+    }
+
+    Some(
+        pattern
+            .elems
+            .iter()
+            .zip(init.elems.iter())
+            .filter_map(|(pat, expr)| {
+                local_binding_proof(pat, Some(expr), owner, cfgs, param_names, local_scopes)
+            })
+            .collect(),
+    )
+}
+
+fn typed_tuple_binding_proofs(
+    pat: &syn::Pat,
+    init_expr: Option<&syn::Expr>,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Vec<LocalBindingProof> {
+    let syn::Pat::Type(typed) = pat else {
+        return Vec::new();
+    };
+    let syn::Pat::Tuple(pattern) = typed.pat.as_ref() else {
+        return Vec::new();
+    };
+    let syn::Type::Tuple(tuple) = unparen_type(typed.ty.as_ref()) else {
+        return Vec::new();
+    };
+    if pattern.elems.len() != tuple.elems.len() {
+        return Vec::new();
+    }
+
+    let init_paths = typed_tuple_match_position_init_paths(
+        init_expr,
+        pattern.elems.len(),
+        param_names,
+        local_scopes,
+    );
+    pattern
+        .elems
+        .iter()
+        .zip(tuple.elems.iter())
+        .enumerate()
+        .filter_map(|(index, (pat, ty))| {
+            let name = pat_ident_name(pat)?;
+            let type_path = typed_local_type_path_segments(ty)?;
+            let paths = init_paths
+                .get(index)
+                .and_then(|paths| paths.as_ref())
+                .cloned()
+                .unwrap_or_default();
+            match paths.as_slice() {
+                [] => Some(LocalBindingProof::Typed {
+                    name,
+                    type_path,
+                    init_path: None,
+                }),
+                [init_path] => Some(LocalBindingProof::Typed {
+                    name,
+                    type_path,
+                    init_path: Some(init_path.clone()),
+                }),
+                _ => Some(LocalBindingProof::TypedAmbiguous {
+                    name,
+                    type_path,
+                    init_paths: paths,
+                }),
+            }
+        })
+        .collect()
+}
+
+fn typed_tuple_match_position_init_paths(
+    expr: Option<&syn::Expr>,
+    arity: usize,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Vec<Option<Vec<Vec<String>>>> {
+    let Some(syn::Expr::Match(expr)) = expr.map(unparen_expr) else {
+        return vec![None; arity];
+    };
+
+    let mut positions = vec![Some(Vec::new()); arity];
+    for arm in &expr.arms {
+        let body = unparen_expr(arm.body.as_ref());
+        if is_diverging_empty_match(body) {
+            continue;
+        }
+        let syn::Expr::Tuple(tuple) = body else {
+            return vec![None; arity];
+        };
+        if tuple.elems.len() != arity {
+            return vec![None; arity];
+        }
+
+        for (index, slot) in positions.iter_mut().enumerate() {
+            let Some(paths) = slot else {
+                continue;
+            };
+            let Some(target) = tuple_position_init_path(tuple, index, param_names, local_scopes)
+            else {
+                *slot = None;
+                continue;
+            };
+            paths.push(target);
+        }
+    }
+
+    for slot in positions.iter_mut().flatten() {
+        slot.sort();
+        slot.dedup();
+        if slot.is_empty() {
+            *slot = Vec::new();
+        }
+    }
+    positions
+}
+
+fn tuple_position_init_path(
+    tuple: &syn::ExprTuple,
+    index: usize,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<String>> {
+    let syn::Expr::Path(path) = unparen_expr(tuple.elems.get(index)?) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    let path = path_segments(&path.path);
+    (!path.is_empty())
+        .then_some(path)
+        .and_then(|path| init_target_path(&path, param_names, local_scopes))
+}
+
+fn is_diverging_empty_match(expr: &syn::Expr) -> bool {
+    matches!(unparen_expr(expr), syn::Expr::Match(expr) if expr.arms.is_empty())
+}
+
+fn tuple_return_binding_proofs(
+    pat: &syn::Pat,
+    init_expr: Option<&syn::Expr>,
+) -> Vec<LocalBindingProof> {
+    let syn::Pat::Tuple(pattern) = pat else {
+        return Vec::new();
+    };
+
+    if let Some(path) = tuple_return_call_path(init_expr) {
+        return pattern
+            .elems
+            .iter()
+            .enumerate()
+            .filter_map(|(index, pat)| {
+                Some(LocalBindingProof::TupleReturn {
+                    name: pat_ident_name(pat)?,
+                    path: path.clone(),
+                    index,
+                })
+            })
+            .collect();
+    }
+
+    let Some((method_name, method_span)) = tuple_return_method_call(init_expr) else {
+        return Vec::new();
+    };
+
+    pattern
+        .elems
+        .iter()
+        .enumerate()
+        .filter_map(|(index, pat)| {
+            Some(LocalBindingProof::TupleMethodReturn {
+                name: pat_ident_name(pat)?,
+                method_name: method_name.clone(),
+                method_span,
+                index,
+            })
+        })
+        .collect()
+}
+
+fn tuple_return_call_path(expr: Option<&syn::Expr>) -> Option<Vec<String>> {
+    let syn::Expr::Call(call) = unparen_expr(expr?) else {
+        return None;
+    };
+    let syn::Expr::Path(path) = unparen_expr(call.func.as_ref()) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+
+    let path = path_segments(&path.path);
+    (!path.is_empty()).then_some(path)
+}
+
+fn tuple_return_method_call(expr: Option<&syn::Expr>) -> Option<(String, (usize, usize))> {
+    let syn::Expr::MethodCall(call) = unparen_expr(expr?) else {
+        return None;
+    };
+    let byte_range = call.span().byte_range();
+    Some((call.method.to_string(), (byte_range.start, byte_range.end)))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FutureBinding {
+    path: Vec<String>,
+    span: (usize, usize),
+}
+
+struct FutureStorageBinding {
+    name: String,
+    span: (usize, usize),
+    source: LocalBindingSource,
+}
+
+fn awaited_future_spans(block: &syn::Block) -> Vec<(usize, usize)> {
+    let mut future_bindings = Vec::new();
+    let mut awaited_spans = Vec::new();
+
+    for stmt in &block.stmts {
+        if let Some(path) = direct_await_path(stmt)
+            && let Some(binding) = future_bindings
+                .iter()
+                .rev()
+                .find(|binding: &&FutureBinding| binding.path == path)
+        {
+            awaited_spans.push(binding.span);
+        }
+        if let Some(binding) = future_call_binding(stmt) {
+            future_bindings.push(binding);
+        } else if let Some(bindings) = future_tuple_bindings(stmt) {
+            future_bindings.extend(bindings);
+        } else if let Some(bindings) = future_array_bindings(stmt) {
+            future_bindings.extend(bindings);
+        } else if let Some(bindings) = future_struct_bindings(stmt) {
+            future_bindings.extend(bindings);
+        } else if let Some((name, source)) = future_alias_binding(stmt) {
+            future_bindings.extend(aliased_future_bindings(name, source, &future_bindings));
+        }
+    }
+
+    awaited_spans.sort();
+    awaited_spans.dedup();
+    awaited_spans
+}
+
+fn aliased_future_bindings(
+    name: String,
+    source: Vec<String>,
+    future_bindings: &[FutureBinding],
+) -> Vec<FutureBinding> {
+    let mut aliases = Vec::new();
+    for binding in future_bindings.iter().rev() {
+        let Some(tail) = binding.path.strip_prefix(source.as_slice()) else {
+            continue;
+        };
+        let mut path = Vec::with_capacity(1 + tail.len());
+        path.push(name.clone());
+        path.extend(tail.iter().cloned());
+        if aliases
+            .iter()
+            .any(|alias: &FutureBinding| alias.path == path)
+        {
+            continue;
+        }
+        aliases.push(FutureBinding {
+            path,
+            span: binding.span,
+        });
+    }
+    aliases
+}
+
+fn future_call_binding(stmt: &syn::Stmt) -> Option<FutureBinding> {
+    let syn::Stmt::Local(local) = stmt else {
+        return None;
+    };
+    let name = pat_ident_name(&local.pat)?;
+    let init_expr = local.init.as_ref()?.expr.as_ref();
+    let span = future_call_span(init_expr)?;
+
+    Some(FutureBinding {
+        path: vec![name],
+        span,
+    })
+}
+
+fn future_call_span(expr: &syn::Expr) -> Option<(usize, usize)> {
+    let syn::Expr::Call(call) = unparen_expr(expr) else {
+        return None;
+    };
+    match unparen_expr(call.func.as_ref()) {
+        syn::Expr::Path(path) => {
+            if path.qself.is_some() || path.path.segments.len() != 1 {
+                return None;
+            }
+        }
+        syn::Expr::Call(inner) => {
+            let syn::Expr::Path(path) = unparen_expr(inner.func.as_ref()) else {
+                return None;
+            };
+            if path.qself.is_some() || path.path.segments.is_empty() {
+                return None;
+            }
+        }
+        _ => return None,
+    }
+
+    let byte_range = call.span().byte_range();
+    Some((byte_range.start, byte_range.end))
+}
+
+fn future_tuple_bindings(stmt: &syn::Stmt) -> Option<Vec<FutureBinding>> {
+    let syn::Stmt::Local(local) = stmt else {
+        return None;
+    };
+    let name = pat_ident_name(&local.pat)?;
+    let init_expr = local.init.as_ref()?.expr.as_ref();
+    let syn::Expr::Tuple(tuple) = unparen_expr(init_expr) else {
+        return None;
+    };
+
+    let bindings = tuple
+        .elems
+        .iter()
+        .enumerate()
+        .filter_map(|(index, expr)| {
+            let span = future_call_span(expr)?;
+            Some(FutureBinding {
+                path: vec![name.clone(), index.to_string()],
+                span,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    (!bindings.is_empty()).then_some(bindings)
+}
+
+fn future_array_bindings(stmt: &syn::Stmt) -> Option<Vec<FutureBinding>> {
+    let syn::Stmt::Local(local) = stmt else {
+        return None;
+    };
+    let name = pat_ident_name(&local.pat)?;
+    let init_expr = local.init.as_ref()?.expr.as_ref();
+    let syn::Expr::Array(array) = unparen_expr(init_expr) else {
+        return None;
+    };
+
+    let bindings = array
+        .elems
+        .iter()
+        .enumerate()
+        .filter_map(|(index, expr)| {
+            let span = future_call_span(expr)?;
+            Some(FutureBinding {
+                path: vec![name.clone(), index.to_string()],
+                span,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    (!bindings.is_empty()).then_some(bindings)
+}
+
+fn future_struct_bindings(stmt: &syn::Stmt) -> Option<Vec<FutureBinding>> {
+    let syn::Stmt::Local(local) = stmt else {
+        return None;
+    };
+    let name = pat_ident_name(&local.pat)?;
+    let init_expr = local.init.as_ref()?.expr.as_ref();
+    let syn::Expr::Struct(expr) = unparen_expr(init_expr) else {
+        return None;
+    };
+    if expr.qself.is_some() || expr.rest.is_some() {
+        return None;
+    }
+    let type_path = path_segments(&expr.path);
+    if type_path.len() != 1 {
+        return None;
+    }
+
+    let bindings = expr
+        .fields
+        .iter()
+        .filter_map(|field| {
+            let span = future_call_span(&field.expr)?;
+            Some(FutureBinding {
+                path: vec![name.clone(), member_name(&field.member)],
+                span,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    (!bindings.is_empty()).then_some(bindings)
+}
+
+fn future_storage_bindings(
+    local: &syn::Local,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Vec<FutureStorageBinding> {
+    let Some(name) = pat_ident_name(&local.pat) else {
+        return Vec::new();
+    };
+    let Some(init) = local.init.as_ref() else {
+        return Vec::new();
+    };
+    match unparen_expr(init.expr.as_ref()) {
+        syn::Expr::Tuple(tuple) => tuple
+            .elems
+            .iter()
+            .enumerate()
+            .filter_map(|(index, expr)| {
+                future_storage_binding(
+                    vec![name.clone(), index.to_string()],
+                    expr,
+                    owner,
+                    cfgs,
+                    param_names,
+                    local_scopes,
+                )
+            })
+            .collect(),
+        syn::Expr::Array(array) => array
+            .elems
+            .iter()
+            .enumerate()
+            .filter_map(|(index, expr)| {
+                future_storage_binding(
+                    vec![name.clone(), index.to_string()],
+                    expr,
+                    owner,
+                    cfgs,
+                    param_names,
+                    local_scopes,
+                )
+            })
+            .collect(),
+        syn::Expr::Struct(expr) => {
+            if expr.qself.is_some() || expr.rest.is_some() || path_segments(&expr.path).len() != 1 {
+                return Vec::new();
+            }
+            expr.fields
+                .iter()
+                .filter_map(|field| {
+                    future_storage_binding(
+                        vec![name.clone(), member_name(&field.member)],
+                        &field.expr,
+                        owner,
+                        cfgs,
+                        param_names,
+                        local_scopes,
+                    )
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn future_storage_binding(
+    path: Vec<String>,
+    expr: &syn::Expr,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<FutureStorageBinding> {
+    let span = future_call_span(expr)?;
+    let source = return_binding_source(expr, owner, cfgs, param_names, local_scopes, true)?;
+    if !matches!(
+        source,
+        LocalBindingSource::DynamicCallResult { .. } | LocalBindingSource::PathCallResult { .. }
+    ) {
+        return None;
+    }
+    Some(FutureStorageBinding {
+        name: path.join("."),
+        span,
+        source,
+    })
+}
+
+fn future_alias_binding(stmt: &syn::Stmt) -> Option<(String, Vec<String>)> {
+    let syn::Stmt::Local(local) = stmt else {
+        return None;
+    };
+    let name = pat_ident_name(&local.pat)?;
+    let init_expr = local.init.as_ref()?.expr.as_ref();
+    let source = match unparen_expr(init_expr) {
+        syn::Expr::Path(path) => {
+            if path.qself.is_some() {
+                return None;
+            }
+            let segments = path_segments(&path.path);
+            let [name] = segments.as_slice() else {
+                return None;
+            };
+            vec![name.clone()]
+        }
+        syn::Expr::Field(_) => await_expr_path(init_expr)?,
+        syn::Expr::Block(_) => {
+            let path = block_path_expr(init_expr)?;
+            if path.qself.is_some() {
+                return None;
+            }
+            let segments = path_segments(&path.path);
+            let [name] = segments.as_slice() else {
+                return None;
+            };
+            vec![name.clone()]
+        }
+        _ => return None,
+    };
+    Some((name, source))
+}
+
+fn direct_await_path(stmt: &syn::Stmt) -> Option<Vec<String>> {
+    let syn::Stmt::Expr(expr, _) = stmt else {
+        return None;
+    };
+    let syn::Expr::Await(await_expr) = unparen_expr(expr) else {
+        return None;
+    };
+    await_expr_path(await_expr.base.as_ref())
+}
+
+fn await_expr_path(expr: &syn::Expr) -> Option<Vec<String>> {
+    match unparen_expr(expr) {
+        syn::Expr::Path(path) => {
+            if path.qself.is_some() {
+                return None;
+            }
+            let segments = path_segments(&path.path);
+            let [name] = segments.as_slice() else {
+                return None;
+            };
+            Some(vec![name.clone()])
+        }
+        syn::Expr::Field(field) => {
+            let syn::Expr::Path(base) = unparen_expr(field.base.as_ref()) else {
+                return None;
+            };
+            if base.qself.is_some() {
+                return None;
+            }
+            let segments = path_segments(&base.path);
+            let [name] = segments.as_slice() else {
+                return None;
+            };
+            Some(vec![name.clone(), member_name(&field.member)])
+        }
+        syn::Expr::Index(index) => {
+            let syn::Expr::Path(base) = unparen_expr(index.expr.as_ref()) else {
+                return None;
+            };
+            if base.qself.is_some() {
+                return None;
+            }
+            let segments = path_segments(&base.path);
+            let [name] = segments.as_slice() else {
+                return None;
+            };
+            let index = literal_usize(index.index.as_ref())?;
+            Some(vec![name.clone(), index.to_string()])
+        }
+        _ => None,
+    }
+}
+
+fn closure_binding_id(
+    expr: Option<&syn::Expr>,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+) -> Option<(ExecutableBodyId, bool)> {
+    let syn::Expr::Closure(closure) = unparen_expr(expr?) else {
+        return None;
+    };
+    let byte_range = closure.span().byte_range();
+    let span = (byte_range.start, byte_range.end);
+    let closure_id = ExecutableBodyId::Closure(generate_closure_body_id(owner, span, cfgs));
+    Some((closure_id, closure.asyncness.is_some()))
+}
+
+fn inferred_init_path(expr: Option<&syn::Expr>) -> Option<Vec<String>> {
+    let path = match unparen_expr(expr?) {
+        syn::Expr::Path(path) if path.qself.is_none() => &path.path,
+        syn::Expr::Struct(expr) if expr.qself.is_none() => &expr.path,
+        syn::Expr::Block(_) => return block_path_expr(expr?).and_then(expr_path_segments),
+        _ => return None,
+    };
+    let path = path_segments(path);
+    (!path.is_empty()).then_some(path)
+}
+
+fn path_call_init_path(expr: Option<&syn::Expr>) -> Option<Vec<String>> {
+    let syn::Expr::Call(call) = unparen_expr(expr?) else {
+        return None;
+    };
+    let syn::Expr::Path(path) = unparen_expr(call.func.as_ref()) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    if !call.args.iter().all(is_unit_initializer_arg) {
+        return None;
+    }
+
+    let path = path_segments(&path.path);
+    (path.len() > 1).then_some(path)
+}
+
+fn is_unit_initializer_arg(expr: &syn::Expr) -> bool {
+    matches!(unparen_expr(expr), syn::Expr::Tuple(tuple) if tuple.elems.is_empty())
+}
+
+fn branch_init_path(
+    expr: Option<&syn::Expr>,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<String>> {
+    let targets = branch_init_targets(expr, param_names, local_scopes)?;
+
+    match targets.as_slice() {
+        [target] => Some(target.clone()),
+        _ => None,
+    }
+}
+
+fn ambiguous_branch_init_paths(
+    expr: Option<&syn::Expr>,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<Vec<String>>> {
+    let targets = branch_init_targets(expr, param_names, local_scopes)?;
+    (targets.len() > 1).then_some(targets)
+}
+
+fn branch_init_targets(
+    expr: Option<&syn::Expr>,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<Vec<String>>> {
+    let expr = expr?;
+    let branch_paths = match unparen_expr(expr) {
+        syn::Expr::If(_) => if_branch_paths(expr, param_names, local_scopes)?,
+        syn::Expr::Match(_) => match_arm_paths(expr, param_names, local_scopes)?,
+        _ => return None,
+    };
+
+    let mut targets = branch_paths
+        .iter()
+        .map(|path| init_target_path(path, param_names, local_scopes))
+        .collect::<Option<Vec<_>>>()?;
+    targets.sort();
+    targets.dedup();
+    (!targets.is_empty()).then_some(targets)
+}
+
+fn constructed_init(
+    expr: Option<&syn::Expr>,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<(Vec<String>, ConstructedFields)> {
+    constructed_call_init(expr, param_names, local_scopes)
+        .or_else(|| constructed_struct_init(expr, param_names, local_scopes))
+}
+
+fn constructed_parameter_field_inits(
+    expr: Option<&syn::Expr>,
+    param_names: &[String],
+) -> Option<(Vec<String>, Vec<ArgumentFieldInit>)> {
+    let expr = constructed_return_struct(expr?)?;
+    let type_path = path_segments(&expr.path);
+    if type_path.len() != 1 {
+        return None;
+    }
+
+    let fields = expr
+        .fields
+        .iter()
+        .filter_map(|field| {
+            let path = parameter_expr_path(&field.expr, param_names)?;
+            Some(ArgumentFieldInit {
+                field_path: vec![member_name(&field.member)],
+                init_path: path,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    (!fields.is_empty()).then_some((type_path, fields))
+}
+
+fn constructed_return_type_path(expr: &syn::Expr) -> Option<Vec<String>> {
+    let expr = constructed_return_struct(expr)?;
+    let type_path = path_segments(&expr.path);
+    (!type_path.is_empty()).then_some(type_path)
+}
+
+fn constructed_return_struct(expr: &syn::Expr) -> Option<&syn::ExprStruct> {
+    let syn::Expr::Struct(expr) = unparen_expr(expr) else {
+        return None;
+    };
+    if expr.qself.is_some() || expr.rest.is_some() {
+        return None;
+    }
+
+    let type_path = path_segments(&expr.path);
+    (!type_path.is_empty()).then_some(expr)
+}
+
+fn returned_call_result_field_bindings(
+    block: &syn::Block,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Vec<FutureStorageBinding> {
+    let Some(syn::Stmt::Expr(expr, None)) = block.stmts.last() else {
+        return Vec::new();
+    };
+    let Some(expr) = constructed_return_struct(expr) else {
+        return Vec::new();
+    };
+
+    expr.fields
+        .iter()
+        .filter_map(|field| {
+            let name = format!("return.{}", member_name(&field.member));
+            call_result_binding_source(&field.expr, owner, cfgs, param_names, local_scopes)
+                .or_else(|| {
+                    returned_field_alias_source(
+                        block,
+                        &field.expr,
+                        owner,
+                        cfgs,
+                        param_names,
+                        local_scopes,
+                    )
+                })
+                .map(|(span, source)| FutureStorageBinding { name, span, source })
+        })
+        .collect()
+}
+
+fn returned_field_alias_source(
+    block: &syn::Block,
+    expr: &syn::Expr,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<((usize, usize), LocalBindingSource)> {
+    let syn::Expr::Path(path) = unparen_expr(expr) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    let path = path_segments(&path.path);
+    let [name] = path.as_slice() else {
+        return None;
+    };
+
+    block
+        .stmts
+        .iter()
+        .rev()
+        .skip(1)
+        .filter_map(|stmt| match stmt {
+            syn::Stmt::Local(local) if pat_ident_name(&local.pat).as_deref() == Some(name) => {
+                local.init.as_ref().map(|init| init.expr.as_ref())
+            }
+            _ => None,
+        })
+        .find_map(|init| call_result_binding_source(init, owner, cfgs, param_names, local_scopes))
+}
+
+fn call_result_binding_source(
+    expr: &syn::Expr,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<((usize, usize), LocalBindingSource)> {
+    let span = match unparen_expr(expr) {
+        syn::Expr::Call(call) => {
+            let byte_range = call.span().byte_range();
+            (byte_range.start, byte_range.end)
+        }
+        _ => return None,
+    };
+    let source = return_binding_source(expr, owner, cfgs, param_names, local_scopes, false)?;
+    if !matches!(
+        source,
+        LocalBindingSource::DynamicCallResult { .. } | LocalBindingSource::PathCallResult { .. }
+    ) {
+        return None;
+    }
+    Some((span, source))
+}
+
+fn parameter_expr_path(expr: &syn::Expr, param_names: &[String]) -> Option<Vec<String>> {
+    let syn::Expr::Path(path) = unparen_expr(expr) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+
+    let path = path_segments(&path.path);
+    let [name] = path.as_slice() else {
+        return None;
+    };
+    param_names
+        .iter()
+        .any(|candidate| candidate == name)
+        .then_some(path)
+}
+
+fn constructed_binding_init(
+    expr: Option<&syn::Expr>,
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<(Vec<String>, ConstructedFields)> {
+    let syn::Expr::Path(path) = unparen_expr(expr?) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+
+    let path = path_segments(&path.path);
+    let [name] = path.as_slice() else {
+        return None;
+    };
+
+    match visible_local_binding(name, local_scopes)? {
+        LocalBindingProof::Constructed {
+            type_path, fields, ..
+        } => Some((type_path.clone(), fields.clone())),
+        _ => None,
+    }
+}
+
+fn constructed_call_init(
+    expr: Option<&syn::Expr>,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<(Vec<String>, ConstructedFields)> {
+    let syn::Expr::Call(call) = unparen_expr(expr?) else {
+        return None;
+    };
+    let syn::Expr::Path(path) = unparen_expr(call.func.as_ref()) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+
+    let path = path_segments(&path.path);
+    if path.len() != 1 {
+        return None;
+    }
+
+    let field_init_paths = call
+        .args
+        .iter()
+        .map(|arg| constructed_field_init(arg, param_names, local_scopes))
+        .collect::<Vec<_>>();
+
+    Some((path, ConstructedFields::Tuple(field_init_paths)))
+}
+
+fn constructed_struct_init(
+    expr: Option<&syn::Expr>,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<(Vec<String>, ConstructedFields)> {
+    let syn::Expr::Struct(expr) = unparen_expr(expr?) else {
+        return None;
+    };
+    if expr.qself.is_some() || expr.rest.is_some() {
+        return None;
+    }
+
+    let path = path_segments(&expr.path);
+    if path.len() != 1 {
+        return None;
+    }
+
+    let fields = expr
+        .fields
+        .iter()
+        .map(|field| {
+            let init = constructed_field_init(&field.expr, param_names, local_scopes);
+            (member_name(&field.member), init)
+        })
+        .collect::<Vec<_>>();
+
+    Some((path, ConstructedFields::Named(fields)))
+}
+
+fn constructed_field_init(
+    expr: &syn::Expr,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<FieldInitProof> {
+    match unparen_expr(expr) {
+        syn::Expr::Path(path) if path.qself.is_none() => {
+            let path = path_segments(&path.path);
+            let [name] = path.as_slice() else {
+                return init_target_path(&path, param_names, local_scopes)
+                    .map(FieldInitProof::Path);
+            };
+            match visible_local_binding(name, local_scopes) {
+                Some(LocalBindingProof::Array {
+                    element_init_paths, ..
+                }) => Some(FieldInitProof::Array(element_init_paths.clone())),
+                _ => init_target_path(&path, param_names, local_scopes).map(FieldInitProof::Path),
+            }
+        }
+        syn::Expr::Array(_) => {
+            array_init(Some(expr), param_names, local_scopes).map(FieldInitProof::Array)
+        }
+        _ => None,
+    }
+}
+
+fn array_init(
+    expr: Option<&syn::Expr>,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<Option<Vec<String>>>> {
+    let syn::Expr::Array(array) = unparen_expr(expr?) else {
+        return None;
+    };
+
+    Some(
+        array
+            .elems
+            .iter()
+            .map(|elem| {
+                let syn::Expr::Path(path) = unparen_expr(elem) else {
+                    return None;
+                };
+                if path.qself.is_some() {
+                    return None;
+                }
+                let path = path_segments(&path.path);
+                init_target_path(&path, param_names, local_scopes)
+            })
+            .collect(),
+    )
+}
+
+fn array_binding_init(
+    expr: Option<&syn::Expr>,
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<Option<Vec<String>>>> {
+    let syn::Expr::Path(path) = unparen_expr(expr?) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+
+    let path = path_segments(&path.path);
+    let [name] = path.as_slice() else {
+        return None;
+    };
+
+    match visible_local_binding(name, local_scopes)? {
+        LocalBindingProof::Array {
+            element_init_paths, ..
+        } => Some(element_init_paths.clone()),
+        _ => None,
+    }
+}
+
+fn referenced_init_path(
+    expr: Option<&syn::Expr>,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<String>> {
+    let syn::Expr::Reference(reference) = unparen_expr(expr?) else {
+        return None;
+    };
+    let syn::Expr::Path(path) = unparen_expr(reference.expr.as_ref()) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+
+    let path = path_segments(&path.path);
+    if path.is_empty() {
+        return None;
+    }
+    if let [name] = path.as_slice() {
+        if param_names.iter().any(|candidate| candidate == name) {
+            return None;
+        }
+        if visible_local_binding(name, local_scopes).is_some() {
+            return init_target_path(&path, param_names, local_scopes);
+        }
+    }
+
+    Some(path)
+}
+
+fn trait_object_init_path(
+    expr: Option<&syn::Expr>,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<String>> {
+    boxed_init_path(expr, param_names, local_scopes)
+        .or_else(|| referenced_init_path(expr, param_names, local_scopes))
+        .or_else(|| referenced_alias_path(expr, param_names, local_scopes))
+}
+
+fn boxed_init_path(
+    expr: Option<&syn::Expr>,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<String>> {
+    let syn::Expr::Call(call) = unparen_expr(expr?) else {
+        return None;
+    };
+    let syn::Expr::Path(func) = unparen_expr(call.func.as_ref()) else {
+        return None;
+    };
+    if func.qself.is_some() {
+        return None;
+    }
+    let func = path_segments(&func.path);
+    if !is_box_new(&func) {
+        return None;
+    }
+
+    let mut args = call.args.iter();
+    let arg = args.next()?;
+    if args.next().is_some() {
+        return None;
+    }
+    let syn::Expr::Path(path) = unparen_expr(arg) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+
+    let path = path_segments(&path.path);
+    if path.is_empty() {
+        return None;
+    }
+    init_target_path(&path, param_names, local_scopes)
+}
+
+fn is_box_new(path: &[String]) -> bool {
+    match path {
+        [box_, new] => box_ == "Box" && new == "new",
+        [root, boxed, box_, new] => {
+            (root == "std" || root == "alloc") && boxed == "boxed" && box_ == "Box" && new == "new"
+        }
+        _ => false,
+    }
+}
+
+fn referenced_alias_path(
+    expr: Option<&syn::Expr>,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<String>> {
+    let syn::Expr::Path(path) = unparen_expr(expr?) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    let path = path_segments(&path.path);
+    let [name] = path.as_slice() else {
+        return None;
+    };
+    if param_names.iter().any(|candidate| candidate == name) {
+        return None;
+    }
+    match visible_local_binding(name, local_scopes) {
+        Some(LocalBindingProof::Referenced { type_path, .. }) => Some(type_path.clone()),
+        _ => None,
+    }
+}
+
+fn value_alias_path(
+    expr: Option<&syn::Expr>,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<String>> {
+    let path = match unparen_expr(expr?) {
+        syn::Expr::Path(path) => path,
+        syn::Expr::Reference(reference) => {
+            let syn::Expr::Path(path) = unparen_expr(reference.expr.as_ref()) else {
+                return None;
+            };
+            path
+        }
+        _ => return None,
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    let path = path_segments(&path.path);
+    let [name] = path.as_slice() else {
+        return None;
+    };
+    if param_names.iter().any(|candidate| candidate == name) {
+        return Some(path);
+    }
+    match visible_local_binding(name, local_scopes) {
+        Some(LocalBindingProof::ValueAlias { source_path, .. }) => Some(source_path.clone()),
+        _ => None,
+    }
+}
+
+fn init_target_path(
+    path: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<String>> {
+    let [name] = path else {
+        return Some(path.to_vec());
+    };
+
+    if param_names.iter().any(|candidate| candidate == name) {
+        return None;
+    }
+
+    match visible_local_binding(name, local_scopes) {
+        Some(
+            LocalBindingProof::Typed {
+                init_path: Some(init_path),
+                ..
+            }
+            | LocalBindingProof::TraitObject {
+                init_path: Some(init_path),
+                ..
+            }
+            | LocalBindingProof::Initialized { init_path, .. },
+        ) => Some(init_path.clone()),
+        Some(
+            LocalBindingProof::Typed {
+                init_path: None, ..
+            }
+            | LocalBindingProof::TypedAmbiguous { .. }
+            | LocalBindingProof::TraitObject {
+                init_path: None, ..
+            }
+            | LocalBindingProof::AmbiguousInitialized { .. }
+            | LocalBindingProof::SelfField { .. }
+            | LocalBindingProof::TupleReturn { .. }
+            | LocalBindingProof::TupleMethodReturn { .. }
+            | LocalBindingProof::MethodResult { .. }
+            | LocalBindingProof::EnumVariantField { .. }
+            | LocalBindingProof::Closure { .. }
+            | LocalBindingProof::LocalFunction { .. }
+            | LocalBindingProof::ValueAlias { .. }
+            | LocalBindingProof::Constructed { .. }
+            | LocalBindingProof::Array { .. }
+            | LocalBindingProof::Referenced { .. }
+            | LocalBindingProof::Untyped { .. },
+        ) => None,
+        None => Some(path.to_vec()),
+    }
+}
+
+fn pat_ident_name(pat: &syn::Pat) -> Option<String> {
+    match pat {
+        syn::Pat::Ident(ident) => Some(ident.ident.to_string()),
+        _ => None,
+    }
+}
+
+fn closure_param_names(closure: &syn::ExprClosure) -> Vec<String> {
+    closure.inputs.iter().filter_map(pat_ident_name).collect()
+}
+
+fn closure_visible_param_names(parent: &[String], closure: &syn::ExprClosure) -> Vec<String> {
+    let mut params = parent.to_vec();
+    params.extend(closure_param_names(closure));
+    params
+}
+
+fn local_fn_param_names(item_fn: &syn::ItemFn) -> Vec<String> {
+    item_fn
+        .sig
+        .inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            syn::FnArg::Typed(typed) => pat_ident_name(typed.pat.as_ref()),
+            syn::FnArg::Receiver(_) => None,
+        })
+        .collect()
+}
+
+fn impl_method_param_names(method: &syn::ImplItemFn) -> Vec<String> {
+    method
+        .sig
+        .inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            syn::FnArg::Typed(typed) => pat_ident_name(typed.pat.as_ref()),
+            syn::FnArg::Receiver(_) => None,
+        })
+        .collect()
+}
+
+fn type_path_segments(ty: &syn::Type) -> Option<Vec<String>> {
+    match ty {
+        syn::Type::Path(path) if path.qself.is_none() => Some(path_segments(&path.path)),
+        ty => trait_object_bound_path_segments(ty),
+    }
+}
+
+fn typed_local_type_path_segments(ty: &syn::Type) -> Option<Vec<String>> {
+    direct_typed_local_type_path_segments(unparen_type(ty))
+        .or_else(|| referenced_type_path_segments(ty))
+}
+
+fn typed_local_trait_object_path_segments(ty: &syn::Type) -> Option<Vec<String>> {
+    match unparen_type(ty) {
+        syn::Type::Reference(reference) => {
+            trait_object_bound_path_segments(unparen_type(reference.elem.as_ref()))
+                .or_else(|| boxed_trait_path(unparen_type(reference.elem.as_ref())))
+        }
+        ty => trait_object_bound_path_segments(ty).or_else(|| boxed_trait_path(ty)),
+    }
+}
+
+fn direct_typed_local_type_path_segments(ty: &syn::Type) -> Option<Vec<String>> {
+    type_path_segments(ty).or_else(|| trait_object_bound_path_segments(ty))
+}
+
+fn referenced_type_path_segments(ty: &syn::Type) -> Option<Vec<String>> {
+    match unparen_type(ty) {
+        syn::Type::Reference(reference) => {
+            direct_typed_local_type_path_segments(unparen_type(reference.elem.as_ref()))
+                .or_else(|| referenced_type_path_segments(reference.elem.as_ref()))
+        }
+        _ => None,
+    }
+}
+
+fn trait_object_bound_path_segments(ty: &syn::Type) -> Option<Vec<String>> {
+    let syn::Type::TraitObject(object) = ty else {
+        return None;
+    };
+
+    let trait_paths = object
+        .bounds
+        .iter()
+        .filter_map(|bound| match bound {
+            syn::TypeParamBound::Trait(trait_bound) => {
+                let path = path_segments(&trait_bound.path);
+                (!path.is_empty()).then_some(path)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    match trait_paths.as_slice() {
+        [trait_path] => Some(trait_path.clone()),
+        [] | [_, ..] => None,
+    }
+}
+
+fn boxed_trait_path(ty: &syn::Type) -> Option<Vec<String>> {
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+
+    let segment = path.path.segments.last()?;
+    if segment.ident != "Box" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    let traits = args
+        .args
+        .iter()
+        .filter_map(|arg| match arg {
+            syn::GenericArgument::Type(ty) => trait_object_bound_path_segments(unparen_type(ty)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    match traits.as_slice() {
+        [trait_path] if is_callable_trait(trait_path) => Some(trait_path.clone()),
+        [] | [_, _, ..] => None,
+        [_] => None,
+    }
+}
+
+fn is_callable_trait(path: &[String]) -> bool {
+    path.last()
+        .is_some_and(|name| matches!(name.as_str(), "Fn" | "FnMut" | "FnOnce"))
+}
+
+fn unparen_type(ty: &syn::Type) -> &syn::Type {
+    match ty {
+        syn::Type::Paren(paren) => unparen_type(paren.elem.as_ref()),
+        _ => ty,
+    }
+}
+
+fn self_field_path(expr: &syn::Expr) -> Option<Vec<String>> {
+    match expr {
+        syn::Expr::Path(path) if path.qself.is_none() && path.path.is_ident("self") => {
+            Some(Vec::new())
+        }
+        syn::Expr::Field(field) => {
+            let mut field_path = self_field_path(field.base.as_ref())?;
+            field_path.push(member_name(&field.member));
+            Some(field_path)
+        }
+        _ => None,
+    }
+}
+
+fn self_field_assignment(
+    left: &syn::Expr,
+    right: &syn::Expr,
+    param_names: &[String],
+) -> Option<SelfFieldAssignment> {
+    let field_path = self_field_path(unparen_expr(left))?;
+    if field_path.is_empty() {
+        return None;
+    }
+    let source_path = callable_parameter_path(right, param_names)?;
+    let byte_range = left.span().byte_range();
+    let mut name = Vec::with_capacity(field_path.len() + 1);
+    name.push("self".to_string());
+    name.extend(field_path.iter().cloned());
+    Some(SelfFieldAssignment {
+        name: name.join("."),
+        span: (byte_range.start, byte_range.end),
+        field_path,
+        source_path,
+    })
+}
+
+fn callable_parameter_path(expr: &syn::Expr, param_names: &[String]) -> Option<Vec<String>> {
+    match unparen_expr(expr) {
+        syn::Expr::Path(path) if path.qself.is_none() => {
+            let path = path_segments(&path.path);
+            let [name] = path.as_slice() else {
+                return None;
+            };
+            param_names
+                .iter()
+                .any(|candidate| candidate == name)
+                .then_some(path)
+        }
+        syn::Expr::Call(call) => callable_wrapped_parameter_path(call, param_names),
+        _ => None,
+    }
+}
+
+fn callable_wrapped_parameter_path(
+    call: &syn::ExprCall,
+    param_names: &[String],
+) -> Option<Vec<String>> {
+    let syn::Expr::Path(func) = unparen_expr(call.func.as_ref()) else {
+        return None;
+    };
+    if func.qself.is_some() {
+        return None;
+    }
+    let path = path_segments(&func.path);
+    if !is_box_new(&path) && !is_option_some(&path) {
+        return None;
+    }
+    let mut args = call.args.iter();
+    let arg = args.next()?;
+    if args.next().is_some() {
+        return None;
+    }
+    callable_parameter_path(arg, param_names)
+}
+
+fn is_option_some(path: &[String]) -> bool {
+    match path {
+        [variant] => variant == "Some",
+        [option, variant] => option == "Option" && variant == "Some",
+        [root, option_mod, option, variant] => {
+            (root == "std" || root == "core")
+                && option_mod == "option"
+                && option == "Option"
+                && variant == "Some"
+        }
+        _ => false,
+    }
+}
+
+fn member_name(member: &syn::Member) -> String {
+    match member {
+        syn::Member::Named(ident) => ident.to_string(),
+        syn::Member::Unnamed(index) => index.index.to_string(),
+    }
+}

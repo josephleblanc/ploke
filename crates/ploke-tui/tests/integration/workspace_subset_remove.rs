@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::{Mutex as StdMutex, OnceLock};
 
 use cozo::DataValue;
 use ploke_core::WorkspaceInfo;
@@ -30,11 +29,6 @@ use tui::event_bus::{EventBus, EventBusCaps};
 use tui::user_config::{
     PLOKE_WORKSPACE_REGISTRY_PATH_ENV, WorkspaceRegistry, WorkspaceRegistryEntry,
 };
-
-fn fixture_lock() -> &'static StdMutex<()> {
-    static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| StdMutex::new(()))
-}
 
 struct XdgConfigHomeGuard {
     old_xdg: Option<String>,
@@ -173,7 +167,9 @@ fn function_node_id(db: &Database, function_name: &str) -> uuid::Uuid {
 /// invalidated search readiness, and rewritten registry/snapshot metadata.
 #[tokio::test]
 async fn workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata() {
-    let _fixture_lock = fixture_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _fixture_lock = crate::fixture_workspace_lock()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let _config_lock = crate::workspace_registry_env_lock().lock().await;
     let xdg_dir = tempfile::tempdir().expect("temp xdg dir");
     let _xdg_guard = XdgConfigHomeGuard::set_to(xdg_dir.path());
@@ -333,7 +329,9 @@ async fn workspace_remove_updates_runtime_membership_focus_and_snapshot_metadata
 /// focus, rewrites snapshot metadata, and explicitly invalidates search state.
 #[tokio::test]
 async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
-    let _fixture_lock = fixture_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _fixture_lock = crate::fixture_workspace_lock()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let _config_lock = crate::workspace_registry_env_lock().lock().await;
     let xdg_dir = tempfile::tempdir().expect("temp xdg dir");
     let _xdg_guard = XdgConfigHomeGuard::set_to(xdg_dir.path());
@@ -565,7 +563,9 @@ async fn workspace_load_crates_restores_removed_member_and_snapshot_metadata() {
 /// state when the requested crate is already loaded.
 #[tokio::test]
 async fn workspace_load_crates_conflict_preserves_runtime_state() {
-    let _fixture_lock = fixture_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _fixture_lock = crate::fixture_workspace_lock()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let _config_lock = crate::workspace_registry_env_lock().lock().await;
     let xdg_dir = tempfile::tempdir().expect("temp xdg dir");
     let _xdg_guard = XdgConfigHomeGuard::set_to(xdg_dir.path());

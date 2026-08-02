@@ -293,6 +293,48 @@ fn tool_result_lines(tool: &str, content: &str) -> Vec<String> {
             ),
             format!("excerpt: {}", excerpt(&item.snippet, 360)),
         ],
+        PersistedToolResultContent::Decoded(ToolResultContent::CodeItemCallPath(result)) => {
+            vec![format!(
+                "result: reachable={} paths={} source={} target={} source_files={} proof_context={}",
+                result.reachable,
+                result.paths.len(),
+                result.source_id,
+                result.target_id,
+                result.source_files.len(),
+                result.proof_context.len()
+            )]
+        }
+        PersistedToolResultContent::Decoded(ToolResultContent::CodeItemEffectGuard(result)) => {
+            vec![format!(
+                "result: guarded={} effect_class={} effects={} violations={} owner={} guard={} source_files={} proof_context={}",
+                result.guarded,
+                result.effect_class,
+                result.effects.len(),
+                result.violations.len(),
+                result.owner_id,
+                result.guard_id,
+                result.source_files.len(),
+                result.proof_context.len()
+            )]
+        }
+        PersistedToolResultContent::Decoded(ToolResultContent::CodeItemBoundaryPolicy(result)) => {
+            vec![format!(
+                "result: rules={} violations={} owner={} source_files={}",
+                result.rules.len(),
+                result.violations.len(),
+                result.owner_id,
+                result.source_files.len()
+            )]
+        }
+        PersistedToolResultContent::Decoded(ToolResultContent::CodePrivateUncalled(result)) => {
+            vec![format!(
+                "result: total={} returned={} truncated={} nodes={}",
+                result.total,
+                result.returned,
+                result.truncated,
+                result.nodes.len()
+            )]
+        }
         PersistedToolResultContent::Decoded(ToolResultContent::ApplyCodeEdit(result))
         | PersistedToolResultContent::Decoded(ToolResultContent::InsertRustItem(result)) => {
             let mut lines = vec![format!(

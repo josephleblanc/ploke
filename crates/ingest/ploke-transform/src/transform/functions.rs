@@ -140,6 +140,14 @@ fn process_func(
         (schema.cfgs().to_string(), DataValue::List(cfgs)),
         (schema.return_type_id().to_string(), return_type_id),
         (schema.body().to_string(), body),
+        (
+            schema.is_unsafe().to_string(),
+            DataValue::Bool(function.is_unsafe),
+        ),
+        (
+            schema.is_async().to_string(),
+            DataValue::Bool(function.is_async),
+        ),
         // Kind of awkward, might want to visibility its own entity. Maybe just visibility
         // path?
         (schema.vis_kind().to_string(), vis_kind),
@@ -157,27 +165,41 @@ fn process_func(
 fn script_put(params: &BTreeMap<String, DataValue>, relation_name: &str) -> String {
     // let entry_names = params.keys().join(", ");
     let id_keywords = &["id", "function_id"];
+    let field_order = match relation_name {
+        "function" => Some(FunctionNodeSchema::SCHEMA_FIELDS),
+        "param" => Some(ParamNodeSchema::SCHEMA_FIELDS),
+        _ => None,
+    };
+    let ordered_fields = field_order
+        .map(|fields| {
+            fields
+                .iter()
+                .copied()
+                .filter(|field| params.contains_key(*field))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| params.keys().map(String::as_str).collect::<Vec<_>>());
 
-    let key_names = params
-        .keys()
-        .filter(|k| id_keywords.contains(&k.as_str()) && k.as_str() != "at")
+    let key_names = ordered_fields
+        .iter()
+        .filter(|field| id_keywords.contains(field) && **field != "at")
         .join(", ");
-    let entry_names = params
-        .keys()
-        .filter(|k| !id_keywords.contains(&k.as_str()) && k.as_str() != "at")
+    let entry_names = ordered_fields
+        .iter()
+        .filter(|field| !id_keywords.contains(field) && **field != "at")
         .join(", ");
     // let entry_names = params.keys().filter(|k| k.as_str() != "id" && k.as_str() != "at").join(", ");
 
     // let param_names = params.keys().map(|k| format!("${}", k)).join(", ");
 
-    let key_param_names = params
-        .keys()
-        .filter(|k| id_keywords.contains(&k.as_str()) && k.as_str() != "at")
+    let key_param_names = ordered_fields
+        .iter()
+        .filter(|field| id_keywords.contains(field) && **field != "at")
         .map(|k| format!("${}", k))
         .join(", ");
-    let param_names = params
-        .keys()
-        .filter(|k| !id_keywords.contains(&k.as_str()) && k.as_str() != "at")
+    let param_names = ordered_fields
+        .iter()
+        .filter(|field| !id_keywords.contains(field) && **field != "at")
         .map(|k| format!("${}", k))
         .join(", ");
 

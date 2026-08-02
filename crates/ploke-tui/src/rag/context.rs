@@ -11,12 +11,17 @@ use crate::{
 use ploke_rag::{TokenCounter as _, context::ApproxCharTokenizer};
 use std::{ops::ControlFlow, path::PathBuf};
 
+use itertools::Itertools;
 use once_cell::sync::Lazy;
 use ploke_core::{
     ArcStr, RetrievalScope,
-    rag_types::{AssembledContext, ContextPart},
+    rag_types::{
+        AssembledContext, CallCalleeInfo, CallContextInfo, CallExpansionInfo, CallPathInfo,
+        CallReceiverInfo, CallTargetInfo, ContextPart, ProofContextInfo,
+    },
 };
 use tokio::sync::oneshot;
+use uuid::Uuid;
 
 use crate::{
     app_state::handlers::{chat, embedding::wait_on_oneshot},
@@ -35,6 +40,8 @@ You are a highly skilled software engineer, specializing in the Rust programming
 
 You will be asked to provide some assistance in collaborating with the user.
 RAG snippets are intentionally brief; request deeper context with the request_code_context tool.
+Call graph context is proof-facing: Resolved rows are persisted local edges, while External, Unsupported, Unresolved, and Ambiguous rows are blockers or candidates and must not be treated as local traversal edges.
+Use proof_context and evidence fields to qualify claims about generated code, external summaries, effects, build domains, and unresolved blockers.
 <-- END SYSTEM PROMPT -->
 "#;
 
@@ -322,15 +329,458 @@ fn reformat_context_to_system(ctx_part: ContextPart) -> String {
             )
         })
         .unwrap_or_default();
+    let call_expansion = ctx_part
+        .call_expansion
+        .map(|ctx| format!("\n{}", format_call_expansion(&ctx)))
+        .unwrap_or_default();
+    let call_context = if ctx_part.call_context.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n{}",
+            format_call_context_block_for_part(ctx_part.id, &ctx_part.call_context, "  ", 8)
+        )
+    };
+    let call_paths = format_call_paths_block(
+        &ctx_part.call_paths_from_owner,
+        &ctx_part.call_paths_to_target,
+    );
+    let proof_context = if ctx_part.proof_context.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n{}",
+            format_proof_context_block(&ctx_part.proof_context, "  ", 8)
+        )
+    };
     format!(
-        "file_path: {}\ncanon_path: {}\nkind: {}\nscore: {:.3}{}\ncode_snippet:\n{}",
+        "file_path: {}\ncanon_path: {}\nkind: {}\nscore: {:.3}{}{}{}{}{}\ncode_snippet:\n{}",
         ctx_part.file_path.as_ref(),
         ctx_part.canon_path.as_ref(),
         ctx_part.kind.to_static_str(),
         ctx_part.score,
         type_context,
+        call_expansion,
+        call_context,
+        call_paths,
+        proof_context,
         snippet
     )
+}
+
+pub(crate) fn format_call_paths_block(
+    from_owner: &[CallPathInfo],
+    to_target: &[CallPathInfo],
+) -> String {
+    if from_owner.is_empty() && to_target.is_empty() {
+        return String::new();
+    }
+
+    let mut out = format!(
+        "\ncall_paths: {} outgoing, {} incoming",
+        from_owner.len(),
+        to_target.len()
+    );
+    for path in from_owner.iter().take(4) {
+        out.push('\n');
+        out.push_str("  - ");
+        out.push_str(&format_call_path("outgoing", path));
+    }
+    for path in to_target.iter().take(4) {
+        out.push('\n');
+        out.push_str("  - ");
+        out.push_str(&format_call_path("incoming", path));
+    }
+    let hidden = from_owner.len().saturating_sub(4) + to_target.len().saturating_sub(4);
+    if hidden > 0 {
+        out.push('\n');
+        out.push_str("  - ... ");
+        out.push_str(&hidden.to_string());
+        out.push_str(" more call path(s)");
+    }
+    out
+}
+
+fn format_call_path(direction: &str, path: &CallPathInfo) -> String {
+    let sites = path
+        .edges
+        .iter()
+        .map(|edge| format!("{}@{}..{}", edge.call_site_id, edge.span.0, edge.span.1))
+        .collect::<Vec<_>>()
+        .join(" -> ");
+    format!(
+        "{direction} depth {}: {} -> {} via [{}]; nodes [{}]",
+        path.depth,
+        path.start_id,
+        path.end_id,
+        sites,
+        format_call_path_nodes(path)
+    )
+}
+
+fn format_call_path_nodes(path: &CallPathInfo) -> String {
+    let mut ids = vec![path.start_id];
+    ids.extend(path.edges.iter().map(|edge| edge.callee_id));
+    ids.into_iter()
+        .filter_map(|id| {
+            path.nodes
+                .iter()
+                .find(|node| node.id == id)
+                .map(|node| format!("{} @ {}", node.canon_path.as_ref(), node.file_path.as_ref()))
+        })
+        .join(" -> ")
+}
+
+pub(crate) fn format_call_expansion(ctx: &CallExpansionInfo) -> String {
+    format!(
+        "call_expansion: {} from {} via {} to {} at distance {}",
+        ctx.relation.to_static_str(),
+        ctx.seed_id,
+        ctx.call_site_id,
+        ctx.target_id,
+        ctx.distance
+    )
+}
+
+pub(crate) fn format_call_context_block(
+    calls: &[CallContextInfo],
+    indent: &str,
+    limit: usize,
+) -> String {
+    format_call_context_block_inner(calls, None, indent, limit)
+}
+
+pub(crate) fn format_call_context_block_for_part(
+    part_id: Uuid,
+    calls: &[CallContextInfo],
+    indent: &str,
+    limit: usize,
+) -> String {
+    format_call_context_block_inner(calls, Some(part_id), indent, limit)
+}
+
+fn format_call_context_block_inner(
+    calls: &[CallContextInfo],
+    part_id: Option<Uuid>,
+    indent: &str,
+    limit: usize,
+) -> String {
+    if calls.is_empty() {
+        return String::new();
+    }
+
+    let mut out = format!("call_context: {} call site(s)", calls.len());
+    let limit = limit.max(1);
+    for call in calls.iter().take(limit) {
+        out.push('\n');
+        out.push_str(indent);
+        out.push_str("- ");
+        out.push_str(&format_call_context(call, part_id));
+    }
+    let hidden = calls.len().saturating_sub(limit);
+    if hidden > 0 {
+        out.push('\n');
+        out.push_str(indent);
+        out.push_str("- ... ");
+        out.push_str(&hidden.to_string());
+        out.push_str(" more call site(s)");
+    }
+    out
+}
+
+fn format_call_context(call: &CallContextInfo, part_id: Option<Uuid>) -> String {
+    let direction = part_id
+        .and_then(|part_id| call_context_direction(call, part_id))
+        .map(|direction| format!("{direction} "))
+        .unwrap_or_default();
+    format!(
+        "{}{} @ {}..{}: {} => {}, {}, owner {}",
+        direction,
+        call.kind.to_static_str(),
+        call.span.0,
+        call.span.1,
+        format_callee(&call.callee),
+        format_status(call),
+        format_targets(&call.targets),
+        call.owner_id
+    )
+}
+
+fn call_context_direction(call: &CallContextInfo, part_id: Uuid) -> Option<&'static str> {
+    if call.owner_id == part_id {
+        return Some("outgoing");
+    }
+    call.targets
+        .iter()
+        .any(|target| target.target_id == part_id)
+        .then_some("incoming")
+}
+
+fn format_status(call: &CallContextInfo) -> String {
+    match &call.resolution {
+        Some(resolution) => format!(
+            "{}({})",
+            call.status.to_static_str(),
+            resolution.to_static_str()
+        ),
+        None => call.status.to_static_str().to_string(),
+    }
+}
+
+fn format_targets(targets: &[CallTargetInfo]) -> String {
+    if targets.is_empty() {
+        return "targets []".to_string();
+    }
+
+    let limit = 3usize;
+    let mut parts = targets
+        .iter()
+        .take(limit)
+        .map(|target| format!("{}:{}", target.relation.to_static_str(), target.target_id))
+        .collect::<Vec<_>>();
+    let hidden = targets.len().saturating_sub(limit);
+    if hidden > 0 {
+        parts.push(format!("... {hidden} more"));
+    }
+    format!("targets [{}]", parts.join(", "))
+}
+
+pub(crate) fn format_proof_context_block(
+    rows: &[ProofContextInfo],
+    indent: &str,
+    limit: usize,
+) -> String {
+    if rows.is_empty() {
+        return String::new();
+    }
+
+    let mut out = format!("proof_context: {} proof fact(s)", rows.len());
+    let limit = limit.max(1);
+    for row in rows.iter().take(limit) {
+        out.push('\n');
+        out.push_str(indent);
+        out.push_str("- ");
+        out.push_str(&format_proof_context(row));
+    }
+    let hidden = rows.len().saturating_sub(limit);
+    if hidden > 0 {
+        out.push('\n');
+        out.push_str(indent);
+        out.push_str("- ... ");
+        out.push_str(&hidden.to_string());
+        out.push_str(" more proof fact(s)");
+    }
+    out
+}
+
+fn format_proof_context(row: &ProofContextInfo) -> String {
+    let mut parts = vec![row.kind.clone()];
+    push_opt(&mut parts, "site", row.call_site_id.as_deref());
+    push_opt(&mut parts, "edge", row.call_edge_id.as_deref());
+    push_opt(&mut parts, "caller", row.caller_def_id.as_deref());
+    push_opt(&mut parts, "callee", row.callee_def_id.as_deref());
+    push_opt(&mut parts, "state", row.resolution_state.as_deref());
+    push_opt(&mut parts, "resolved", row.resolved_def_id.as_deref());
+    if !row.candidate_def_ids.is_empty() {
+        parts.push(format_candidates(&row.candidate_def_ids, 4));
+    }
+    push_opt(
+        &mut parts,
+        "external_summary",
+        row.external_summary_id.as_deref(),
+    );
+    push_opt(&mut parts, "boundary", row.boundary_id.as_deref());
+    push_opt(&mut parts, "boundary_kind", row.boundary_kind.as_deref());
+    push_opt(&mut parts, "expanded_item", row.expanded_item_id.as_deref());
+    push_opt(&mut parts, "definition", row.definition_id.as_deref());
+    push_opt(&mut parts, "target_kind", row.target_kind.as_deref());
+    push_opt(&mut parts, "target_name", row.target_name.as_deref());
+    push_opt(&mut parts, "target_root", row.target_root.as_deref());
+    push_opt(&mut parts, "profile", row.profile.as_deref());
+    push_opt(&mut parts, "rustc", row.rustc_version.as_deref());
+    push_opt(
+        &mut parts,
+        "proof_policy",
+        row.proof_policy_version.as_deref(),
+    );
+    push_opt(&mut parts, "cfg_domain", row.cfg_domain_id.as_deref());
+    push_opt(&mut parts, "active_cfg", row.active_cfg_hash.as_deref());
+    push_opt(&mut parts, "invocation", row.invocation_id.as_deref());
+    push_opt(&mut parts, "rustc_program", row.rustc_program.as_deref());
+    push_opt(&mut parts, "working_dir", row.working_directory.as_deref());
+    push_opt(
+        &mut parts,
+        "argument_hash",
+        row.argument_vector_hash.as_deref(),
+    );
+    push_opt(&mut parts, "env_hash", row.environment_hash.as_deref());
+    push_opt(&mut parts, "effect_seed", row.effect_seed_id.as_deref());
+    push_opt(&mut parts, "confidence", row.confidence.as_deref());
+    if let Some(blocker_if_unresolved) = row.blocker_if_unresolved {
+        parts.push(format!("blocker_if_unresolved={blocker_if_unresolved}"));
+    }
+    push_opt(&mut parts, "authority", row.authority_term.as_deref());
+    push_opt(&mut parts, "summary", row.summary_class.as_deref());
+    push_opt(&mut parts, "artifact", row.artifact_hash.as_deref());
+    push_opt(&mut parts, "version", row.summary_version.as_deref());
+    push_opt(&mut parts, "review", row.review_method.as_deref());
+    push_opt(&mut parts, "scope", row.scope_of_validity.as_deref());
+    if !row.allowed_effects.is_empty() {
+        parts.push(format_list("allowed_effects", &row.allowed_effects, 4));
+    }
+    push_opt(
+        &mut parts,
+        "containment",
+        row.required_containment.as_deref(),
+    );
+    push_opt(
+        &mut parts,
+        "invalidates",
+        row.invalidation_conditions.as_deref(),
+    );
+    push_opt(&mut parts, "status", row.status.as_deref());
+    push_opt(&mut parts, "blocker", row.blocker_reason.as_deref());
+    push_opt(&mut parts, "effect", row.effect_class.as_deref());
+    push_opt(&mut parts, "detail", row.detail.as_deref());
+    push_opt(&mut parts, "evidence", row.evidence_use.as_deref());
+    push_opt(&mut parts, "domain", row.build_domain_id.as_deref());
+    if let (Some(file), Some(start), Some(end)) =
+        (row.source_file.as_deref(), row.start_byte, row.end_byte)
+    {
+        parts.push(format!("source={file}:{start}..{end}"));
+    }
+    if let (Some(start), Some(end)) = (row.line_start, row.line_end) {
+        parts.push(format!("lines={start}..{end}"));
+    }
+    parts.join(", ")
+}
+
+fn push_opt(parts: &mut Vec<String>, label: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        parts.push(format!("{label}={value}"));
+    }
+}
+
+fn format_candidates(candidates: &[String], limit: usize) -> String {
+    format_list("candidates", candidates, limit)
+}
+
+fn format_list(label: &str, values: &[String], limit: usize) -> String {
+    let limit = limit.max(1);
+    let mut visible = values.iter().take(limit).cloned().collect::<Vec<_>>();
+    let hidden = values.len().saturating_sub(limit);
+    if hidden > 0 {
+        visible.push(format!("... {hidden} more"));
+    }
+    format!("{label}=[{}]", visible.join(", "))
+}
+
+fn format_callee(callee: &CallCalleeInfo) -> String {
+    match callee {
+        CallCalleeInfo::Path { path } => format!("path {}", path.join("::")),
+        CallCalleeInfo::Method { name, receiver } => {
+            let receiver = receiver
+                .as_ref()
+                .map(|receiver| format!(" on {}", format_receiver(receiver)))
+                .unwrap_or_default();
+            format!("method {name}{receiver}")
+        }
+        CallCalleeInfo::Macro { name } => format!("macro {name}"),
+        CallCalleeInfo::Dynamic => "dynamic".to_string(),
+    }
+}
+
+fn format_receiver(receiver: &CallReceiverInfo) -> String {
+    match receiver {
+        CallReceiverInfo::SelfValue => "self".to_string(),
+        CallReceiverInfo::SelfField { path } => format!("self.{}", path.join(".")),
+        CallReceiverInfo::LocalBinding { name } => name.clone(),
+        CallReceiverInfo::TypedLocalBinding { name, type_path } => {
+            format!("{name}: {}", type_path.join("::"))
+        }
+        CallReceiverInfo::InitializedLocalBinding { name, init_path } => {
+            format!("{name} = {}", init_path.join("::"))
+        }
+        CallReceiverInfo::AliasedLocalBinding { name, source_path } => {
+            format!("{name} = {}", source_path.join("."))
+        }
+        CallReceiverInfo::TupleReturnBinding { name, path, index } => {
+            format!("{name} = {}().{index}", path.join("::"))
+        }
+        CallReceiverInfo::TupleMethodReturn {
+            name,
+            method_name,
+            index,
+            ..
+        } => {
+            format!("{name} = {method_name}().{index}")
+        }
+        CallReceiverInfo::MethodResultLocalBinding {
+            name, method_name, ..
+        } => {
+            format!("{name} = {method_name}()")
+        }
+        CallReceiverInfo::MethodResultField {
+            method_name,
+            field_path,
+            ..
+        } => format!("{}().{}", method_name, field_path.join(".")),
+        CallReceiverInfo::EnumVariantBinding {
+            name,
+            enum_path,
+            variant_name,
+            field_index,
+        } => format!(
+            "{name} = {}::{variant_name}.{field_index}",
+            enum_path.join("::")
+        ),
+        CallReceiverInfo::BorrowedLocalBinding { name } => format!("&{name}"),
+        CallReceiverInfo::BorrowedTypedLocalBinding { name, type_path } => {
+            format!("&{name}: {}", type_path.join("::"))
+        }
+        CallReceiverInfo::BorrowedInitializedLocalBinding { name, init_path } => {
+            format!("&{name} = {}", init_path.join("::"))
+        }
+        CallReceiverInfo::DereferencedLocalBinding { name } => format!("*{name}"),
+        CallReceiverInfo::DereferencedInitializedLocalBinding { name, init_path } => {
+            format!("*{name} = {}", init_path.join("::"))
+        }
+        CallReceiverInfo::FieldLocalBinding { name, field_path } => {
+            format!("{name}.{}", field_path.join("."))
+        }
+        CallReceiverInfo::FieldTypedLocalBinding {
+            name,
+            type_path,
+            field_path,
+        } => format!("{name}: {}.{}", type_path.join("::"), field_path.join(".")),
+        CallReceiverInfo::FieldInitializedLocalBinding {
+            name,
+            init_path,
+            field_path,
+        } => format!("{name} = {}.{}", init_path.join("::"), field_path.join(".")),
+        CallReceiverInfo::PathCallResult { path } => format!("{}()", path.join("::")),
+        CallReceiverInfo::MethodCallResult { method_name } => format!("{method_name}()"),
+        CallReceiverInfo::AwaitResult => "await".to_string(),
+        CallReceiverInfo::AwaitPathCallResult { path } => {
+            format!("{}().await", path.join("::"))
+        }
+        CallReceiverInfo::AwaitMethodCallResult { method_name } => {
+            format!("{method_name}().await")
+        }
+        CallReceiverInfo::TryResult => "?".to_string(),
+        CallReceiverInfo::TryPathCallResult { path } => format!("{}()?", path.join("::")),
+        CallReceiverInfo::TryMethodCallResult { method_name } => format!("{method_name}()?"),
+        CallReceiverInfo::IfBranchPaths { paths } => {
+            let branches = paths
+                .iter()
+                .map(|path| path.join("::"))
+                .collect::<Vec<_>>()
+                .join(" | ");
+            format!("if {branches}")
+        }
+        CallReceiverInfo::Literal => "literal".to_string(),
+        CallReceiverInfo::Unsupported => "unsupported receiver".to_string(),
+    }
 }
 
 fn truncate_context_text(text: &str, max_lines: usize) -> String {
@@ -383,6 +833,11 @@ fn build_context_plan(
                 estimated_tokens,
                 score: part.score,
                 type_context: part.type_context,
+                call_expansion: part.call_expansion,
+                call_context: part.call_context.clone(),
+                call_paths_from_owner: part.call_paths_from_owner.clone(),
+                call_paths_to_target: part.call_paths_to_target.clone(),
+                proof_context: part.proof_context.clone(),
             });
         }
     }
@@ -400,346 +855,4 @@ fn build_context_plan(
 }
 
 #[cfg(test)]
-mod tests {
-    //! Prompt-formatting coverage boundary for typed type context:
-    //!
-    //! - Covered: a `ContextPart` carrying `TypeContextInfo` renders stable
-    //!   model-facing provenance text, and context-plan summaries preserve the
-    //!   type-context carrier.
-    //! - Not covered: whether the provenance came from a where clause, whether
-    //!   RAG selected the right where-derived neighbor, or whether exact
-    //!   `TypeUseCoordinate` values survive into the prompt. Current prompt
-    //!   output intentionally carries relation, seed, and distance only.
-    //! - A future where-specific TUI test should start from the
-    //!   `fixture_type_resolution_v2` DB/RAG path rather than constructing
-    //!   `TypeContextInfo` by hand.
-
-    use super::*;
-    use crate::chat_history::{
-        ChatHistory, ContextStatus, MessageKind, MessageStatus, RetentionClass, TurnsToLive,
-    };
-    use crate::tools::{ToolName, ToolUiPayload};
-    use ploke_core::rag_types::{
-        CanonPath, ContextPartKind, ContextStats, Modality, NodeFilepath, TypeContextInfo,
-        TypeContextKind,
-    };
-    use std::collections::HashMap;
-
-    #[test]
-    fn context_plan_is_stable_for_fixed_inputs() {
-        let plan_id = Uuid::from_u128(1);
-        let parent_id = Uuid::from_u128(2);
-        let plan_messages = vec![
-            ContextPlanMessage {
-                message_id: Some(Uuid::from_u128(10)),
-                kind: MessageKind::User,
-                estimated_tokens: 3,
-            },
-            ContextPlanMessage {
-                message_id: Some(Uuid::from_u128(11)),
-                kind: MessageKind::Assistant,
-                estimated_tokens: 5,
-            },
-        ];
-        let ctx = AssembledContext {
-            parts: vec![ContextPart {
-                id: Uuid::from_u128(30),
-                file_path: NodeFilepath::new("src/lib.rs".to_string()),
-                canon_path: CanonPath::new("crate::lib::foo".to_string()),
-                ranges: vec![],
-                kind: ContextPartKind::Code,
-                text: "fn foo() {}".to_string(),
-                score: 0.5,
-                modality: Modality::Dense,
-                type_context: None,
-            }],
-            stats: ContextStats {
-                total_tokens: 10,
-                files: 1,
-                parts: 1,
-                truncated_parts: 0,
-                dedup_removed: 0,
-                ..Default::default()
-            },
-        };
-
-        let plan_a = build_context_plan(plan_id, parent_id, &plan_messages, &[], Some(&ctx));
-        let plan_b = build_context_plan(plan_id, parent_id, &plan_messages, &[], Some(&ctx));
-
-        assert_eq!(plan_a.plan_id, plan_b.plan_id);
-        assert_eq!(plan_a.parent_id, plan_b.parent_id);
-        assert_eq!(plan_a.estimated_total_tokens, plan_b.estimated_total_tokens);
-        assert_eq!(plan_a.included_messages.len(), 2);
-        assert_eq!(plan_a.included_rag_parts.len(), 1);
-        assert_eq!(plan_a.included_rag_parts[0].file_path, "src/lib.rs");
-        assert_eq!(plan_a.rag_stats.as_ref().unwrap().parts, 1);
-    }
-
-    #[test]
-    fn reformat_context_to_system_truncates_and_includes_meta() {
-        let mut text = String::new();
-        let total_lines = DEFAULT_CONTEXT_PART_MAX_LINES + 2;
-        for idx in 0..total_lines {
-            if idx > 0 {
-                text.push('\n');
-            }
-            text.push_str(&format!("line {idx}"));
-        }
-        let part = ContextPart {
-            id: Uuid::from_u128(40),
-            file_path: NodeFilepath::new("src/main.rs".to_string()),
-            canon_path: CanonPath::new("crate::main".to_string()),
-            ranges: vec![],
-            kind: ContextPartKind::Doc,
-            text,
-            score: 0.42,
-            modality: Modality::Dense,
-            type_context: Some(TypeContextInfo {
-                seed_id: Uuid::from_u128(7),
-                relation: TypeContextKind::TypeDefinitionImpact,
-                distance: 1,
-            }),
-        };
-
-        let rendered = reformat_context_to_system(part);
-
-        assert!(rendered.contains("kind: Doc"));
-        assert!(rendered.contains("score: 0.420"));
-        assert!(rendered.contains("type_context: TypeDefinitionImpact"));
-        assert!(rendered.contains("line 0"));
-        assert!(rendered.contains(&format!("line {}", DEFAULT_CONTEXT_PART_MAX_LINES - 1)));
-        assert!(!rendered.contains(&format!("line {}", DEFAULT_CONTEXT_PART_MAX_LINES)));
-        assert!(rendered.contains("... [truncated]"));
-    }
-
-    fn label_message_id(
-        message_id: Option<Uuid>,
-        root_id: Uuid,
-        labels: &HashMap<Uuid, &'static str>,
-    ) -> String {
-        match message_id {
-            None => "tool_call".to_string(),
-            Some(id) if id == root_id => "root_system".to_string(),
-            Some(id) => labels.get(&id).copied().unwrap_or("unknown").to_string(),
-        }
-    }
-
-    fn label_part_id(part_id: Uuid, labels: &HashMap<Uuid, &'static str>) -> String {
-        labels
-            .get(&part_id)
-            .copied()
-            .unwrap_or("unknown")
-            .to_string()
-    }
-
-    fn snapshot_context_plan(
-        plan: &ContextPlan,
-        root_id: Uuid,
-        message_labels: &HashMap<Uuid, &'static str>,
-        part_labels: &HashMap<Uuid, &'static str>,
-    ) -> String {
-        let mut out = String::new();
-        out.push_str(&format!("plan_id: {}\n", plan.plan_id));
-        out.push_str(&format!(
-            "parent_id: {}\n",
-            label_message_id(Some(plan.parent_id), root_id, message_labels)
-        ));
-        out.push_str(&format!(
-            "estimated_total_tokens: {}\n",
-            plan.estimated_total_tokens
-        ));
-        out.push_str("included_messages:\n");
-        for msg in &plan.included_messages {
-            out.push_str(&format!(
-                "- id: {} kind: {:?} tokens: {}\n",
-                label_message_id(msg.message_id, root_id, message_labels),
-                msg.kind,
-                msg.estimated_tokens
-            ));
-        }
-        out.push_str("excluded_messages:\n");
-        for msg in &plan.excluded_messages {
-            out.push_str(&format!(
-                "- id: {} kind: {:?} tokens: {} reason: {:?}\n",
-                label_message_id(Some(msg.message_id), root_id, message_labels),
-                msg.kind,
-                msg.estimated_tokens,
-                msg.reason
-            ));
-        }
-        out.push_str("included_rag_parts:\n");
-        for part in &plan.included_rag_parts {
-            let type_context = part
-                .type_context
-                .map(|ctx| {
-                    format!(
-                        " type_context: {}:{}:{}",
-                        ctx.relation.to_static_str(),
-                        label_part_id(ctx.seed_id, part_labels),
-                        ctx.distance
-                    )
-                })
-                .unwrap_or_default();
-            out.push_str(&format!(
-                "- id: {} path: {} kind: {:?} tokens: {} score: {:.3}{}\n",
-                label_part_id(part.part_id, part_labels),
-                part.file_path,
-                part.kind,
-                part.estimated_tokens,
-                part.score,
-                type_context
-            ));
-        }
-        out.push_str("rag_stats:\n");
-        match &plan.rag_stats {
-            Some(stats) => {
-                out.push_str(&format!(
-                    "- tokens: {} files: {} parts: {} truncated: {} dedup: {}\n",
-                    stats.total_tokens,
-                    stats.files,
-                    stats.parts,
-                    stats.truncated_parts,
-                    stats.dedup_removed
-                ));
-            }
-            None => {
-                out.push_str("- none\n");
-            }
-        }
-        out
-    }
-
-    #[test]
-    fn context_plan_golden_snapshot_from_chat_history() {
-        let mut ch = ChatHistory::new();
-        let root_id = ch.current;
-
-        let user_id = Uuid::from_u128(10);
-        ch.add_message_user(root_id, user_id, "Check status.".to_string())
-            .unwrap();
-
-        let assistant_id = Uuid::from_u128(11);
-        ch.add_child(
-            user_id,
-            assistant_id,
-            "Working on it.",
-            MessageStatus::Completed,
-            MessageKind::Assistant,
-            None,
-            None,
-        )
-        .unwrap();
-
-        if let Some(msg) = ch.messages.get_mut(&assistant_id) {
-            msg.context_status = ContextStatus::Pinned {
-                retention: RetentionClass::Leased,
-                turns_to_live: TurnsToLive::NoneRemaining,
-                reason: None,
-                pinned_by: None,
-            };
-        }
-
-        let tool_id = Uuid::from_u128(12);
-        let tool_call_id = ArcStr::from("call-1");
-        let payload = ToolUiPayload::new(ToolName::NsRead, tool_call_id.clone(), "read");
-        ch.add_message_tool(
-            assistant_id,
-            tool_id,
-            MessageKind::Tool,
-            "tool output".to_string(),
-            Some(tool_call_id),
-            Some(payload),
-        )
-        .unwrap();
-
-        if let Some(msg) = ch.messages.get_mut(&user_id) {
-            msg.last_included_turn = Some(2);
-        }
-        if let Some(msg) = ch.messages.get_mut(&tool_id) {
-            msg.last_included_turn = Some(1);
-        }
-
-        ch.current = tool_id;
-        ch.rebuild_path_cache();
-
-        let (_msgs, plan_messages, excluded_messages) =
-            ch.current_path_as_llm_request_messages_with_plan(Some(4));
-
-        let rag_ctx = AssembledContext {
-            parts: vec![
-                ContextPart {
-                    id: Uuid::from_u128(100),
-                    file_path: NodeFilepath::new("src/lib.rs".to_string()),
-                    canon_path: CanonPath::new("crate::lib::a".to_string()),
-                    ranges: vec![],
-                    kind: ContextPartKind::Code,
-                    text: "fn a() {}".to_string(),
-                    score: 0.2,
-                    modality: Modality::Dense,
-                    type_context: Some(TypeContextInfo {
-                        seed_id: Uuid::from_u128(101),
-                        relation: TypeContextKind::UsesTypeNested,
-                        distance: 2,
-                    }),
-                },
-                ContextPart {
-                    id: Uuid::from_u128(101),
-                    file_path: NodeFilepath::new("src/main.rs".to_string()),
-                    canon_path: CanonPath::new("crate::main::b".to_string()),
-                    ranges: vec![],
-                    kind: ContextPartKind::Doc,
-                    text: "struct B;".to_string(),
-                    score: 0.8,
-                    modality: Modality::Dense,
-                    type_context: None,
-                },
-            ],
-            stats: ContextStats {
-                total_tokens: 12,
-                files: 2,
-                parts: 2,
-                truncated_parts: 0,
-                dedup_removed: 0,
-                ..Default::default()
-            },
-        };
-
-        let plan = build_context_plan(
-            Uuid::from_u128(1),
-            user_id,
-            &plan_messages,
-            &excluded_messages,
-            Some(&rag_ctx),
-        );
-
-        let message_labels = HashMap::from([
-            (user_id, "user"),
-            (assistant_id, "assistant"),
-            (tool_id, "tool"),
-        ]);
-        let part_labels = HashMap::from([
-            (Uuid::from_u128(100), "part_a"),
-            (Uuid::from_u128(101), "part_b"),
-        ]);
-
-        let snapshot = snapshot_context_plan(&plan, root_id, &message_labels, &part_labels);
-        let expected = "\
-plan_id: 00000000-0000-0000-0000-000000000001
-parent_id: user
-estimated_total_tokens: 91
-included_messages:
-- id: root_system kind: System tokens: 81
-- id: user kind: User tokens: 4
-excluded_messages:
-- id: assistant kind: Assistant tokens: 4 reason: TtlExpired
-- id: tool kind: Tool tokens: 7 reason: Budget
-included_rag_parts:
-- id: part_a path: src/lib.rs kind: Code tokens: 3 score: 0.200 type_context: UsesTypeNested:part_b:2
-- id: part_b path: src/main.rs kind: Doc tokens: 3 score: 0.800
-rag_stats:
-- tokens: 12 files: 2 parts: 2 truncated: 0 dedup: 0
-";
-
-        assert_eq!(snapshot, expected);
-    }
-}
+mod tests;

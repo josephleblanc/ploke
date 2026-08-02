@@ -4375,6 +4375,131 @@ fn render_tool_call_arguments(
                 args.module_path.as_str(),
             );
         }
+        ToolCallArguments::CodeItemCallPath(args) => {
+            show_inspector_collapsing(
+                ui,
+                egui::CollapsingHeader::new("source").default_open(true),
+                |ui| {
+                    let _span =
+                        tracing::trace_span!("inspector_tool_argument_call_path_source").entered();
+                    render_code_item_query(
+                        ui,
+                        render_cache,
+                        args.source.item_name.as_str(),
+                        args.source.file_path.as_str(),
+                        args.source.node_kind.as_str(),
+                        args.source.module_path.as_str(),
+                    );
+                    render_optional_str(
+                        ui,
+                        render_cache,
+                        "owner trait",
+                        args.source.owner_trait.as_deref(),
+                    );
+                    render_optional_str(
+                        ui,
+                        render_cache,
+                        "owner type",
+                        args.source.owner_type.as_deref(),
+                    );
+                    render_optional_str(
+                        ui,
+                        render_cache,
+                        "parent name",
+                        args.source.parent_name.as_deref(),
+                    );
+                },
+            );
+            show_inspector_collapsing(
+                ui,
+                egui::CollapsingHeader::new("target").default_open(true),
+                |ui| {
+                    let _span =
+                        tracing::trace_span!("inspector_tool_argument_call_path_target").entered();
+                    render_code_item_query(
+                        ui,
+                        render_cache,
+                        args.target.item_name.as_str(),
+                        args.target.file_path.as_str(),
+                        args.target.node_kind.as_str(),
+                        args.target.module_path.as_str(),
+                    );
+                    render_optional_str(
+                        ui,
+                        render_cache,
+                        "owner trait",
+                        args.target.owner_trait.as_deref(),
+                    );
+                    render_optional_str(
+                        ui,
+                        render_cache,
+                        "owner type",
+                        args.target.owner_type.as_deref(),
+                    );
+                    render_optional_str(
+                        ui,
+                        render_cache,
+                        "parent name",
+                        args.target.parent_name.as_deref(),
+                    );
+                },
+            );
+            render_optional_u32(ui, render_cache, "max depth", args.max_depth);
+            render_optional_usize(ui, render_cache, "max paths", args.max_paths);
+        }
+        ToolCallArguments::CodeItemEffectGuard(args) => {
+            show_inspector_collapsing(
+                ui,
+                egui::CollapsingHeader::new("owner").default_open(true),
+                |ui| {
+                    let _span = tracing::trace_span!("inspector_tool_argument_effect_guard_owner")
+                        .entered();
+                    render_code_item_query(
+                        ui,
+                        render_cache,
+                        args.owner.item_name.as_str(),
+                        args.owner.file_path.as_str(),
+                        args.owner.node_kind.as_str(),
+                        args.owner.module_path.as_str(),
+                    );
+                },
+            );
+            show_inspector_collapsing(
+                ui,
+                egui::CollapsingHeader::new("guard").default_open(true),
+                |ui| {
+                    let _span = tracing::trace_span!("inspector_tool_argument_effect_guard_guard")
+                        .entered();
+                    render_code_item_query(
+                        ui,
+                        render_cache,
+                        args.guard.item_name.as_str(),
+                        args.guard.file_path.as_str(),
+                        args.guard.node_kind.as_str(),
+                        args.guard.module_path.as_str(),
+                    );
+                },
+            );
+            tool_kv_text(ui, render_cache, "effect class", args.effect_class.as_str());
+            render_optional_u32(ui, render_cache, "max depth", args.max_depth);
+            render_optional_usize(ui, render_cache, "max paths", args.max_paths);
+        }
+        ToolCallArguments::CodeItemBoundaryPolicy(args) => {
+            render_code_item_query(
+                ui,
+                render_cache,
+                args.owner.item_name.as_str(),
+                args.owner.file_path.as_str(),
+                args.owner.node_kind.as_str(),
+                args.owner.module_path.as_str(),
+            );
+            tool_kv_usize(ui, render_cache, "rules", args.rules.len());
+            render_optional_u32(ui, render_cache, "max depth", args.max_depth);
+            render_optional_usize(ui, render_cache, "max paths", args.max_paths);
+        }
+        ToolCallArguments::CodePrivateUncalled(args) => {
+            render_optional_usize(ui, render_cache, "max results", args.max_results);
+        }
         ToolCallArguments::Cargo(args) => {
             tool_kv_debug(ui, render_cache, "command", args.command);
             tool_kv_debug(ui, render_cache, "scope", args.scope);
@@ -4503,6 +4628,73 @@ fn render_tool_result_content(
         }
         ToolResultContent::CodeItemLookup(result) => {
             render_concise_context(ui, render_cache, 0, result);
+        }
+        ToolResultContent::CodeItemCallPath(result) => {
+            tool_kv_bool(ui, render_cache, "reachable", result.reachable);
+            tool_kv_usize(ui, render_cache, "paths", result.paths.len());
+            tool_kv_u32(ui, render_cache, "max depth", result.max_depth);
+            tool_kv_usize(ui, render_cache, "max paths", result.max_paths);
+            tool_kv_usize(ui, render_cache, "source files", result.source_files.len());
+            tool_kv_usize(
+                ui,
+                render_cache,
+                "proof context",
+                result.proof_context.len(),
+            );
+            tool_kv_debug(ui, render_cache, "source id", result.source_id);
+            tool_kv_debug(ui, render_cache, "target id", result.target_id);
+        }
+        ToolResultContent::CodeItemEffectGuard(result) => {
+            tool_kv_bool(ui, render_cache, "guarded", result.guarded);
+            tool_kv_text(
+                ui,
+                render_cache,
+                "effect class",
+                result.effect_class.as_str(),
+            );
+            tool_kv_usize(ui, render_cache, "effects", result.effects.len());
+            tool_kv_usize(ui, render_cache, "violations", result.violations.len());
+            tool_kv_usize(ui, render_cache, "source files", result.source_files.len());
+            tool_kv_usize(
+                ui,
+                render_cache,
+                "proof context",
+                result.proof_context.len(),
+            );
+            tool_kv_u32(ui, render_cache, "max depth", result.max_depth);
+            tool_kv_usize(ui, render_cache, "max paths", result.max_paths);
+            tool_kv_debug(ui, render_cache, "owner id", result.owner_id);
+            tool_kv_debug(ui, render_cache, "guard id", result.guard_id);
+        }
+        ToolResultContent::CodeItemBoundaryPolicy(result) => {
+            tool_kv_usize(ui, render_cache, "rules", result.rules.len());
+            tool_kv_usize(ui, render_cache, "violations", result.violations.len());
+            tool_kv_usize(ui, render_cache, "source files", result.source_files.len());
+            tool_kv_u32(ui, render_cache, "max depth", result.max_depth);
+            tool_kv_usize(ui, render_cache, "max paths", result.max_paths);
+            tool_kv_debug(ui, render_cache, "owner id", result.owner_id);
+        }
+        ToolResultContent::CodePrivateUncalled(result) => {
+            tool_kv_usize(ui, render_cache, "total", result.total);
+            tool_kv_usize(ui, render_cache, "returned", result.returned);
+            tool_kv_bool(ui, render_cache, "truncated", result.truncated);
+            for (index, node) in result.nodes.iter().take(8).enumerate() {
+                show_inspector_collapsing(
+                    ui,
+                    egui::CollapsingHeader::new(format!("node {}", index + 1))
+                        .default_open(index == 0),
+                    |ui| {
+                        let _span =
+                            tracing::trace_span!("inspector_tool_result_private_uncalled_node")
+                                .entered();
+                        tool_kv_debug(ui, render_cache, "id", node.id);
+                        tool_kv_text(ui, render_cache, "name", node.name.as_str());
+                        tool_kv_text(ui, render_cache, "kind", node.kind.as_str());
+                        tool_kv_text(ui, render_cache, "file path", node.file_path.as_ref());
+                        render_string_list(ui, render_cache, "module path", &node.module_path);
+                    },
+                );
+            }
         }
         ToolResultContent::Cargo(result) => {
             tool_kv_bool(ui, render_cache, "ok", result.ok);
@@ -4656,6 +4848,18 @@ fn render_optional_u64(
 ) {
     if let Some(value) = value {
         tool_kv_u64(ui, render_cache, key, value);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn render_optional_usize(
+    ui: &mut egui::Ui,
+    render_cache: &mut InspectorRenderCache,
+    key: &str,
+    value: Option<usize>,
+) {
+    if let Some(value) = value {
+        tool_kv_usize(ui, render_cache, key, value);
     }
 }
 

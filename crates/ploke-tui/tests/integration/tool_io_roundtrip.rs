@@ -12,9 +12,11 @@
 //!   examples selected for DB and RAG coverage.
 
 use ploke_core::rag_types::{
-    ApplyCodeEditResult, CanonPath, ConciseContext, ContextPartKind, GetFileMetadataResult,
-    NodeFilepath, RequestCodeContextArgs, RequestCodeContextResult, TypeContextInfo,
-    TypeContextKind,
+    ApplyCodeEditResult, AssembledMeta, CallCalleeInfo, CallContextInfo, CallExpansionInfo,
+    CallExpansionKind, CallReceiverInfo, CallResolutionKind, CallSiteKind, CallStatusKind,
+    CallTargetInfo, CallTargetKind, CanonPath, ConciseContext, ContextPart, ContextPartKind,
+    GetFileMetadataResult, Modality, NodeFilepath, ProofContextInfo, RequestCodeContextArgs,
+    RequestCodeContextResult, TypeContextInfo, TypeContextKind,
 };
 use uuid::Uuid;
 
@@ -32,19 +34,425 @@ fn serde_roundtrip_request_code_context() {
     assert_eq!(args_back.token_budget_total, Some(1536));
     assert_eq!(args_back.search_term, "SimpleStruct");
 
-    let part = ConciseContext {
+    let method_target = Uuid::from_u128(3);
+    let dynamic_target = Uuid::from_u128(5);
+    let tuple_target = Uuid::from_u128(7);
+    let variant_target = Uuid::from_u128(9);
+    let trait_target = Uuid::from_u128(15);
+    let assoc_target = Uuid::from_u128(17);
+    let imported_assoc_target = Uuid::from_u128(18);
+    let call_context = vec![
+        CallContextInfo {
+            site_id: Uuid::from_u128(4),
+            owner_id: Uuid::from_u128(4),
+            kind: CallSiteKind::Method,
+            span: (11, 32),
+            path: None,
+            arg_count: None,
+            generic_arg_count: None,
+            callee: CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::TryPathCallResult {
+                    path: vec!["try_local_assoc".to_string()],
+                }),
+            },
+            status: CallStatusKind::Resolved,
+            resolution: Some(CallResolutionKind::LocalExact),
+            targets: vec![CallTargetInfo {
+                target_id: method_target,
+                relation: CallTargetKind::Method,
+            }],
+        },
+        CallContextInfo {
+            site_id: Uuid::from_u128(14),
+            owner_id: Uuid::from_u128(14),
+            kind: CallSiteKind::Method,
+            span: (34, 53),
+            path: None,
+            arg_count: None,
+            generic_arg_count: None,
+            callee: CallCalleeInfo::Method {
+                name: "trait_value".to_string(),
+                receiver: Some(CallReceiverInfo::InitializedLocalBinding {
+                    name: "value".to_string(),
+                    init_path: vec!["TraitDispatchTarget".to_string()],
+                }),
+            },
+            status: CallStatusKind::Resolved,
+            resolution: Some(CallResolutionKind::LocalExact),
+            targets: vec![CallTargetInfo {
+                target_id: trait_target,
+                relation: CallTargetKind::Method,
+            }],
+        },
+        CallContextInfo {
+            site_id: Uuid::from_u128(16),
+            owner_id: Uuid::from_u128(16),
+            kind: CallSiteKind::Path,
+            span: (54, 92),
+            path: Some(vec![
+                "LocalAssocFunctionTrait".to_string(),
+                "trait_make".to_string(),
+            ]),
+            arg_count: None,
+            generic_arg_count: None,
+            callee: CallCalleeInfo::Path {
+                path: vec![
+                    "LocalAssocFunctionTrait".to_string(),
+                    "trait_make".to_string(),
+                ],
+            },
+            status: CallStatusKind::Resolved,
+            resolution: Some(CallResolutionKind::LocalExact),
+            targets: vec![CallTargetInfo {
+                target_id: assoc_target,
+                relation: CallTargetKind::AssociatedFunction,
+            }],
+        },
+        CallContextInfo {
+            site_id: Uuid::from_u128(18),
+            owner_id: Uuid::from_u128(18),
+            kind: CallSiteKind::Path,
+            span: (94, 142),
+            path: None,
+            arg_count: None,
+            generic_arg_count: None,
+            callee: CallCalleeInfo::Path {
+                path: vec![
+                    "VisibleAssocFunctionTrait".to_string(),
+                    "imported_trait_make".to_string(),
+                ],
+            },
+            status: CallStatusKind::Resolved,
+            resolution: Some(CallResolutionKind::LocalExact),
+            targets: vec![CallTargetInfo {
+                target_id: imported_assoc_target,
+                relation: CallTargetKind::AssociatedFunction,
+            }],
+        },
+        CallContextInfo {
+            site_id: Uuid::from_u128(6),
+            owner_id: Uuid::from_u128(6),
+            kind: CallSiteKind::Dynamic,
+            span: (40, 57),
+            path: Some(vec!["self".to_string(), "into_route".to_string()]),
+            arg_count: None,
+            generic_arg_count: None,
+            callee: CallCalleeInfo::Dynamic,
+            status: CallStatusKind::Resolved,
+            resolution: Some(CallResolutionKind::LocalExact),
+            targets: vec![CallTargetInfo {
+                target_id: dynamic_target,
+                relation: CallTargetKind::DynamicFunction,
+            }],
+        },
+        CallContextInfo {
+            site_id: Uuid::from_u128(8),
+            owner_id: Uuid::from_u128(8),
+            kind: CallSiteKind::Path,
+            span: (60, 72),
+            path: None,
+            arg_count: None,
+            generic_arg_count: None,
+            callee: CallCalleeInfo::Path {
+                path: vec!["NewType".to_string()],
+            },
+            status: CallStatusKind::Resolved,
+            resolution: Some(CallResolutionKind::LocalExact),
+            targets: vec![CallTargetInfo {
+                target_id: tuple_target,
+                relation: CallTargetKind::TupleStructConstructor,
+            }],
+        },
+        CallContextInfo {
+            site_id: Uuid::from_u128(10),
+            owner_id: Uuid::from_u128(10),
+            kind: CallSiteKind::Path,
+            span: (74, 98),
+            path: None,
+            arg_count: None,
+            generic_arg_count: None,
+            callee: CallCalleeInfo::Path {
+                path: vec!["EnumWithData".to_string(), "Variant1".to_string()],
+            },
+            status: CallStatusKind::Resolved,
+            resolution: Some(CallResolutionKind::LocalExact),
+            targets: vec![CallTargetInfo {
+                target_id: variant_target,
+                relation: CallTargetKind::EnumVariantConstructor,
+            }],
+        },
+        CallContextInfo {
+            site_id: Uuid::from_u128(11),
+            owner_id: Uuid::from_u128(11),
+            kind: CallSiteKind::Macro,
+            span: (100, 124),
+            path: None,
+            arg_count: None,
+            generic_arg_count: None,
+            callee: CallCalleeInfo::Macro {
+                name: "crate::crate_scoped_macro".to_string(),
+            },
+            status: CallStatusKind::Unsupported,
+            resolution: None,
+            targets: Vec::new(),
+        },
+        CallContextInfo {
+            site_id: Uuid::from_u128(12),
+            owner_id: Uuid::from_u128(12),
+            kind: CallSiteKind::Method,
+            span: (126, 140),
+            path: None,
+            arg_count: None,
+            generic_arg_count: None,
+            callee: CallCalleeInfo::Method {
+                name: "overlap".to_string(),
+                receiver: Some(CallReceiverInfo::LocalBinding {
+                    name: "value".to_string(),
+                }),
+            },
+            status: CallStatusKind::Ambiguous,
+            resolution: None,
+            targets: Vec::new(),
+        },
+        CallContextInfo {
+            site_id: Uuid::from_u128(13),
+            owner_id: Uuid::from_u128(13),
+            kind: CallSiteKind::Method,
+            span: (142, 153),
+            path: None,
+            arg_count: None,
+            generic_arg_count: None,
+            callee: CallCalleeInfo::Method {
+                name: "len".to_string(),
+                receiver: Some(CallReceiverInfo::TypedLocalBinding {
+                    name: "value".to_string(),
+                    type_path: vec!["Vec".to_string()],
+                }),
+            },
+            status: CallStatusKind::External,
+            resolution: None,
+            targets: Vec::new(),
+        },
+    ];
+    let type_context = TypeContextInfo {
+        seed_id: Uuid::from_u128(1),
+        relation: TypeContextKind::TypeDefinitionImpact,
+        distance: 1,
+    };
+    let call_expansion = CallExpansionInfo {
+        seed_id: dynamic_target,
+        relation: CallExpansionKind::IncomingCaller,
+        call_site_id: Uuid::from_u128(6),
+        target_id: dynamic_target,
+        distance: 1,
+    };
+    let proof_context = vec![ProofContextInfo {
+        fact_id: "call-edge:1".to_string(),
+        kind: "call_edge".to_string(),
+        build_domain_id: Some("bd:test".to_string()),
+        call_site_id: Some("call:site".to_string()),
+        call_edge_id: Some("edge:1".to_string()),
+        caller_def_id: Some("def:caller".to_string()),
+        callee_def_id: Some("def:callee".to_string()),
+        resolution_state: Some("resolved".to_string()),
+        resolved_def_id: Some("def:callee".to_string()),
+        candidate_def_ids: Vec::new(),
+        external_summary_id: None,
+        boundary_id: None,
+        boundary_kind: None,
+        expanded_item_id: None,
+        definition_id: None,
+        target_kind: None,
+        target_name: None,
+        target_root: None,
+        profile: None,
+        rustc_version: None,
+        proof_policy_version: None,
+        cfg_domain_id: None,
+        active_cfg_hash: None,
+        invocation_id: None,
+        rustc_program: None,
+        working_directory: None,
+        argument_vector_hash: None,
+        environment_hash: None,
+        effect_seed_id: None,
+        confidence: None,
+        blocker_if_unresolved: None,
+        unsafe_block: None,
+        authority_term: None,
+        summary_class: None,
+        artifact_hash: None,
+        summary_version: None,
+        review_method: None,
+        scope_of_validity: None,
+        allowed_effects: Vec::new(),
+        required_containment: None,
+        invalidation_conditions: None,
+        evidence_use: Some("proof_only".to_string()),
+        source_file: Some("src/lib.rs".to_string()),
+        start_byte: Some(1),
+        end_byte: Some(10),
+        line_start: Some(1),
+        line_end: Some(1),
+        effect_class: Some("call".to_string()),
+        blocker_reason: None,
+        status: Some("resolved".to_string()),
+        detail: None,
+    }];
+    let source = ContextPart {
+        id: Uuid::from_u128(2),
+        file_path: NodeFilepath("id://dummy".to_string()),
+        canon_path: CanonPath("some::module::dummy".to_string()),
+        ranges: Vec::new(),
+        kind: ContextPartKind::Code,
+        text: "fn foo() {}".to_string(),
+        score: 1.0,
+        modality: Modality::Sparse,
+        type_context: Some(type_context),
+        call_expansion: Some(call_expansion),
+        call_context: call_context.clone(),
+        call_paths_from_owner: Vec::new(),
+        call_paths_to_target: Vec::new(),
+        proof_context: proof_context.clone(),
+    };
+    let path_site = Uuid::from_u128(19);
+    let path_call = CallContextInfo {
+        site_id: path_site,
+        owner_id: path_site,
+        kind: CallSiteKind::Path,
+        span: (160, 181),
+        path: Some(vec!["crate".to_string(), "local_target".to_string()]),
+        arg_count: None,
+        generic_arg_count: None,
+        callee: CallCalleeInfo::Path {
+            path: vec!["crate".to_string(), "local_target".to_string()],
+        },
+        status: CallStatusKind::Resolved,
+        resolution: Some(CallResolutionKind::LocalExact),
+        targets: vec![CallTargetInfo {
+            target_id: dynamic_target,
+            relation: CallTargetKind::Function,
+        }],
+    };
+    let path_expansion = CallExpansionInfo {
+        seed_id: dynamic_target,
+        relation: CallExpansionKind::IncomingCaller,
+        call_site_id: path_site,
+        target_id: dynamic_target,
+        distance: 1,
+    };
+    let path_source = ContextPart {
+        id: Uuid::from_u128(20),
+        file_path: NodeFilepath("id://path".to_string()),
+        canon_path: CanonPath("some::module::path_caller".to_string()),
+        ranges: Vec::new(),
+        kind: ContextPartKind::Code,
+        text: "fn path_caller() { crate::local_target(); }".to_string(),
+        score: 0.5,
+        modality: Modality::Sparse,
+        type_context: None,
+        call_expansion: Some(path_expansion),
+        call_context: vec![path_call.clone()],
+        call_paths_from_owner: Vec::new(),
+        call_paths_to_target: Vec::new(),
+        proof_context: Vec::new(),
+    };
+    let mut result = RequestCodeContextResult::from_assembled(
+        vec![source, path_source],
+        AssembledMeta {
+            search_term: "foo".to_string(),
+            top_k: 3,
+            kind: ContextPartKind::Code,
+        },
+    );
+    result.note = Some("No indexed snippets matched `foo`.".to_string());
+    result.next_steps = vec![
+        "Retry with an exact symbol.".to_string(),
+        "Use code_item_lookup.".to_string(),
+    ];
+    let expected = ConciseContext {
         id: Uuid::from_u128(2),
         file_path: NodeFilepath("id://dummy".to_string()),
         canon_path: CanonPath("some::module::dummy".to_string()),
         snippet: "fn foo() {}".to_string(),
-        type_context: Some(TypeContextInfo {
-            seed_id: Uuid::from_u128(1),
-            relation: TypeContextKind::TypeDefinitionImpact,
-            distance: 1,
-        }),
+        type_context: Some(type_context),
+        call_expansion: Some(call_expansion),
+        call_context,
+        call_paths_from_owner: Vec::new(),
+        call_paths_to_target: Vec::new(),
+        call_cycles_from_owner: Vec::new(),
+        call_impact: None,
+        call_reach: None,
+        call_reach_effects: Vec::new(),
+        unsafe_block_calls: Vec::new(),
+        call_effect_policy_violations: Vec::new(),
+        call_proof_invariant_findings: Vec::new(),
+        external_summary_needs: Vec::new(),
+        runtime_dispatch_needs: Vec::new(),
+        local_bindings: Vec::new(),
+        local_binding_edges: Vec::new(),
+        call_callee_evidence: Vec::new(),
+        self_field_parameter_flows: Vec::new(),
+        self_field_assignment_flows: Vec::new(),
+        self_field_assignment_argument_flows: Vec::new(),
+        future_poll_field_producer_flows: Vec::new(),
+        awaited_call_sites: Vec::new(),
+        returned_call_binding_flows: Vec::new(),
+        returned_future_flows: Vec::new(),
+        returned_future_execution_flows: Vec::new(),
+        module_boundary_edges: Vec::new(),
+        crate_boundary_edges: Vec::new(),
+        call_build_domains: Vec::new(),
+        call_test_entrypoints: Vec::new(),
+        call_test_selection: None,
+        proof_context,
     };
+    let path_expected = ConciseContext {
+        id: Uuid::from_u128(20),
+        file_path: NodeFilepath("id://path".to_string()),
+        canon_path: CanonPath("some::module::path_caller".to_string()),
+        snippet: "fn path_caller() { crate::local_target(); }".to_string(),
+        type_context: None,
+        call_expansion: Some(path_expansion),
+        call_context: vec![path_call],
+        call_paths_from_owner: Vec::new(),
+        call_paths_to_target: Vec::new(),
+        call_cycles_from_owner: Vec::new(),
+        call_impact: None,
+        call_reach: None,
+        call_reach_effects: Vec::new(),
+        unsafe_block_calls: Vec::new(),
+        call_effect_policy_violations: Vec::new(),
+        call_proof_invariant_findings: Vec::new(),
+        external_summary_needs: Vec::new(),
+        runtime_dispatch_needs: Vec::new(),
+        local_bindings: Vec::new(),
+        local_binding_edges: Vec::new(),
+        call_callee_evidence: Vec::new(),
+        self_field_parameter_flows: Vec::new(),
+        self_field_assignment_flows: Vec::new(),
+        self_field_assignment_argument_flows: Vec::new(),
+        future_poll_field_producer_flows: Vec::new(),
+        awaited_call_sites: Vec::new(),
+        returned_call_binding_flows: Vec::new(),
+        returned_future_flows: Vec::new(),
+        returned_future_execution_flows: Vec::new(),
+        module_boundary_edges: Vec::new(),
+        crate_boundary_edges: Vec::new(),
+        call_build_domains: Vec::new(),
+        call_test_entrypoints: Vec::new(),
+        call_test_selection: None,
+        proof_context: Vec::new(),
+    };
+    assert_eq!(
+        result.context,
+        vec![expected.clone(), path_expected.clone()],
+        "from_assembled must preserve typed, call, and expansion carriers"
+    );
+
     let result = RequestCodeContextResult {
-        ok: true,
+        ok: result.ok,
         search_term: "foo".to_string(),
         top_k: 3,
         note: Some("No indexed snippets matched `foo`.".to_string()),
@@ -52,7 +460,7 @@ fn serde_roundtrip_request_code_context() {
             "Retry with an exact symbol.".to_string(),
             "Use code_item_lookup.".to_string(),
         ],
-        context: vec![part.clone()],
+        context: result.context,
         kind: ContextPartKind::Code,
     };
     let res_json = serde_json::to_string(&result).expect("serialize result");
@@ -66,7 +474,7 @@ fn serde_roundtrip_request_code_context() {
         Some("No indexed snippets matched `foo`.")
     );
     assert_eq!(res_back.next_steps.len(), 2);
-    assert_eq!(res_back.context, vec![part]);
+    assert_eq!(res_back.context, vec![expected, path_expected]);
     assert_eq!(res_back.kind, ContextPartKind::Code);
 
     let missing_id_json = r#"{

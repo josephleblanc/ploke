@@ -1,0 +1,213 @@
+use super::*;
+
+const ITER_RESULT_INTO_ITER_CALL_SPAN: (usize, usize) = (44438, 44454);
+
+#[test]
+fn fixture_context_reads_projected_external_and_shadowed_method_calls() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+
+    let owner = function_id_by_name(&db, "call_literal_str_to_string")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "literal to_string context rows: {context:#?}"
+    );
+
+    let receiver = CallReceiver::Literal;
+    assert_targetless_method_row(
+        &context,
+        owner,
+        TargetlessMethodCase::method(
+            "to_string",
+            &receiver,
+            CallStatusKind::External,
+            "literal to_string",
+        ),
+    );
+
+    let owner = function_id_by_name(&db, "call_typed_vec_len_external")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(context.len(), 2, "typed Vec context rows: {context:#?}");
+
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(&["Vec", "new"], 0, CallStatusKind::External, "Vec::new"),
+    );
+
+    let receiver = CallReceiver::TypedLocalBinding {
+        name: "value".to_string(),
+        type_path: path(&["Vec"]),
+    };
+    assert_targetless_method_row(
+        &context,
+        owner,
+        TargetlessMethodCase::method(
+            "len",
+            &receiver,
+            CallStatusKind::External,
+            "unshadowed Vec::len",
+        ),
+    );
+
+    let owner = function_id_by_name(&db, "call_external_param_vec_len")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "external parameter Vec context rows: {context:#?}"
+    );
+
+    let receiver = CallReceiver::LocalBinding {
+        name: "value".to_string(),
+    };
+    assert_targetless_method_row(
+        &context,
+        owner,
+        TargetlessMethodCase::method(
+            "len",
+            &receiver,
+            CallStatusKind::External,
+            "parameter Vec::len",
+        ),
+    );
+
+    let owner = function_id_by_name(&db, "call_external_borrowed_param_vec_len")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "external borrowed parameter Vec context rows: {context:#?}"
+    );
+
+    let receiver = CallReceiver::LocalBinding {
+        name: "value".to_string(),
+    };
+    assert_targetless_method_row(
+        &context,
+        owner,
+        TargetlessMethodCase::method(
+            "len",
+            &receiver,
+            CallStatusKind::External,
+            "borrowed parameter Vec::len",
+        ),
+    );
+
+    let owner = function_id_by_name(&db, "call_iter_result_size_hint")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "method-result local binding external context rows: {context:#?}"
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1937-1938:
+    // `let iter = iter.into_iter(); iter.size_hint()` should preserve the
+    // initializer method proof and classify the iterator frontier as external.
+    let init_receiver = CallReceiver::LocalBinding {
+        name: "iter".to_string(),
+    };
+    assert_targetless_method_row(
+        &context,
+        owner,
+        TargetlessMethodCase::method(
+            "into_iter",
+            &init_receiver,
+            CallStatusKind::Unsupported,
+            "generic IntoIterator::into_iter initializer",
+        ),
+    );
+
+    let receiver = CallReceiver::MethodResultLocalBinding {
+        name: "iter".to_string(),
+        method_name: "into_iter".to_string(),
+        method_span: ITER_RESULT_INTO_ITER_CALL_SPAN,
+    };
+    let row = assert_targetless_method_row(
+        &context,
+        owner,
+        TargetlessMethodCase::method(
+            "size_hint",
+            &receiver,
+            CallStatusKind::External,
+            "IntoIterator::IntoIter::size_hint frontier",
+        ),
+    );
+    assert!(
+        relations_for_site(&db, row.site.id)?.rows.is_empty(),
+        "method-result local binding external row must not fabricate call_relation targets"
+    );
+
+    let owner = function_id_by_name(&db, "call_imported_external_type_alias_initialized_method")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "imported external alias initialized method rows: {context:#?}"
+    );
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(
+            &["ImportedExternalVec", "new"],
+            0,
+            CallStatusKind::External,
+            "ImportedExternalVec::new",
+        ),
+    );
+
+    let receiver = CallReceiver::InitializedLocalBinding {
+        name: "value".to_string(),
+        init_path: path(&["ImportedExternalVec", "new"]),
+    };
+    let row = assert_targetless_method_row(
+        &context,
+        owner,
+        TargetlessMethodCase::method(
+            "len",
+            &receiver,
+            CallStatusKind::External,
+            "initialized imported external alias len",
+        ),
+    );
+    assert!(
+        relations_for_site(&db, row.site.id)?.rows.is_empty(),
+        "initialized imported external alias method must not fabricate call_relation targets"
+    );
+
+    let owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "local_prelude_shadow"],
+        "call_shadowed_typed_vec_len",
+    )?;
+    let target = method_id_by_impl_self_type_name(&db, "Vec", "len")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "shadowed Vec::len context rows: {context:#?}"
+    );
+
+    let row = &context[0];
+    assert_eq!(row.site.owner_id, owner);
+    assert_eq!(row.site.kind, CallSiteKind::Method);
+    assert_eq!(row.site.method.as_deref(), Some("len"));
+    assert_eq!(
+        row.site.receiver,
+        Some(CallReceiver::TypedLocalBinding {
+            name: "value".to_string(),
+            type_path: path(&["Vec"]),
+        })
+    );
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
+    );
+
+    Ok(())
+}

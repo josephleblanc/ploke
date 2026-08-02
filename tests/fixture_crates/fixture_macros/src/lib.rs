@@ -35,6 +35,18 @@ pub fn my_derive_macro(input: TokenStream) -> TokenStream {
     input
 }
 */
+
+type ParsedProcTokenStream = String;
+
+fn parsed_proc_macro_helper(input: ParsedProcTokenStream) -> ParsedProcTokenStream {
+    input
+}
+
+#[proc_macro_derive(ParsedBody)]
+pub fn parsed_derive_macro(input: ParsedProcTokenStream) -> ParsedProcTokenStream {
+    parsed_proc_macro_helper(input)
+}
+
 // We can represent its definition signature in this fixture:
 #[cfg(feature = "proc_macro")] // Simulate conditional compilation
 mod proc_macros {
@@ -46,7 +58,6 @@ mod proc_macros {
 
     #[proc_macro_derive(MyDerive)]
     pub fn my_derive_macro_signature(input: TokenStream) -> TokenStream {
-        // This body won't be parsed deeply, but its presence is noted
         input
     }
 

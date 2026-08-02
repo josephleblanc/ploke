@@ -10,10 +10,10 @@ The shared real-corpus matrix lives in `crates/test-utils/src/type_shape_matrix.
 
 | Layer | Command or source | Current state on 2026-05-18 | Notes |
 | --- | --- | --- | --- |
-| Parser typed fixture relations | `cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --nocapture` | Pass: `64 passed; 0 failed; 0 ignored` | Focused test-runner verification during this document pass. |
-| DB typed graph queries | `cargo test -p ploke-db --features typed_type_graph unit::type_graph_queries -- --nocapture` | Pass: `75 passed; 0 failed; 6 ignored` | Discovery sub-agent ran the DB query suite during this pass. Ignored tests are full source-parse corpus variants. |
-| DB shared corpus matrix | `cargo test -p ploke-db --features typed_type_graph corpus_matrix_ -- --nocapture` | Pass, included in current `type_graph_queries` run | Matrix rows below are ordinary executable contracts over registered backups. |
-| RAG shared corpus matrix | `PLOKE_DB_SNAPSHOT_FIXTURE_DIR=/home/brasides/code/agent-dir/ploke/tests/backup_dbs cargo test -p ploke-rag --features typed_type_graph corpus_type_shape_matrix -- --nocapture` | Pass: `1 passed; 0 failed; 0 ignored` | Focused test-runner verification during this document pass. |
+| Parser typed fixture relations | `cargo test -p syn_parser type_relations_v2 -- --nocapture` | Pass: `64 passed; 0 failed; 0 ignored` | Focused test-runner verification during this document pass. |
+| DB typed graph queries | `cargo test -p ploke-db unit::type_graph_queries -- --nocapture` | Pass: `75 passed; 0 failed; 6 ignored` | Discovery sub-agent ran the DB query suite during this pass. Ignored tests are full source-parse corpus variants. |
+| DB shared corpus matrix | `cargo test -p ploke-db corpus_matrix_ -- --nocapture` | Pass, included in current `type_graph_queries` run | Matrix rows below are ordinary executable contracts over registered backups. |
+| RAG shared corpus matrix | `PLOKE_DB_SNAPSHOT_FIXTURE_DIR=/home/brasides/code/agent-dir/ploke/tests/backup_dbs cargo test -p ploke-rag corpus_type_shape_matrix -- --nocapture` | Pass: `1 passed; 0 failed; 0 ignored` | Focused test-runner verification during this document pass. |
 | TUI direct matrix | `request_code_context_tool_emits_matrix_type_context` | Ignored/quarantined | This test is intentionally not trusted because it starts from BM25 search terms. Explicit ignored runs are known to fail on search-seed/type-context mismatch. |
 | TUI live matrix | `live_request_code_context_matrix_uses_production_tool_payload -- --ignored` | Ignored/manual; not run by default | Provider-spending path. It should not be used as proof until event correlation and seed identity assertions are tightened. |
 | Workspace | `PLOKE_DB_SNAPSHOT_FIXTURE_DIR=/home/brasides/code/agent-dir/ploke/tests/backup_dbs cargo test --workspace` | Pass in latest recovery verification | Verified after the TUI config-env isolation fix and before this document was created. |
@@ -37,7 +37,7 @@ workspace targets: axum, axum-core, axum-macros</code></pre> | `tests/backup_dbs
 
 File: `crates/ingest/syn_parser/tests/uuid_phase3_resolution/type_relations_v2.rs`
 
-Feature: `typed_type_graph`
+Feature state: baseline (no Cargo feature)
 
 Fixture locations: `tests/fixture_crates/fixture_type_resolution_v2`, `tests/fixture_crates/fixture_types`, `tests/fixture_crates/fixture_nodes`, `tests/fixture_crates/fixture_conflation`
 
@@ -105,7 +105,7 @@ NestedGeneric&lt;T&gt;(TopLevelStruct&lt;T&gt;)</code></pre> | `fixture_conflati
 
 File: `crates/ingest/syn_parser/tests/uuid_phase3_resolution/type_use_resolution.rs`
 
-Feature state: compiled when `typed_type_graph` is disabled. This is the legacy late type-use resolver surface, not the active typed v2 relation model.
+Feature state: compiled before typed graph became baseline. This is the legacy late type-use resolver surface, not the active typed v2 relation model.
 
 The legacy parser file has 24 generated tests: 21 single-edge tests through `type_use_resolution_case!` and 3 complete-slot tests through `type_use_slot_resolution_case!`.
 

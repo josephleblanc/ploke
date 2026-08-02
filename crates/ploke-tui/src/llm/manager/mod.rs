@@ -24,7 +24,11 @@ pub(crate) use loop_error::{ChatSessionReport, SessionOutcome};
 
 use crate::{
     SystemEvent,
-    tools::{code_item_lookup::CodeItemLookup, get_code_edges::CodeItemEdges},
+    tools::{
+        code_item_boundary_policy::CodeItemBoundaryPolicy, code_item_call_path::CodeItemCallPath,
+        code_item_effect_guard::CodeItemEffectGuard, code_item_lookup::CodeItemLookup,
+        code_private_uncalled::CodePrivateUncalled, get_code_edges::CodeItemEdges,
+    },
 };
 // pub(crate) use events::LlmEvent;
 use fxhash::FxHashMap as HashMap;
@@ -673,6 +677,10 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
         NsRead::tool_def(),
         CodeItemLookup::tool_def(),
         CodeItemEdges::tool_def(),
+        CodeItemCallPath::tool_def(),
+        CodeItemEffectGuard::tool_def(),
+        CodeItemBoundaryPolicy::tool_def(),
+        CodePrivateUncalled::tool_def(),
         CargoTool::tool_def(),
         ListDir::tool_def(),
     ];

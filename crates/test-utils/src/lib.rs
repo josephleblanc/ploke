@@ -5,15 +5,23 @@
     reason = "Stubs for later helper functions."
 )]
 
+pub mod call_shape_matrix;
 pub mod fixture_dbs;
 pub mod nodes;
+pub mod proof_fact_fixtures;
 pub mod type_shape_matrix;
 
+pub use call_shape_matrix::{
+    CallCorpusFixture, CallExpected, CallOwnerSelector, CallPipelineCoverage, CallReceiverSelector,
+    CallShapeCase, CallShapeKind, CallSiteSelector, CallTargetSelector,
+    call_shape_case_blocker_reasons, call_shape_case_proof_blockers, call_shape_cases,
+};
 pub use fixture_dbs::{
-    BACKUP_DB_FIXTURES, CORPUS_AXUM_OPENROUTER_EMBEDDINGS, CORPUS_AXUM_TYPE_GRAPH,
-    CORPUS_CHRONO_OPENROUTER_EMBEDDINGS, CORPUS_CHRONO_TYPE_GRAPH,
+    BACKUP_DB_FIXTURES, CORPUS_AXUM_CALL_GRAPH, CORPUS_AXUM_OPENROUTER_EMBEDDINGS,
+    CORPUS_AXUM_TYPE_GRAPH, CORPUS_CHRONO_CALL_GRAPH, CORPUS_CHRONO_OPENROUTER_EMBEDDINGS,
+    CORPUS_CHRONO_TYPE_GRAPH, CORPUS_GENERIC_ARRAY_CALL_GRAPH,
     CORPUS_GENERIC_ARRAY_OPENROUTER_EMBEDDINGS, CORPUS_GENERIC_ARRAY_TYPE_GRAPH,
-    CORPUS_MEMCHR_OPENROUTER_EMBEDDINGS, CORPUS_MEMCHR_TYPE_GRAPH,
+    CORPUS_MEMCHR_CALL_GRAPH, CORPUS_MEMCHR_OPENROUTER_EMBEDDINGS, CORPUS_MEMCHR_TYPE_GRAPH,
     CORPUS_SEMVER_OPENROUTER_EMBEDDINGS, CORPUS_SEMVER_TYPE_GRAPH, CheckedFixturePath,
     FIXTURE_NODES_CANONICAL, FIXTURE_NODES_LOCAL_EMBEDDINGS,
     FIXTURE_NODES_MULTI_EMBEDDING_SCHEMA_V1, FixtureAutomation, FixtureCreationStrategy, FixtureDb,
@@ -23,6 +31,28 @@ pub use fixture_dbs::{
     backup_db_fixture, backup_db_snapshot_fixture_dir, backup_fixture_path_or_seed,
     fresh_backup_fixture_db, load_backup_fixture_db, shared_backup_fixture_db,
     validate_backup_fixture_contract,
+};
+pub use proof_fact_fixtures::{
+    AXUM_BODY_SIZE_HINT_SUMMARY_ID, AXUM_OPAQUE_FUTURE_SUMMARY_ID, AXUM_REQUEST_BUILDER_SUMMARY_ID,
+    AXUM_ROUTE_ONESHOT_SUMMARY_ID, AXUM_ROUTING_GET_SERVICE_SUMMARY_ID,
+    AXUM_ROUTING_POST_SUMMARY_ID, AXUM_SERDE_JSON_FROM_SLICE_SUMMARY_ID,
+    AXUM_STD_MEM_REPLACE_SUMMARY_ID, axum_body_empty_dependency_record,
+    axum_body_empty_reexport_dependency_record, axum_body_size_hint_summary_records,
+    axum_call_graph_domain_records, axum_callable_field_runtime_dispatch_blocker,
+    axum_callable_field_runtime_dispatch_summary, axum_callback_parameter_blocker,
+    axum_dependency_record, axum_dyn_future_poll_blocker,
+    axum_dyn_future_poll_runtime_dispatch_summary, axum_entrypoint_effect_policy_record,
+    axum_entrypoint_record, axum_future_poll_blocker, axum_future_poll_runtime_dispatch_summary,
+    axum_handler_async_block_poll_resume_blocker, axum_opaque_future_boundary_id,
+    axum_opaque_future_macro_summary_records, axum_request_builder_summary_records,
+    axum_route_oneshot_summary_records, axum_router_new_dependency_record,
+    axum_routing_get_service_boundary_id, axum_routing_get_service_macro_summary_records,
+    axum_routing_post_boundary_id, axum_routing_post_macro_summary_records,
+    axum_serde_json_from_slice_summary_records, axum_std_mem_replace_summary_records,
+    axum_test_client_dependency_record, fixture_async_closure_poll_resume_blocker,
+    fixture_extern_c_abs_effect_record, generic_array_iter_summary_blocker,
+    generic_array_size_hint_guard_blocker, memchr_callable_trait_object_runtime_dispatch_blocker,
+    memchr_callable_trait_object_runtime_dispatch_summary,
 };
 pub use type_shape_matrix::{
     ContainingOwnerSelector, CoordinateSpec, CorpusFixture, OwnerSelector, ShapePipelineCoverage,

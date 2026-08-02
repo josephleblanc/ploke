@@ -10,9 +10,15 @@ use super::*;
 use cozo::{Db, MemStorage};
 use itertools::Itertools;
 use std::collections::BTreeMap;
-use syn_parser::parser::nodes::ToCozoUuid;
-use syn_parser::parser::relations::SyntacticRelation;
-use syn_parser::parser::relations::TypeRelation;
+use syn_parser::parser::nodes::{
+    AnyCallSiteId, CallBodyOwnerId, CallNode, DynamicCallCallee, ExecutableBodyId,
+    ExecutableBodyKind, ExecutableBodyNode, LocalBindingNode, LocalBindingSource,
+    MethodCallReceiver, PathCallCallee, ToCozoUuid,
+};
+use syn_parser::parser::relations::{
+    CallRelation, CallResolutionKind, CallResolutionStatus, CallSiteRelation, LocalBindingRelation,
+    SyntacticRelation, TypeRelation,
+};
 use syn_parser::resolve::Colorize;
 use syn_parser::utils::{LogStyle, LogStyleDebug};
 
@@ -33,6 +39,331 @@ define_schema!(TypeRelationSchema {
     source_kind: "String",
     target_kind: "String"
 });
+
+pub struct CallSiteRelationSchema {
+    pub relation: &'static str,
+    source_id: CozoField,
+    target_id: CozoField,
+    relation_kind: CozoField,
+    source_kind: CozoField,
+    target_kind: CozoField,
+}
+
+impl CallSiteRelationSchema {
+    pub const SCHEMA: Self = Self {
+        relation: "call_site_edge",
+        source_id: CozoField {
+            st: "source_id",
+            dv: "Uuid",
+        },
+        target_id: CozoField {
+            st: "target_id",
+            dv: "Uuid",
+        },
+        relation_kind: CozoField {
+            st: "relation_kind",
+            dv: "String",
+        },
+        source_kind: CozoField {
+            st: "source_kind",
+            dv: "String",
+        },
+        target_kind: CozoField {
+            st: "target_kind",
+            dv: "String",
+        },
+    };
+
+    pub fn source_id(&self) -> &str {
+        self.source_id.st()
+    }
+
+    pub fn target_id(&self) -> &str {
+        self.target_id.st()
+    }
+
+    pub fn relation_kind(&self) -> &str {
+        self.relation_kind.st()
+    }
+
+    pub fn source_kind(&self) -> &str {
+        self.source_kind.st()
+    }
+
+    pub fn target_kind(&self) -> &str {
+        self.target_kind.st()
+    }
+
+    fn script_create(&self) -> String {
+        format!(
+            ":create {} {{ source_id: Uuid, target_id: Uuid, relation_kind: String, at: Validity => source_kind: String, target_kind: String }}",
+            self.relation
+        )
+    }
+
+    fn script_identity(&self) -> String {
+        format!(
+            "{} {{ source_id, target_id, relation_kind, at => source_kind, target_kind }}",
+            self.relation
+        )
+    }
+
+    fn script_put(&self, _params: &BTreeMap<String, cozo::DataValue>) -> String {
+        format!(
+            "?[source_id, target_id, relation_kind, at, source_kind, target_kind] <- [[$source_id, $target_id, $relation_kind, 'ASSERT', $source_kind, $target_kind]] :put {}",
+            self.script_identity()
+        )
+    }
+
+    fn log_create_script(&self) {
+        tracing::trace!(target: "db",
+            "{} {}: {:?}",
+            "Printing schema".log_header(),
+            self.relation.log_name(),
+            self.script_create()
+        );
+    }
+
+    pub(crate) fn create_and_insert_schema(db: &Db<MemStorage>) -> Result<(), TransformError> {
+        let schema = &Self::SCHEMA;
+        schema.log_create_script();
+        let db_result = db.run_script(
+            &schema.script_create(),
+            BTreeMap::new(),
+            cozo::ScriptMutability::Mutable,
+        )?;
+        log_db_result(db_result);
+        Ok(())
+    }
+}
+
+define_schema!(LocalBindingRelationSchema {
+    "local_binding_edge",
+    source_id: "Uuid",
+    target_id: "Uuid",
+    relation_kind: "String",
+    source_kind: "String",
+    target_kind: "String"
+});
+
+define_schema!(CallRelationSchema {
+    "call_relation",
+    source_id: "Uuid",
+    target_id: "Uuid",
+    relation_kind: "String",
+    source_kind: "String",
+    target_kind: "String"
+});
+
+define_schema!(CallResolutionStatusSchema {
+    "call_resolution_status",
+    source_id: "Uuid",
+    source_kind: "String",
+    status_kind: "String",
+    resolution_kind: "String?"
+});
+
+define_schema!(CallCalleeEvidenceSchema {
+    "call_callee_evidence",
+    source_id: "Uuid",
+    source_kind: "String",
+    callee_kind: "String",
+    callee_path: "[String]?",
+    closure_id: "Uuid?"
+});
+
+pub struct LocalBindingSchema;
+
+impl LocalBindingSchema {
+    pub const RELATION: &'static str = "local_binding";
+
+    pub fn create_and_insert_schema(db: &Db<MemStorage>) -> Result<(), TransformError> {
+        db.run_script(
+            r#":create local_binding {
+                id: Uuid,
+                at: Validity =>
+                owner_id: Uuid,
+                owner_kind: String,
+                binding_kind: String,
+                name: String,
+                span: [Int; 2],
+                cfgs: [String],
+                source_kind: String,
+                source_id: Uuid?,
+                source_call_kind: String?,
+                source_path: [String]?,
+                callee_kind: String?,
+                callee_path: [String]?
+            }"#,
+            BTreeMap::new(),
+            cozo::ScriptMutability::Mutable,
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_binding(
+        db: &Db<MemStorage>,
+        binding: &LocalBindingNode,
+    ) -> Result<(), TransformError> {
+        let params = local_binding_to_params(binding);
+        db.run_script(
+            r#"?[id, at, owner_id, owner_kind, binding_kind, name, span, cfgs, source_kind, source_id, source_call_kind, source_path, callee_kind, callee_path] :=
+                id = $id,
+                owner_id = $owner_id,
+                owner_kind = $owner_kind,
+                binding_kind = $binding_kind,
+                name = $name,
+                span = $span,
+                cfgs = $cfgs,
+                source_kind = $source_kind,
+                source_id = $source_id,
+                source_call_kind = $source_call_kind,
+                source_path = $source_path,
+                callee_kind = $callee_kind,
+                callee_path = $callee_path,
+                at = 'ASSERT'
+            :put local_binding { id, at => owner_id, owner_kind, binding_kind, name, span, cfgs, source_kind, source_id, source_call_kind, source_path, callee_kind, callee_path }"#,
+            params,
+            cozo::ScriptMutability::Mutable,
+        )?;
+        Ok(())
+    }
+}
+
+pub struct CallBodyOwnerSchema;
+
+impl CallBodyOwnerSchema {
+    pub const RELATION: &'static str = "call_body_owner";
+
+    pub fn create_and_insert_schema(db: &Db<MemStorage>) -> Result<(), TransformError> {
+        db.run_script(
+            r#":create call_body_owner {
+                id: Uuid,
+                at: Validity =>
+                owner_kind: String,
+                parent_id: Uuid,
+                parent_kind: String,
+                span: [Int; 2],
+                cfgs: [String],
+                label: String
+            }"#,
+            BTreeMap::new(),
+            cozo::ScriptMutability::Mutable,
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_executable_body(
+        db: &Db<MemStorage>,
+        body: &ExecutableBodyNode,
+    ) -> Result<(), TransformError> {
+        let owner_kind = executable_body_kind(body.kind);
+        let label = body.label.as_deref().unwrap_or(owner_kind);
+        let mut params = BTreeMap::new();
+        params.insert("id".to_string(), body.id.to_cozo_uuid());
+        params.insert("owner_kind".to_string(), cozo::DataValue::from(owner_kind));
+        params.insert(
+            "parent_id".to_string(),
+            call_body_owner_to_cozo(body.parent),
+        );
+        params.insert(
+            "parent_kind".to_string(),
+            cozo::DataValue::from(call_body_owner_kind(body.parent)),
+        );
+        params.insert("span".to_string(), span_to_cozo(body.span));
+        params.insert("cfgs".to_string(), string_list(&body.cfgs));
+        params.insert("label".to_string(), cozo::DataValue::from(label));
+
+        db.run_script(
+            r#"?[id, at, owner_kind, parent_id, parent_kind, span, cfgs, label] :=
+                id = $id,
+                owner_kind = $owner_kind,
+                parent_id = $parent_id,
+                parent_kind = $parent_kind,
+                span = $span,
+                cfgs = $cfgs,
+                label = $label,
+                at = 'ASSERT'
+            :put call_body_owner { id, at => owner_kind, parent_id, parent_kind, span, cfgs, label }"#,
+            params,
+            cozo::ScriptMutability::Mutable,
+        )?;
+        Ok(())
+    }
+}
+
+pub struct CallSiteSchema;
+
+impl CallSiteSchema {
+    pub const RELATION: &'static str = "call_site";
+
+    pub fn create_and_insert_schema(db: &Db<MemStorage>) -> Result<(), TransformError> {
+        db.run_script(
+            r#":create call_site {
+                id: Uuid,
+                at: Validity =>
+                owner_id: Uuid,
+                call_kind: String,
+                span: [Int; 2],
+                cfgs: [String],
+                unsafe_block: Bool,
+                path: [String]?,
+                method_name: String?,
+                macro_name: String?,
+                receiver_kind: String?,
+                receiver_path: [String]?,
+                arg_count: Int?,
+                generic_arg_count: Int?
+            }"#,
+            BTreeMap::new(),
+            cozo::ScriptMutability::Mutable,
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_call_site(
+        db: &Db<MemStorage>,
+        call_site: &CallNode,
+    ) -> Result<(), TransformError> {
+        let params = call_site_to_params(call_site);
+        db.run_script(
+            r#"?[id, at, owner_id, call_kind, span, cfgs, unsafe_block, path, method_name, macro_name, receiver_kind, receiver_path, arg_count, generic_arg_count] :=
+                id = $id,
+                owner_id = $owner_id,
+                call_kind = $call_kind,
+                span = $span,
+                cfgs = $cfgs,
+                unsafe_block = $unsafe_block,
+                path = $path,
+                method_name = $method_name,
+                macro_name = $macro_name,
+                receiver_kind = $receiver_kind,
+                receiver_path = $receiver_path,
+                arg_count = $arg_count,
+                generic_arg_count = $generic_arg_count,
+                at = 'ASSERT'
+            :put call_site { id, at => owner_id, call_kind, span, cfgs, unsafe_block, path, method_name, macro_name, receiver_kind, receiver_path, arg_count, generic_arg_count }"#,
+            params,
+            cozo::ScriptMutability::Mutable,
+        )?;
+        Ok(())
+    }
+}
+
+impl CallCalleeEvidenceSchema {
+    pub fn insert_call_site(
+        db: &Db<MemStorage>,
+        call_site: &CallNode,
+    ) -> Result<(), TransformError> {
+        let Some(params) = call_callee_evidence_params(call_site) else {
+            return Ok(());
+        };
+        let schema = &Self::SCHEMA;
+        let script = schema.script_put(&params);
+        db.run_script(&script, params, cozo::ScriptMutability::Mutable)?;
+        Ok(())
+    }
+}
 
 pub struct TypeUseSchema;
 
@@ -347,6 +678,649 @@ fn int(value: usize) -> cozo::DataValue {
     cozo::DataValue::from(value as i64)
 }
 
+fn optional_int(value: Option<usize>) -> cozo::DataValue {
+    value
+        .map(|value| cozo::DataValue::from(value as i64))
+        .unwrap_or(cozo::DataValue::Null)
+}
+
+fn string_list(values: &[String]) -> cozo::DataValue {
+    cozo::DataValue::List(
+        values
+            .iter()
+            .map(|value| cozo::DataValue::from(value.as_str()))
+            .collect(),
+    )
+}
+
+fn optional_string_list(values: Option<&[String]>) -> cozo::DataValue {
+    values.map_or(cozo::DataValue::Null, string_list)
+}
+
+fn field_receiver_path(name: &str, root_path: &[String], field_path: &[String]) -> Vec<String> {
+    let mut path = Vec::with_capacity(root_path.len() + field_path.len() + 2);
+    path.push(name.to_string());
+    path.extend(root_path.iter().cloned());
+    path.push(String::new());
+    path.extend(field_path.iter().cloned());
+    path
+}
+
+fn branch_receiver_path(paths: &[Vec<String>]) -> Vec<String> {
+    let total_len = paths.iter().map(Vec::len).sum::<usize>() + paths.len().saturating_sub(1);
+    let mut encoded = Vec::with_capacity(total_len);
+    for (idx, path) in paths.iter().enumerate() {
+        if idx > 0 {
+            encoded.push(String::new());
+        }
+        encoded.extend(path.iter().cloned());
+    }
+    encoded
+}
+
+fn span_to_cozo(span: (usize, usize)) -> cozo::DataValue {
+    cozo::DataValue::List(vec![
+        cozo::DataValue::from(span.0 as i64),
+        cozo::DataValue::from(span.1 as i64),
+    ])
+}
+
+fn call_site_id_to_cozo(id: AnyCallSiteId) -> cozo::DataValue {
+    match id {
+        AnyCallSiteId::Path(id) => id.to_cozo_uuid(),
+        AnyCallSiteId::Method(id) => id.to_cozo_uuid(),
+        AnyCallSiteId::Dynamic(id) => id.to_cozo_uuid(),
+        AnyCallSiteId::Macro(id) => id.to_cozo_uuid(),
+    }
+}
+
+fn call_body_owner_to_cozo(owner: CallBodyOwnerId) -> cozo::DataValue {
+    match owner {
+        CallBodyOwnerId::Function(id) => id.into(),
+        CallBodyOwnerId::Macro(id) => id.into(),
+        CallBodyOwnerId::Method(id) => id.into(),
+        CallBodyOwnerId::Const(id) => id.into(),
+        CallBodyOwnerId::Static(id) => id.into(),
+        CallBodyOwnerId::Executable(id) => id.to_cozo_uuid(),
+    }
+}
+
+fn call_body_owner_kind(owner: CallBodyOwnerId) -> &'static str {
+    match owner {
+        CallBodyOwnerId::Function(_) => "Function",
+        CallBodyOwnerId::Macro(_) => "Macro",
+        CallBodyOwnerId::Method(_) => "Method",
+        CallBodyOwnerId::Const(_) => "Const",
+        CallBodyOwnerId::Static(_) => "Static",
+        CallBodyOwnerId::Executable(id) => executable_body_kind(id.kind()),
+    }
+}
+
+fn executable_body_kind(kind: ExecutableBodyKind) -> &'static str {
+    match kind {
+        ExecutableBodyKind::Closure => "Closure",
+        ExecutableBodyKind::AsyncBlock => "AsyncBlock",
+        ExecutableBodyKind::LocalItem => "LocalItem",
+    }
+}
+
+fn call_site_kind(id: AnyCallSiteId) -> &'static str {
+    match id {
+        AnyCallSiteId::Path(_) => "Path",
+        AnyCallSiteId::Method(_) => "Method",
+        AnyCallSiteId::Dynamic(_) => "Dynamic",
+        AnyCallSiteId::Macro(_) => "Macro",
+    }
+}
+
+fn call_resolution_kind_str(kind: CallResolutionKind) -> &'static str {
+    match kind {
+        CallResolutionKind::LocalExact => "LocalExact",
+    }
+}
+
+fn method_receiver_to_cozo(receiver: &MethodCallReceiver) -> (cozo::DataValue, cozo::DataValue) {
+    match receiver {
+        MethodCallReceiver::SelfValue => {
+            (cozo::DataValue::from("SelfValue"), cozo::DataValue::Null)
+        }
+        MethodCallReceiver::SelfField { field_path } => {
+            (cozo::DataValue::from("SelfField"), string_list(field_path))
+        }
+        MethodCallReceiver::LocalBinding { name } => (
+            cozo::DataValue::from("LocalBinding"),
+            string_list(std::slice::from_ref(name)),
+        ),
+        MethodCallReceiver::TypedLocalBinding { name, type_path } => {
+            let mut path = Vec::with_capacity(type_path.len() + 1);
+            path.push(name.clone());
+            path.extend(type_path.iter().cloned());
+            (
+                cozo::DataValue::from("TypedLocalBinding"),
+                string_list(&path),
+            )
+        }
+        MethodCallReceiver::InitializedLocalBinding { name, init_path } => {
+            let mut path = Vec::with_capacity(init_path.len() + 1);
+            path.push(name.clone());
+            path.extend(init_path.iter().cloned());
+            (
+                cozo::DataValue::from("InitializedLocalBinding"),
+                string_list(&path),
+            )
+        }
+        MethodCallReceiver::AliasedLocalBinding { name, source_path } => {
+            let mut path = Vec::with_capacity(source_path.len() + 1);
+            path.push(name.clone());
+            path.extend(source_path.iter().cloned());
+            (
+                cozo::DataValue::from("AliasedLocalBinding"),
+                string_list(&path),
+            )
+        }
+        MethodCallReceiver::TupleReturnBinding { name, path, index } => {
+            let mut encoded = Vec::with_capacity(path.len() + 2);
+            encoded.push(name.clone());
+            encoded.push(index.to_string());
+            encoded.extend(path.iter().cloned());
+            (
+                cozo::DataValue::from("TupleReturnBinding"),
+                string_list(&encoded),
+            )
+        }
+        MethodCallReceiver::TupleMethodReturn {
+            name,
+            method_name,
+            method_span,
+            index,
+        } => {
+            let encoded = vec![
+                name.clone(),
+                index.to_string(),
+                method_name.clone(),
+                method_span.0.to_string(),
+                method_span.1.to_string(),
+            ];
+            (
+                cozo::DataValue::from("TupleMethodReturn"),
+                string_list(&encoded),
+            )
+        }
+        MethodCallReceiver::MethodResultLocalBinding {
+            name,
+            method_name,
+            method_span,
+        } => {
+            let encoded = vec![
+                name.clone(),
+                method_name.clone(),
+                method_span.0.to_string(),
+                method_span.1.to_string(),
+            ];
+            (
+                cozo::DataValue::from("MethodResultLocalBinding"),
+                string_list(&encoded),
+            )
+        }
+        MethodCallReceiver::MethodResultField {
+            method_name,
+            method_span,
+            field_path,
+        } => {
+            let mut encoded = Vec::with_capacity(field_path.len() + 3);
+            encoded.push(method_name.clone());
+            encoded.push(method_span.0.to_string());
+            encoded.push(method_span.1.to_string());
+            encoded.extend(field_path.iter().cloned());
+            (
+                cozo::DataValue::from("MethodResultField"),
+                string_list(&encoded),
+            )
+        }
+        MethodCallReceiver::EnumVariantBinding {
+            name,
+            enum_path,
+            variant_name,
+            field_index,
+        } => {
+            let mut encoded = Vec::with_capacity(enum_path.len() + 3);
+            encoded.push(name.clone());
+            encoded.push(field_index.to_string());
+            encoded.push(variant_name.clone());
+            encoded.extend(enum_path.iter().cloned());
+            (
+                cozo::DataValue::from("EnumVariantBinding"),
+                string_list(&encoded),
+            )
+        }
+        MethodCallReceiver::BorrowedLocalBinding { name } => (
+            cozo::DataValue::from("BorrowedLocalBinding"),
+            string_list(std::slice::from_ref(name)),
+        ),
+        MethodCallReceiver::BorrowedTypedLocalBinding { name, type_path } => {
+            let mut path = Vec::with_capacity(type_path.len() + 1);
+            path.push(name.clone());
+            path.extend(type_path.iter().cloned());
+            (
+                cozo::DataValue::from("BorrowedTypedLocalBinding"),
+                string_list(&path),
+            )
+        }
+        MethodCallReceiver::BorrowedInitializedLocalBinding { name, init_path } => {
+            let mut path = Vec::with_capacity(init_path.len() + 1);
+            path.push(name.clone());
+            path.extend(init_path.iter().cloned());
+            (
+                cozo::DataValue::from("BorrowedInitializedLocalBinding"),
+                string_list(&path),
+            )
+        }
+        MethodCallReceiver::DereferencedLocalBinding { name } => (
+            cozo::DataValue::from("DereferencedLocalBinding"),
+            string_list(std::slice::from_ref(name)),
+        ),
+        MethodCallReceiver::DereferencedInitializedLocalBinding { name, init_path } => {
+            let mut path = Vec::with_capacity(init_path.len() + 1);
+            path.push(name.clone());
+            path.extend(init_path.iter().cloned());
+            (
+                cozo::DataValue::from("DereferencedInitializedLocalBinding"),
+                string_list(&path),
+            )
+        }
+        MethodCallReceiver::FieldLocalBinding { name, field_path } => {
+            let mut path = Vec::with_capacity(field_path.len() + 1);
+            path.push(name.clone());
+            path.extend(field_path.iter().cloned());
+            (
+                cozo::DataValue::from("FieldLocalBinding"),
+                string_list(&path),
+            )
+        }
+        MethodCallReceiver::FieldTypedLocalBinding {
+            name,
+            type_path,
+            field_path,
+        } => (
+            cozo::DataValue::from("FieldTypedLocalBinding"),
+            string_list(&field_receiver_path(name, type_path, field_path)),
+        ),
+        MethodCallReceiver::FieldInitializedLocalBinding {
+            name,
+            init_path,
+            field_path,
+        } => (
+            cozo::DataValue::from("FieldInitializedLocalBinding"),
+            string_list(&field_receiver_path(name, init_path, field_path)),
+        ),
+        MethodCallReceiver::PathCallResult { path } => {
+            (cozo::DataValue::from("PathCallResult"), string_list(path))
+        }
+        MethodCallReceiver::MethodCallResult { method_name } => (
+            cozo::DataValue::from("MethodCallResult"),
+            string_list(std::slice::from_ref(method_name)),
+        ),
+        MethodCallReceiver::AwaitResult => {
+            (cozo::DataValue::from("AwaitResult"), cozo::DataValue::Null)
+        }
+        MethodCallReceiver::AwaitPathCallResult { path } => (
+            cozo::DataValue::from("AwaitPathCallResult"),
+            string_list(path),
+        ),
+        MethodCallReceiver::AwaitMethodCallResult { method_name } => (
+            cozo::DataValue::from("AwaitMethodCallResult"),
+            string_list(std::slice::from_ref(method_name)),
+        ),
+        MethodCallReceiver::TryResult => {
+            (cozo::DataValue::from("TryResult"), cozo::DataValue::Null)
+        }
+        MethodCallReceiver::TryPathCallResult { path } => (
+            cozo::DataValue::from("TryPathCallResult"),
+            string_list(path),
+        ),
+        MethodCallReceiver::TryMethodCallResult { method_name } => (
+            cozo::DataValue::from("TryMethodCallResult"),
+            string_list(std::slice::from_ref(method_name)),
+        ),
+        MethodCallReceiver::IfBranchPaths { paths } => (
+            cozo::DataValue::from("IfBranchPaths"),
+            string_list(&branch_receiver_path(paths)),
+        ),
+        MethodCallReceiver::Literal => (cozo::DataValue::from("Literal"), cozo::DataValue::Null),
+        MethodCallReceiver::Unsupported => {
+            (cozo::DataValue::from("Unsupported"), cozo::DataValue::Null)
+        }
+    }
+}
+
+fn call_site_to_params(call_site: &CallNode) -> BTreeMap<String, cozo::DataValue> {
+    let mut params = BTreeMap::new();
+    params.insert("id".to_string(), call_site_id_to_cozo(call_site.id()));
+    params.insert(
+        "owner_id".to_string(),
+        call_body_owner_to_cozo(call_site.owner()),
+    );
+    params.insert(
+        "call_kind".to_string(),
+        cozo::DataValue::from(call_site_kind(call_site.id())),
+    );
+    params.insert("span".to_string(), span_to_cozo(call_site.span()));
+    params.insert("cfgs".to_string(), string_list(call_site.cfgs()));
+    params.insert(
+        "unsafe_block".to_string(),
+        cozo::DataValue::Bool(call_site.unsafe_block()),
+    );
+
+    match call_site {
+        CallNode::PathCall(call) => {
+            params.insert("path".to_string(), string_list(&call.path));
+            params.insert("method_name".to_string(), cozo::DataValue::Null);
+            params.insert("macro_name".to_string(), cozo::DataValue::Null);
+            params.insert("receiver_kind".to_string(), cozo::DataValue::Null);
+            params.insert("receiver_path".to_string(), cozo::DataValue::Null);
+            params.insert("arg_count".to_string(), optional_int(Some(call.arg_count)));
+            params.insert(
+                "generic_arg_count".to_string(),
+                optional_int(Some(call.generic_arg_count)),
+            );
+        }
+        CallNode::MethodCall(call) => {
+            let (receiver_kind, receiver_path) = method_receiver_to_cozo(&call.receiver);
+            params.insert("path".to_string(), cozo::DataValue::Null);
+            params.insert(
+                "method_name".to_string(),
+                cozo::DataValue::from(call.method_name.as_str()),
+            );
+            params.insert("macro_name".to_string(), cozo::DataValue::Null);
+            params.insert("receiver_kind".to_string(), receiver_kind);
+            params.insert("receiver_path".to_string(), receiver_path);
+            params.insert("arg_count".to_string(), optional_int(Some(call.arg_count)));
+            params.insert(
+                "generic_arg_count".to_string(),
+                optional_int(Some(call.generic_arg_count)),
+            );
+        }
+        CallNode::DynamicCall(call) => {
+            let path = match &call.callee {
+                DynamicCallCallee::Path { path }
+                | DynamicCallCallee::FnPointerCastPath { path }
+                | DynamicCallCallee::ReturnedPathCall { path, .. }
+                | DynamicCallCallee::LocalBinding { path }
+                | DynamicCallCallee::AliasedLocalBinding { path, .. }
+                | DynamicCallCallee::ClosureBinding { path, .. }
+                | DynamicCallCallee::AsyncClosureBinding { path, .. }
+                | DynamicCallCallee::AwaitedAsyncClosureBinding { path, .. }
+                | DynamicCallCallee::InitializedLocalBinding { path, .. }
+                | DynamicCallCallee::FnPointerCastInitializedLocalBinding { path, .. }
+                | DynamicCallCallee::FnPointerCastLocalBinding { path }
+                | DynamicCallCallee::FnPointerCastAliasedLocalBinding { path, .. }
+                | DynamicCallCallee::FnPointerCastClosureBinding { path, .. }
+                | DynamicCallCallee::DereferencedInitializedLocalBinding { path, .. }
+                | DynamicCallCallee::DereferencedClosureBinding { path, .. }
+                | DynamicCallCallee::FieldLocalBinding { path }
+                | DynamicCallCallee::SelfField { path }
+                | DynamicCallCallee::FieldInitializedLocalBinding { path, .. }
+                | DynamicCallCallee::IndexedInitializedLocalBinding { path, .. }
+                | DynamicCallCallee::IfBranchParameter { path }
+                | DynamicCallCallee::MatchArmParameter { path } => string_list(path),
+                DynamicCallCallee::IfBranchPaths { paths } => paths
+                    .split_first()
+                    .filter(|(first, rest)| rest.iter().all(|path| path == *first))
+                    .map_or(cozo::DataValue::Null, |(path, _)| string_list(path)),
+                DynamicCallCallee::IfBranchTargets { .. } => cozo::DataValue::Null,
+                DynamicCallCallee::MatchArmPaths { paths } => paths
+                    .split_first()
+                    .filter(|(first, rest)| rest.iter().all(|path| path == *first))
+                    .map_or(cozo::DataValue::Null, |(path, _)| string_list(path)),
+                DynamicCallCallee::MatchArmTargets { .. } => cozo::DataValue::Null,
+                DynamicCallCallee::ClosureLiteral { .. }
+                | DynamicCallCallee::AwaitedAsyncClosureLiteral { .. }
+                | DynamicCallCallee::Other => cozo::DataValue::Null,
+            };
+            params.insert("path".to_string(), path);
+            params.insert("method_name".to_string(), cozo::DataValue::Null);
+            params.insert("macro_name".to_string(), cozo::DataValue::Null);
+            params.insert("receiver_kind".to_string(), cozo::DataValue::Null);
+            params.insert("receiver_path".to_string(), cozo::DataValue::Null);
+            params.insert("arg_count".to_string(), optional_int(Some(call.arg_count)));
+            params.insert("generic_arg_count".to_string(), cozo::DataValue::Null);
+        }
+        CallNode::MacroCall(call) => {
+            params.insert("path".to_string(), cozo::DataValue::Null);
+            params.insert("method_name".to_string(), cozo::DataValue::Null);
+            params.insert(
+                "macro_name".to_string(),
+                cozo::DataValue::from(call.macro_name.as_str()),
+            );
+            params.insert("receiver_kind".to_string(), cozo::DataValue::Null);
+            params.insert("receiver_path".to_string(), cozo::DataValue::Null);
+            params.insert("arg_count".to_string(), cozo::DataValue::Null);
+            params.insert("generic_arg_count".to_string(), cozo::DataValue::Null);
+        }
+    }
+
+    params
+}
+
+fn local_binding_to_params(binding: &LocalBindingNode) -> BTreeMap<String, cozo::DataValue> {
+    let (source_id, source_call_kind, source_path, callee_kind, callee_path) = match &binding.source
+    {
+        LocalBindingSource::Parameter => (
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+        ),
+        LocalBindingSource::Typed { type_path } => (
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            string_list(type_path),
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+        ),
+        LocalBindingSource::Constructed { type_path } => (
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            string_list(type_path),
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+        ),
+        LocalBindingSource::InitializedPath { init_path } => (
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            string_list(init_path),
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+        ),
+        LocalBindingSource::ValueAlias { source_path } => (
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            string_list(source_path),
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+        ),
+        LocalBindingSource::FieldProjection {
+            base_binding_id,
+            field_path,
+            init_path,
+        } => (
+            base_binding_id.to_cozo_uuid(),
+            cozo::DataValue::Null,
+            string_list(field_path),
+            cozo::DataValue::from("Path"),
+            string_list(init_path),
+        ),
+        LocalBindingSource::SelfFieldAssignment {
+            field_path,
+            source_path,
+        } => (
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            string_list(field_path),
+            cozo::DataValue::from("Path"),
+            string_list(source_path),
+        ),
+        LocalBindingSource::Closure { body_id } | LocalBindingSource::AsyncClosure { body_id } => (
+            body_id.to_cozo_uuid(),
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+        ),
+        LocalBindingSource::LocalFunction { body_id } => (
+            body_id.to_cozo_uuid(),
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+        ),
+        LocalBindingSource::PathCallResult { call_site_id, path } => (
+            call_site_id_to_cozo(*call_site_id),
+            cozo::DataValue::from(call_site_kind(*call_site_id)),
+            string_list(path),
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+        ),
+        LocalBindingSource::DynamicCallResult {
+            call_site_id,
+            callee_kind,
+            callee_path,
+        } => (
+            call_site_id_to_cozo(*call_site_id),
+            cozo::DataValue::from(call_site_kind(*call_site_id)),
+            cozo::DataValue::Null,
+            cozo::DataValue::from(callee_kind.as_str()),
+            optional_string_list(callee_path.as_deref()),
+        ),
+    };
+
+    BTreeMap::from([
+        ("id".to_string(), binding.id.to_cozo_uuid()),
+        (
+            "owner_id".to_string(),
+            call_body_owner_to_cozo(binding.owner),
+        ),
+        (
+            "owner_kind".to_string(),
+            cozo::DataValue::from(call_body_owner_kind(binding.owner)),
+        ),
+        (
+            "binding_kind".to_string(),
+            cozo::DataValue::from(binding.kind.as_str()),
+        ),
+        (
+            "name".to_string(),
+            cozo::DataValue::from(binding.name.as_str()),
+        ),
+        ("span".to_string(), span_to_cozo(binding.span)),
+        ("cfgs".to_string(), string_list(&binding.cfgs)),
+        (
+            "source_kind".to_string(),
+            cozo::DataValue::from(binding.source.source_kind()),
+        ),
+        ("source_id".to_string(), source_id),
+        ("source_call_kind".to_string(), source_call_kind),
+        ("source_path".to_string(), source_path),
+        ("callee_kind".to_string(), callee_kind),
+        ("callee_path".to_string(), callee_path),
+    ])
+}
+
+fn call_callee_evidence_params(call_site: &CallNode) -> Option<BTreeMap<String, cozo::DataValue>> {
+    let (kind, path, closure_id) = match call_site {
+        CallNode::PathCall(call) => path_call_callee_evidence(&call.callee)?,
+        CallNode::DynamicCall(call) => dynamic_call_callee_evidence(&call.callee)?,
+        CallNode::MethodCall(_) | CallNode::MacroCall(_) => return None,
+    };
+
+    Some(BTreeMap::from([
+        (
+            "source_id".to_string(),
+            call_site_id_to_cozo(call_site.id()),
+        ),
+        (
+            "source_kind".to_string(),
+            cozo::DataValue::from(call_site_kind(call_site.id())),
+        ),
+        ("callee_kind".to_string(), cozo::DataValue::from(kind)),
+        ("callee_path".to_string(), string_list(path)),
+        (
+            "closure_id".to_string(),
+            closure_id.map_or(cozo::DataValue::Null, |id| id.to_cozo_uuid()),
+        ),
+    ]))
+}
+
+fn path_call_callee_evidence(
+    callee: &PathCallCallee,
+) -> Option<(&'static str, &[String], Option<&ExecutableBodyId>)> {
+    match callee {
+        PathCallCallee::ValueBinding { path } => Some(("ValueBinding", path, None)),
+        PathCallCallee::AsyncClosureBinding { path, closure_id } => {
+            Some(("AsyncClosureBinding", path, Some(closure_id)))
+        }
+        PathCallCallee::AwaitedAsyncClosureBinding { path, closure_id } => {
+            Some(("AwaitedAsyncClosureBinding", path, Some(closure_id)))
+        }
+        PathCallCallee::ItemPath
+        | PathCallCallee::ClosureBinding { .. }
+        | PathCallCallee::LocalFunctionBinding { .. }
+        | PathCallCallee::InitializedValueBinding { .. }
+        | PathCallCallee::AmbiguousInitializedValueBinding { .. }
+        | PathCallCallee::SelfFieldBinding { .. }
+        | PathCallCallee::AliasedValueBinding { .. } => None,
+    }
+}
+
+fn dynamic_call_callee_evidence(
+    callee: &DynamicCallCallee,
+) -> Option<(&'static str, &[String], Option<&ExecutableBodyId>)> {
+    match callee {
+        DynamicCallCallee::ReturnedPathCall { path, is_awaited } => {
+            let kind = if *is_awaited {
+                "AwaitedReturnedPathCall"
+            } else {
+                "ReturnedPathCall"
+            };
+            Some((kind, path, None))
+        }
+        DynamicCallCallee::FnPointerCastLocalBinding { path } => {
+            Some(("FnPointerCastLocalBinding", path, None))
+        }
+        DynamicCallCallee::LocalBinding { path } => Some(("LocalBinding", path, None)),
+        DynamicCallCallee::AsyncClosureBinding { path, closure_id } => {
+            Some(("AsyncClosureBinding", path, Some(closure_id)))
+        }
+        DynamicCallCallee::AwaitedAsyncClosureBinding { path, closure_id } => {
+            Some(("AwaitedAsyncClosureBinding", path, Some(closure_id)))
+        }
+        DynamicCallCallee::FieldLocalBinding { path } => Some(("FieldLocalBinding", path, None)),
+        DynamicCallCallee::IfBranchParameter { path } => Some(("IfBranchParameter", path, None)),
+        DynamicCallCallee::MatchArmParameter { path } => Some(("MatchArmParameter", path, None)),
+        DynamicCallCallee::Path { .. }
+        | DynamicCallCallee::FnPointerCastPath { .. }
+        | DynamicCallCallee::FnPointerCastInitializedLocalBinding { .. }
+        | DynamicCallCallee::FnPointerCastAliasedLocalBinding { .. }
+        | DynamicCallCallee::FnPointerCastClosureBinding { .. }
+        | DynamicCallCallee::DereferencedInitializedLocalBinding { .. }
+        | DynamicCallCallee::DereferencedClosureBinding { .. }
+        | DynamicCallCallee::AliasedLocalBinding { .. }
+        | DynamicCallCallee::ClosureBinding { .. }
+        | DynamicCallCallee::ClosureLiteral { .. }
+        | DynamicCallCallee::AwaitedAsyncClosureLiteral { .. }
+        | DynamicCallCallee::InitializedLocalBinding { .. }
+        | DynamicCallCallee::SelfField { .. }
+        | DynamicCallCallee::FieldInitializedLocalBinding { .. }
+        | DynamicCallCallee::IndexedInitializedLocalBinding { .. }
+        | DynamicCallCallee::IfBranchPaths { .. }
+        | DynamicCallCallee::IfBranchTargets { .. }
+        | DynamicCallCallee::MatchArmPaths { .. }
+        | DynamicCallCallee::MatchArmTargets { .. }
+        | DynamicCallCallee::Other => None,
+    }
+}
+
 pub struct TypeContainsSchema;
 
 impl TypeContainsSchema {
@@ -523,6 +1497,329 @@ impl TypeRelationSchema {
         let script = schema.script_put(&params);
         db.run_script(&script, params, cozo::ScriptMutability::Mutable)?;
 
+        Ok(())
+    }
+}
+
+impl CallSiteRelationSchema {
+    pub fn insert_relation(
+        &self,
+        db: &Db<MemStorage>,
+        relation: &CallSiteRelation,
+    ) -> Result<(), TransformError> {
+        let schema = &CallSiteRelationSchema::SCHEMA;
+        let params = match relation {
+            CallSiteRelation::BodyContainsCall { source, target }
+            | CallSiteRelation::CallResultAwaited { source, target } => BTreeMap::from([
+                (
+                    schema.source_id().to_string(),
+                    call_body_owner_to_cozo(*source),
+                ),
+                (
+                    schema.target_id().to_string(),
+                    call_site_id_to_cozo(*target),
+                ),
+                (
+                    schema.relation_kind().to_string(),
+                    cozo::DataValue::from(relation.kind_str()),
+                ),
+                (
+                    schema.source_kind().to_string(),
+                    cozo::DataValue::from(call_body_owner_kind(*source)),
+                ),
+                (
+                    schema.target_kind().to_string(),
+                    cozo::DataValue::from(call_site_kind(*target)),
+                ),
+            ]),
+        };
+
+        let script = schema.script_put(&params);
+        db.run_script(&script, params, cozo::ScriptMutability::Mutable)?;
+        Ok(())
+    }
+}
+
+impl LocalBindingRelationSchema {
+    pub fn insert_relation(
+        &self,
+        db: &Db<MemStorage>,
+        relation: &LocalBindingRelation,
+    ) -> Result<(), TransformError> {
+        let schema = &LocalBindingRelationSchema::SCHEMA;
+        let params = match relation {
+            LocalBindingRelation::OwnerContainsBinding { source, target } => BTreeMap::from([
+                (
+                    schema.source_id().to_string(),
+                    call_body_owner_to_cozo(*source),
+                ),
+                (schema.target_id().to_string(), target.to_cozo_uuid()),
+                (
+                    schema.relation_kind().to_string(),
+                    cozo::DataValue::from(relation.kind_str()),
+                ),
+                (
+                    schema.source_kind().to_string(),
+                    cozo::DataValue::from(call_body_owner_kind(*source)),
+                ),
+                (
+                    schema.target_kind().to_string(),
+                    cozo::DataValue::from("LocalBinding"),
+                ),
+            ]),
+            LocalBindingRelation::BindingSourceClosure { source, target } => BTreeMap::from([
+                (schema.source_id().to_string(), source.to_cozo_uuid()),
+                (schema.target_id().to_string(), target.to_cozo_uuid()),
+                (
+                    schema.relation_kind().to_string(),
+                    cozo::DataValue::from(relation.kind_str()),
+                ),
+                (
+                    schema.source_kind().to_string(),
+                    cozo::DataValue::from("LocalBinding"),
+                ),
+                (
+                    schema.target_kind().to_string(),
+                    cozo::DataValue::from(executable_body_kind(target.kind())),
+                ),
+            ]),
+            LocalBindingRelation::BindingSourceCallResult { source, target } => BTreeMap::from([
+                (schema.source_id().to_string(), source.to_cozo_uuid()),
+                (
+                    schema.target_id().to_string(),
+                    call_site_id_to_cozo(*target),
+                ),
+                (
+                    schema.relation_kind().to_string(),
+                    cozo::DataValue::from(relation.kind_str()),
+                ),
+                (
+                    schema.source_kind().to_string(),
+                    cozo::DataValue::from("LocalBinding"),
+                ),
+                (
+                    schema.target_kind().to_string(),
+                    cozo::DataValue::from(call_site_kind(*target)),
+                ),
+            ]),
+            LocalBindingRelation::BindingSourceFunction { source, target } => {
+                let target_id: cozo::DataValue = (*target).into();
+                BTreeMap::from([
+                    (schema.source_id().to_string(), source.to_cozo_uuid()),
+                    (schema.target_id().to_string(), target_id),
+                    (
+                        schema.relation_kind().to_string(),
+                        cozo::DataValue::from(relation.kind_str()),
+                    ),
+                    (
+                        schema.source_kind().to_string(),
+                        cozo::DataValue::from("LocalBinding"),
+                    ),
+                    (
+                        schema.target_kind().to_string(),
+                        cozo::DataValue::from("Function"),
+                    ),
+                ])
+            }
+            LocalBindingRelation::BindingSourceLocalItem { source, target } => BTreeMap::from([
+                (schema.source_id().to_string(), source.to_cozo_uuid()),
+                (schema.target_id().to_string(), target.to_cozo_uuid()),
+                (
+                    schema.relation_kind().to_string(),
+                    cozo::DataValue::from(relation.kind_str()),
+                ),
+                (
+                    schema.source_kind().to_string(),
+                    cozo::DataValue::from("LocalBinding"),
+                ),
+                (
+                    schema.target_kind().to_string(),
+                    cozo::DataValue::from("LocalItem"),
+                ),
+            ]),
+            LocalBindingRelation::BindingProjectsField { source, target } => BTreeMap::from([
+                (schema.source_id().to_string(), source.to_cozo_uuid()),
+                (schema.target_id().to_string(), target.to_cozo_uuid()),
+                (
+                    schema.relation_kind().to_string(),
+                    cozo::DataValue::from(relation.kind_str()),
+                ),
+                (
+                    schema.source_kind().to_string(),
+                    cozo::DataValue::from("LocalBinding"),
+                ),
+                (
+                    schema.target_kind().to_string(),
+                    cozo::DataValue::from("LocalBinding"),
+                ),
+            ]),
+            LocalBindingRelation::BindingSourceParameter { source, target } => BTreeMap::from([
+                (schema.source_id().to_string(), source.to_cozo_uuid()),
+                (schema.target_id().to_string(), target.to_cozo_uuid()),
+                (
+                    schema.relation_kind().to_string(),
+                    cozo::DataValue::from(relation.kind_str()),
+                ),
+                (
+                    schema.source_kind().to_string(),
+                    cozo::DataValue::from("LocalBinding"),
+                ),
+                (
+                    schema.target_kind().to_string(),
+                    cozo::DataValue::from("LocalBinding"),
+                ),
+            ]),
+            LocalBindingRelation::BindingAliasesBinding { source, target } => BTreeMap::from([
+                (schema.source_id().to_string(), source.to_cozo_uuid()),
+                (schema.target_id().to_string(), target.to_cozo_uuid()),
+                (
+                    schema.relation_kind().to_string(),
+                    cozo::DataValue::from(relation.kind_str()),
+                ),
+                (
+                    schema.source_kind().to_string(),
+                    cozo::DataValue::from("LocalBinding"),
+                ),
+                (
+                    schema.target_kind().to_string(),
+                    cozo::DataValue::from("LocalBinding"),
+                ),
+            ]),
+            LocalBindingRelation::ArgumentSuppliesParameter { source, target } => BTreeMap::from([
+                (
+                    schema.source_id().to_string(),
+                    call_site_id_to_cozo(*source),
+                ),
+                (schema.target_id().to_string(), target.to_cozo_uuid()),
+                (
+                    schema.relation_kind().to_string(),
+                    cozo::DataValue::from(relation.kind_str()),
+                ),
+                (
+                    schema.source_kind().to_string(),
+                    cozo::DataValue::from(call_site_kind(*source)),
+                ),
+                (
+                    schema.target_kind().to_string(),
+                    cozo::DataValue::from("LocalBinding"),
+                ),
+            ]),
+        };
+
+        let script = schema.script_put(&params);
+        db.run_script(&script, params, cozo::ScriptMutability::Mutable)?;
+        Ok(())
+    }
+}
+
+impl CallRelationSchema {
+    pub fn insert_relation(
+        &self,
+        db: &Db<MemStorage>,
+        relation: &CallRelation,
+    ) -> Result<(), TransformError> {
+        let schema = &CallRelationSchema::SCHEMA;
+        let (source_id, target_id) = match relation {
+            CallRelation::Function { source, target } => {
+                let target_id: cozo::DataValue = (*target).into();
+                (source.to_cozo_uuid(), target_id)
+            }
+            CallRelation::DynamicFunction { source, target } => {
+                let target_id: cozo::DataValue = (*target).into();
+                (source.to_cozo_uuid(), target_id)
+            }
+            CallRelation::Closure { source, target } => {
+                let target_id = target.to_cozo_uuid();
+                (source.to_cozo_uuid(), target_id)
+            }
+            CallRelation::LocalFunction { source, target } => {
+                let target_id = target.to_cozo_uuid();
+                (source.to_cozo_uuid(), target_id)
+            }
+            CallRelation::DynamicClosure { source, target } => {
+                let target_id = target.to_cozo_uuid();
+                (source.to_cozo_uuid(), target_id)
+            }
+            CallRelation::MethodCallbackFunction { source, target } => {
+                let target_id: cozo::DataValue = (*target).into();
+                (source.to_cozo_uuid(), target_id)
+            }
+            CallRelation::MethodCallbackClosure { source, target } => {
+                let target_id = target.to_cozo_uuid();
+                (source.to_cozo_uuid(), target_id)
+            }
+            CallRelation::Method { source, target } => {
+                let target_id: cozo::DataValue = (*target).into();
+                (source.to_cozo_uuid(), target_id)
+            }
+            CallRelation::AssociatedFunction { source, target } => {
+                let target_id: cozo::DataValue = (*target).into();
+                (source.to_cozo_uuid(), target_id)
+            }
+            CallRelation::TupleStructConstructor { source, target } => {
+                let target_id: cozo::DataValue = (*target).into();
+                (source.to_cozo_uuid(), target_id)
+            }
+            CallRelation::EnumVariantConstructor { source, target } => {
+                let target_id: cozo::DataValue = (*target).into();
+                (source.to_cozo_uuid(), target_id)
+            }
+        };
+        let params = BTreeMap::from([
+            (schema.source_id().to_string(), source_id),
+            (schema.target_id().to_string(), target_id),
+            (
+                schema.relation_kind().to_string(),
+                cozo::DataValue::from(relation.kind_str()),
+            ),
+            (
+                schema.source_kind().to_string(),
+                cozo::DataValue::from(relation.source_kind_str()),
+            ),
+            (
+                schema.target_kind().to_string(),
+                cozo::DataValue::from(relation.target_kind_str()),
+            ),
+        ]);
+
+        let script = schema.script_put(&params);
+        db.run_script(&script, params, cozo::ScriptMutability::Mutable)?;
+        Ok(())
+    }
+}
+
+impl CallResolutionStatusSchema {
+    pub fn insert_status(
+        &self,
+        db: &Db<MemStorage>,
+        status: &CallResolutionStatus,
+    ) -> Result<(), TransformError> {
+        let schema = &CallResolutionStatusSchema::SCHEMA;
+        let resolution_kind = match status {
+            CallResolutionStatus::Resolved { kind, .. } => {
+                cozo::DataValue::from(call_resolution_kind_str(*kind))
+            }
+            CallResolutionStatus::Unresolved { .. }
+            | CallResolutionStatus::Ambiguous { .. }
+            | CallResolutionStatus::External { .. }
+            | CallResolutionStatus::Unsupported { .. } => cozo::DataValue::Null,
+        };
+        let source = status.source();
+        let params = BTreeMap::from([
+            (schema.source_id().to_string(), call_site_id_to_cozo(source)),
+            (
+                schema.source_kind().to_string(),
+                cozo::DataValue::from(call_site_kind(source)),
+            ),
+            (
+                schema.status_kind().to_string(),
+                cozo::DataValue::from(status.kind_str()),
+            ),
+            (schema.resolution_kind().to_string(), resolution_kind),
+        ]);
+
+        let script = schema.script_put(&params);
+        db.run_script(&script, params, cozo::ScriptMutability::Mutable)?;
         Ok(())
     }
 }

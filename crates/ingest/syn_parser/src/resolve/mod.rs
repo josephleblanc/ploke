@@ -1,3 +1,4 @@
+pub mod call_resolution;
 mod error;
 pub mod id_resolver;
 mod logging;

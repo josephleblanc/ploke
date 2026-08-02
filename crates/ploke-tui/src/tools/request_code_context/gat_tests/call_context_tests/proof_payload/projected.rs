@@ -1,0 +1,329 @@
+use super::super::*;
+use super::helpers::{assert_projected_owner_rows, assert_resolved_call};
+
+#[tokio::test]
+async fn request_code_context_returns_projected_proof_context() -> color_eyre::Result<()> {
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_crate_local_target"),
+    )?;
+    let target = one_uuid(&db, &function_in_module_query(&["crate"], "local_target"))?;
+    assert_eq!(
+        db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?,
+        3,
+        "single resolved path call should project call_site, call_edge, and call_resolution facts"
+    );
+
+    let tool_result =
+        execute_fixture_tool_request(&db, "call_crate_local_target", 1, "projected_proof_context")
+            .await?;
+    let result: RequestCodeContextResult = serde_json::from_str(&tool_result.content)?;
+    assert_result_ok(&result, "call_crate_local_target", 1, "fixture_call_graph");
+    assert!(
+        result
+            .note
+            .as_deref()
+            .is_none_or(|note| { !note.contains("Proof-context expansion is unavailable") }),
+        "projected proof facts should avoid degraded proof-context note: {result:#?}"
+    );
+
+    let owner_part = result
+        .context
+        .iter()
+        .find(|part| part.id == owner)
+        .expect("request_code_context should materialize the projected proof owner");
+    let proof_rows = &owner_part.proof_context;
+    assert_projected_owner_rows(proof_rows, owner, target);
+
+    let payload = tool_result
+        .ui_payload
+        .as_ref()
+        .expect("request_code_context should emit a UI payload");
+    let proof_context_count = result
+        .context
+        .iter()
+        .map(|part| part.proof_context.len())
+        .sum::<usize>();
+    assert!(
+        proof_context_count >= proof_rows.len(),
+        "UI proof-context count should include at least the owner proof rows: {result:#?}"
+    );
+    assert_eq!(
+        ui_field(payload, "proof_context"),
+        proof_context_count.to_string()
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn request_code_context_returns_node_projected_target_proof_context() -> color_eyre::Result<()>
+{
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let target = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "try_local_assoc"),
+    )?;
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_try_result_instance_method"),
+    )?;
+    assert!(
+        db.project_call_proof_facts_for_node(target, "bd:fixture-call-graph")? >= 3,
+        "node projection should store at least one resolved incoming proof row set"
+    );
+
+    let tool_result = execute_fixture_tool_request(
+        &db,
+        "try_local_assoc",
+        1,
+        "node_projected_target_proof_context",
+    )
+    .await?;
+    let result: RequestCodeContextResult = serde_json::from_str(&tool_result.content)?;
+    assert_result_ok(&result, "try_local_assoc", 1, "fixture_call_graph");
+    assert!(
+        result
+            .note
+            .as_deref()
+            .is_none_or(|note| { !note.contains("Proof-context expansion is unavailable") }),
+        "node-projected target proof facts should avoid degraded proof-context note: {result:#?}"
+    );
+
+    let target_part = result
+        .context
+        .iter()
+        .find(|part| part.id == target)
+        .expect("request_code_context should preserve the target proof seed");
+    assert_resolved_call(&target_part.proof_context, owner, target);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn request_code_context_returns_expanded_method_proof_context() -> color_eyre::Result<()> {
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let target = one_uuid(
+        &db,
+        &method_by_impl_self_query("LocalAssoc", "instance_value"),
+    )?;
+    let method_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_typed_local_instance_method"),
+    )?;
+    let nested_ref_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_typed_double_reference_local_instance_method",
+        ),
+    )?;
+    let assoc_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_method_as_associated_function"),
+    )?;
+    let tuple_pattern_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_tuple_pattern_local_instance_method"),
+    )?;
+    let match_arm_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_match_arm_initialized_receiver_method"),
+    )?;
+    let self_field_owner = one_uuid(
+        &db,
+        &method_by_impl_self_query("SelfFieldAssocOwner", "call_self_field_instance_method"),
+    )?;
+    let method_callers = [
+        (method_owner, "method-call owner"),
+        (nested_ref_owner, "nested-reference method owner"),
+        (tuple_pattern_owner, "tuple-pattern method owner"),
+        (self_field_owner, "self-field method owner"),
+        (assoc_owner, "method-as-associated-function owner"),
+    ];
+    for &(owner, label) in &method_callers {
+        assert_eq!(
+            db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?,
+            3,
+            "{label} should project call_site, call_edge, and call_resolution facts"
+        );
+    }
+    assert_eq!(
+        db.project_call_proof_facts_for_owner(match_arm_owner, "bd:fixture-call-graph")?,
+        6,
+        "match-arm initialized method owner should project guard and body proof facts"
+    );
+
+    let tool_result =
+        execute_fixture_tool_request(&db, "instance_value", 1, "expanded_method_proof_context")
+            .await?;
+    let result: RequestCodeContextResult = serde_json::from_str(&tool_result.content)?;
+    assert_result_ok(&result, "instance_value", 1, "fixture_call_graph");
+    assert!(
+        result
+            .note
+            .as_deref()
+            .is_none_or(|note| { !note.contains("Proof-context expansion is unavailable") }),
+        "projected method proof facts should avoid degraded proof-context note: {result:#?}"
+    );
+
+    assert_expanded_proof_parts(&result, &method_callers, target);
+    let match_arm_part = result
+        .context
+        .iter()
+        .find(|part| part.id == match_arm_owner)
+        .expect("request_code_context should materialize the match-arm proof context");
+    assert!(
+        match_arm_part.call_expansion.is_some(),
+        "match-arm owner should be present because call-context expansion required it"
+    );
+    assert_eq!(
+        match_arm_part.proof_context.len(),
+        6,
+        "match-arm proof context should preserve guard and body proof rows: {match_arm_part:#?}"
+    );
+    let match_arm_owner_id = match_arm_owner.to_string();
+    let target_id = target.to_string();
+    let resolved_edges = match_arm_part
+        .proof_context
+        .iter()
+        .filter(|row| {
+            row.kind == "call_edge"
+                && row.caller_def_id.as_deref() == Some(match_arm_owner_id.as_str())
+                && row.callee_def_id.as_deref() == Some(target_id.as_str())
+                && row.resolution_state.as_deref() == Some("resolved")
+        })
+        .count();
+    assert_eq!(
+        resolved_edges, 2,
+        "match-arm proof context should include two resolved call_edge rows: {match_arm_part:#?}"
+    );
+
+    let payload = tool_result
+        .ui_payload
+        .as_ref()
+        .expect("request_code_context should emit a UI payload");
+    let proof_context_count = result
+        .context
+        .iter()
+        .map(|part| part.proof_context.len())
+        .sum::<usize>();
+    assert!(
+        proof_context_count >= method_callers.len() * 3,
+        "UI proof-context count should include expanded method caller proof rows: {result:#?}"
+    );
+    assert_eq!(
+        ui_field(payload, "proof_context"),
+        proof_context_count.to_string()
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn request_code_context_returns_trait_dispatch_proof_context() -> color_eyre::Result<()> {
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let target = one_uuid(
+        &db,
+        &method_by_impl_trait_self_query(
+            "LocalDispatchTrait",
+            "TraitDispatchTarget",
+            "trait_value",
+        ),
+    )?;
+    let initialized_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_initialized_local_trait_method"),
+    )?;
+    let chained_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_reference_chain_trait_object_binding_method",
+        ),
+    )?;
+    let borrowed_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_borrowed_concrete_trait_object_binding_method",
+        ),
+    )?;
+    let callers = [
+        (initialized_owner, "initialized trait-dispatch caller"),
+        (chained_owner, "reference-chain trait-object caller"),
+        (borrowed_owner, "borrowed trait-object caller"),
+    ];
+    for &(owner, label) in &callers {
+        assert_eq!(
+            db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?,
+            3,
+            "{label} should project call_site, call_edge, and call_resolution facts"
+        );
+    }
+
+    let tool_result =
+        execute_fixture_tool_request(&db, "144 trait_value", 5, "trait_dispatch_proof_context")
+            .await?;
+    let result: RequestCodeContextResult = serde_json::from_str(&tool_result.content)?;
+    assert_result_ok(&result, "144 trait_value", 5, "fixture_call_graph");
+    assert!(
+        result
+            .note
+            .as_deref()
+            .is_none_or(|note| { !note.contains("Proof-context expansion is unavailable") }),
+        "projected trait-dispatch proof facts should avoid degraded proof-context note: {result:#?}"
+    );
+
+    assert_expanded_proof_parts(&result, &callers, target);
+
+    let payload = tool_result
+        .ui_payload
+        .as_ref()
+        .expect("request_code_context should emit a UI payload");
+    let proof_context_count = result
+        .context
+        .iter()
+        .map(|part| part.proof_context.len())
+        .sum::<usize>();
+    assert!(
+        proof_context_count >= callers.len() * 3,
+        "UI proof-context count should include trait-dispatch caller proof rows: {result:#?}"
+    );
+    assert_eq!(
+        ui_field(payload, "proof_context"),
+        proof_context_count.to_string()
+    );
+
+    Ok(())
+}
+
+fn assert_expanded_proof_parts(
+    result: &RequestCodeContextResult,
+    callers: &[(Uuid, &str)],
+    target: Uuid,
+) {
+    for &(owner, label) in callers {
+        let part = result
+            .context
+            .iter()
+            .find(|part| part.id == owner)
+            .unwrap_or_else(|| {
+                panic!("request_code_context should materialize the {label} proof context")
+            });
+        assert!(
+            part.call_expansion.is_some(),
+            "{label} should be present because call-context expansion required it"
+        );
+        assert_projected_owner_rows(&part.proof_context, owner, target);
+    }
+}

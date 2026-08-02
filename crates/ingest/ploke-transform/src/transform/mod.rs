@@ -11,6 +11,9 @@ use syn_parser::parser::nodes::*;
 use syn_parser::parser::types::TypeNode;
 use syn_parser::parser::{graph::CodeGraph, nodes::TypeDefNode, types::VisibilityKind};
 use syn_parser::resolve::RelationIndexer;
+use syn_parser::resolve::call_resolution::{
+    CallResolutionReport, resolve_call_relations_after_tree,
+};
 use syn_parser::resolve::module_tree::ModuleTree;
 use syn_parser::resolve::type_resolution_v2::resolve_type_relations_after_tree;
 use syn_parser::utils::LogStyle;
@@ -23,7 +26,18 @@ use crate::error::TransformError;
 // use crate::schema::*;
 
 // -- transforms
+use call_graph_bindings::{
+    derive_argument_parameter_relations, derive_field_projection_function_relations,
+    derive_initialized_path_relations, derive_self_field_assignment_parameter_relations,
+    derive_value_alias_relations, derive_value_binding_function_relations,
+};
 use consts::transform_consts;
+use edges::transform_call_body_owners;
+use edges::transform_call_resolution_report;
+use edges::transform_call_site_relations;
+use edges::transform_call_sites;
+use edges::transform_local_binding_relations;
+use edges::transform_local_bindings;
 use edges::transform_relations;
 use edges::transform_type_relations;
 use enums::transform_enums;
@@ -48,6 +62,7 @@ pub mod compilation_unit;
 pub mod union_crate_masks;
 pub use compilation_unit::insert_structural_compilation_unit_slice;
 pub use union_crate_masks::transform_union_crate_and_structural_masks;
+mod call_graph_bindings;
 mod crate_context;
 mod workspace;
 // -- primary nodes --
@@ -132,15 +147,38 @@ pub fn transform_parsed_graph(
     parsed_graph: ParsedCodeGraph,
     tree: &ModuleTree,
 ) -> Result<(), TransformError> {
+    let call_resolution_report =
+        resolve_call_relations_after_tree(&parsed_graph, tree).map_err(|err| {
+            TransformError::Transformation(format!("typed call relation resolution failed: {err}"))
+        })?;
+    transform_parsed_graph_with_call_report(db, parsed_graph, tree, call_resolution_report)
+}
+
+pub(super) fn transform_parsed_graph_with_call_report(
+    db: &Db<MemStorage>,
+    parsed_graph: ParsedCodeGraph,
+    tree: &ModuleTree,
+    call_resolution_report: CallResolutionReport,
+) -> Result<(), TransformError> {
     let type_relation_report =
         resolve_type_relations_after_tree(&parsed_graph, tree).map_err(|err| {
             TransformError::Transformation(format!("typed type relation resolution failed: {err}"))
         })?;
-
     let code_graph = parsed_graph.graph;
     let crate_context = parsed_graph
         .crate_context
         .expect("Invariant: All Code Graphs must have a Crate Context");
+    let argument_parameter_relations =
+        derive_argument_parameter_relations(&code_graph, &call_resolution_report);
+    let init_path_relations =
+        derive_initialized_path_relations(&code_graph, &call_resolution_report);
+    let field_projection_relations =
+        derive_field_projection_function_relations(&code_graph, &call_resolution_report);
+    let value_alias_relations = derive_value_alias_relations(&code_graph);
+    let self_field_assignment_relations =
+        derive_self_field_assignment_parameter_relations(&code_graph);
+    let value_binding_function_relations =
+        derive_value_binding_function_relations(&code_graph, &call_resolution_report);
 
     tracing::trace!("{}: Starting", "type_graph_edges".log_step());
     transform_type_graph_edges(db, &code_graph)?;
@@ -170,6 +208,24 @@ pub fn transform_parsed_graph(
     transform_relations(db, code_graph.relations)?;
     tracing::trace!("{}: Starting", "type_relations".log_step());
     transform_type_relations(db, &type_relation_report)?;
+    tracing::trace!("{}: Starting", "call_body_owners".log_step());
+    transform_call_body_owners(db, &code_graph.executable_bodies)?;
+    tracing::trace!("{}: Starting", "call_sites".log_step());
+    transform_call_sites(db, &code_graph.call_sites)?;
+    tracing::trace!("{}: Starting", "local_bindings".log_step());
+    transform_local_bindings(db, &code_graph.local_bindings)?;
+    tracing::trace!("{}: Starting", "local_binding_relations".log_step());
+    transform_local_binding_relations(db, &code_graph.local_binding_relations)?;
+    transform_local_binding_relations(db, &value_alias_relations)?;
+    transform_local_binding_relations(db, &self_field_assignment_relations)?;
+    transform_local_binding_relations(db, &init_path_relations)?;
+    transform_local_binding_relations(db, &field_projection_relations)?;
+    transform_local_binding_relations(db, &value_binding_function_relations)?;
+    transform_local_binding_relations(db, &argument_parameter_relations)?;
+    tracing::trace!("{}: Starting", "call_site_relations".log_step());
+    transform_call_site_relations(db, &code_graph.call_site_relations)?;
+    tracing::trace!("{}: Starting", "call_resolution".log_step());
+    transform_call_resolution_report(db, &call_resolution_report)?;
 
     tracing::trace!("{}: Starting", "crate_context".log_step());
     transform_crate_context(db, crate_context)?;
@@ -203,13 +259,15 @@ fn transform_defined_types(
 }
 
 #[cfg(test)]
+mod call_graph_tests;
+
+#[cfg(test)]
 mod tests {
+    use crate::{error::TransformError, schema::create_schema_all};
     use cozo::{Db, MemStorage, ScriptMutability};
     use ploke_test_utils::test_run_phases_and_collect;
     use std::collections::BTreeMap;
     use syn_parser::parser::ParsedCodeGraph;
-
-    use crate::{error::TransformError, schema::create_schema_all};
 
     use super::transform_parsed_graph;
 

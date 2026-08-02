@@ -38,6 +38,41 @@ lazy_static! {
 }
 
 lazy_static! {
+    /// Parsed data for the "fixture_call_graph" crate.
+    /// Used for focused call-site extraction and resolution tests.
+    pub static ref PARSED_FIXTURE_CRATE_CALL_GRAPH: Vec<ParsedCodeGraph> =
+        run_phases_and_collect("fixture_call_graph");
+}
+
+lazy_static! {
+    /// Parsed data for the "fixture_impls" crate.
+    /// Used for implementation and method-call resolution tests.
+    pub static ref PARSED_FIXTURE_CRATE_IMPLS: Vec<ParsedCodeGraph> =
+        run_phases_and_collect("fixture_impls");
+}
+
+lazy_static! {
+    /// Parsed data for the "fixture_edge_cases" crate.
+    /// Used for broad call-site extraction and resolution edge-case tests.
+    pub static ref PARSED_FIXTURE_CRATE_EDGE_CASES: Vec<ParsedCodeGraph> =
+        run_phases_and_collect("fixture_edge_cases");
+}
+
+lazy_static! {
+    /// Parsed data for the "fixture_generics" crate.
+    /// Used for generic call-site extraction and resolution edge-case tests.
+    pub static ref PARSED_FIXTURE_CRATE_GENERICS: Vec<ParsedCodeGraph> =
+        run_phases_and_collect("fixture_generics");
+}
+
+lazy_static! {
+    /// Parsed data for the "fixture_type_resolution_v2" crate.
+    /// Used for type-resolution-heavy call-site extraction edge-case tests.
+    pub static ref PARSED_FIXTURE_CRATE_TYPE_RESOLUTION_V2: Vec<ParsedCodeGraph> =
+        run_phases_and_collect("fixture_type_resolution_v2");
+}
+
+lazy_static! {
     /// Parsed data for the "fixture_spp_edge_cases_no_cfg" crate.
     /// Used for shortest-path and re-export edge cases without cfg duplication pressure.
     pub static ref PARSED_FIXTURE_CRATE_SPP_EDGE_CASES_NO_CFG: Vec<ParsedCodeGraph> =

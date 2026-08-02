@@ -1,10 +1,12 @@
 // Import specific typed IDs AND the new category enums
 use super::nodes::{AnyNodeId, PrimaryNodeIdTrait};
 use crate::parser::nodes::{
-    AnyGenericParamId, AssociatedItemNodeId, ConstGenericParamNodeId, EnumNodeId, FieldNodeId,
-    GenericParamOwnerId, ImplNodeId, ImportNodeId, ModuleNodeId, OrdinaryTypeSourceId,
-    OrdinaryTypeTargetId, OrdinaryTypeUseId, PrimaryNodeId, StructNodeId, TraitNodeId,
-    TraitTypeSourceId, TraitTypeTargetId, TypeGenericParamNodeId, UnionNodeId, VariantNodeId,
+    AnyCallSiteId, AnyGenericParamId, AssociatedItemNodeId, CallBodyOwnerId,
+    ConstGenericParamNodeId, DynamicCallSiteId, EnumNodeId, ExecutableBodyId, FieldNodeId,
+    FunctionNodeId, GenericParamOwnerId, ImplNodeId, ImportNodeId, LocalBindingId, LocalItemBodyId,
+    MethodCallSiteId, MethodNodeId, ModuleNodeId, OrdinaryTypeSourceId, OrdinaryTypeTargetId,
+    OrdinaryTypeUseId, PathCallSiteId, PrimaryNodeId, StructNodeId, TraitNodeId, TraitTypeSourceId,
+    TraitTypeTargetId, TypeGenericParamNodeId, UnionNodeId, VariantNodeId,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -119,6 +121,388 @@ impl GenericRelation {
             Self::TypeBound { .. } => "TypeBound",
             Self::TypeDefault { .. } => "TypeDefault",
             Self::ConstParamType { .. } => "ConstParamType",
+        }
+    }
+}
+
+/// Represents type-safe structural relations between function-like bodies and
+/// parser-owned call-site records.
+///
+/// The source endpoint stays in the node universe because a function or method
+/// body is owned by a real code item. The target endpoint stays in the call-site
+/// universe through [`AnyCallSiteId`]; call-site occurrences are not `AnyNodeId`
+/// members and must not be represented as module-contained code nodes.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CallSiteRelation {
+    /// A function or method body contains a call-site expression.
+    ///
+    /// ```text
+    /// BodyContainsCall ⊆ CallBodyOwnerId × AnyCallSiteId
+    /// ```
+    BodyContainsCall {
+        source: CallBodyOwnerId,
+        target: AnyCallSiteId,
+    },
+    /// A function-like body awaits the result of a call-site expression.
+    ///
+    /// This is a source-visible proof fact, not a traversal edge. It records
+    /// that the future returned by the callsite is polled at this source
+    /// boundary, while semantic target proof still belongs to call-resolution
+    /// relations.
+    ///
+    /// ```text
+    /// CallResultAwaited ⊆ CallBodyOwnerId × AnyCallSiteId
+    /// ```
+    CallResultAwaited {
+        source: CallBodyOwnerId,
+        target: AnyCallSiteId,
+    },
+}
+
+impl CallSiteRelation {
+    /// Returns the relation kind as a stable string for diagnostics or database
+    /// projection.
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Self::BodyContainsCall { .. } => "BodyContainsCall",
+            Self::CallResultAwaited { .. } => "CallResultAwaited",
+        }
+    }
+}
+
+/// Type-safe structural relations for parser-owned local binding records.
+///
+/// These edges make the local binding proof carrier traversable without
+/// changing call resolution. They describe containment by a function-like owner
+/// and the structural source of the binding value.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LocalBindingRelation {
+    /// A function-like body contains a parser-owned binding/value-flow record.
+    ///
+    /// ```text
+    /// OwnerContainsBinding ⊆ CallBodyOwnerId × LocalBindingId
+    /// ```
+    OwnerContainsBinding {
+        source: CallBodyOwnerId,
+        target: LocalBindingId,
+    },
+    /// A binding is sourced by an executable-local body, such as a closure.
+    ///
+    /// ```text
+    /// BindingSourceClosure ⊆ LocalBindingId × ExecutableBodyId
+    /// ```
+    BindingSourceClosure {
+        source: LocalBindingId,
+        target: ExecutableBodyId,
+    },
+    /// A binding is sourced by the result of a call-site expression.
+    ///
+    /// ```text
+    /// BindingSourceCallResult ⊆ LocalBindingId × AnyCallSiteId
+    /// ```
+    BindingSourceCallResult {
+        source: LocalBindingId,
+        target: AnyCallSiteId,
+    },
+    /// A binding is sourced by a resolved local function item.
+    ///
+    /// ```text
+    /// BindingSourceFunction ⊆ LocalBindingId × FunctionNodeId
+    /// ```
+    BindingSourceFunction {
+        source: LocalBindingId,
+        target: FunctionNodeId,
+    },
+    /// A binding is sourced by a function-local item body.
+    ///
+    /// ```text
+    /// BindingSourceLocalItem ⊆ LocalBindingId × LocalItemBodyId
+    /// ```
+    BindingSourceLocalItem {
+        source: LocalBindingId,
+        target: LocalItemBodyId,
+    },
+    /// A binding projects a named field from another local binding.
+    ///
+    /// The source endpoint is the projected binding. The target endpoint is the
+    /// base local binding that owns the field expression.
+    ///
+    /// ```text
+    /// BindingProjectsField ⊆ LocalBindingId × LocalBindingId
+    /// ```
+    BindingProjectsField {
+        source: LocalBindingId,
+        target: LocalBindingId,
+    },
+    /// A binding is sourced by a parameter binding in the same owner.
+    ///
+    /// The source endpoint is the binding/value-flow record, for example a
+    /// self-field assignment. The target endpoint is the parameter binding that
+    /// supplied the stored value.
+    ///
+    /// ```text
+    /// BindingSourceParameter ⊆ LocalBindingId × LocalBindingId
+    /// ```
+    BindingSourceParameter {
+        source: LocalBindingId,
+        target: LocalBindingId,
+    },
+    /// A local binding aliases another local binding in the same owner.
+    ///
+    /// The source endpoint is the alias binding. The target endpoint is the
+    /// binding named by the alias initializer.
+    ///
+    /// ```text
+    /// BindingAliasesBinding ⊆ LocalBindingId × LocalBindingId
+    /// ```
+    BindingAliasesBinding {
+        source: LocalBindingId,
+        target: LocalBindingId,
+    },
+    /// A resolved call-site argument supplies a private callee parameter.
+    ///
+    /// ```text
+    /// ArgumentSuppliesParameter ⊆ AnyCallSiteId × LocalBindingId
+    /// ```
+    ArgumentSuppliesParameter {
+        source: AnyCallSiteId,
+        target: LocalBindingId,
+    },
+}
+
+impl LocalBindingRelation {
+    /// Returns the relation kind as a stable string for diagnostics or database
+    /// projection.
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Self::OwnerContainsBinding { .. } => "OwnerContainsBinding",
+            Self::BindingSourceClosure { .. } => "BindingSourceClosure",
+            Self::BindingSourceCallResult { .. } => "BindingSourceCallResult",
+            Self::BindingSourceFunction { .. } => "BindingSourceFunction",
+            Self::BindingSourceLocalItem { .. } => "BindingSourceLocalItem",
+            Self::BindingProjectsField { .. } => "BindingProjectsField",
+            Self::BindingSourceParameter { .. } => "BindingSourceParameter",
+            Self::BindingAliasesBinding { .. } => "BindingAliasesBinding",
+            Self::ArgumentSuppliesParameter { .. } => "ArgumentSuppliesParameter",
+        }
+    }
+}
+
+/// Type-safe local call-target edges emitted by call resolution.
+///
+/// These relations are deliberately separate from [`CallSiteRelation`]. A
+/// `BodyContainsCall` edge says that a function-like body contains an
+/// expression occurrence; a `CallRelation` says the resolver has proven a typed
+/// local callable target for that occurrence. Ambiguous candidates may still be
+/// represented by multiple exact edges, but the ambiguity remains in
+/// [`CallResolutionStatus`]; unsupported cases stay targetless.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CallRelation {
+    /// A path-style call site resolved to a local standalone function.
+    ///
+    /// ```text
+    /// Function ⊆ PathCallSiteId × FunctionNodeId
+    /// ```
+    Function {
+        source: PathCallSiteId,
+        target: FunctionNodeId,
+    },
+    /// A dynamically shaped call site resolved to a local standalone function.
+    ///
+    /// ```text
+    /// DynamicFunction ⊆ DynamicCallSiteId × FunctionNodeId
+    /// ```
+    DynamicFunction {
+        source: DynamicCallSiteId,
+        target: FunctionNodeId,
+    },
+    /// A path-style call site resolved to a local closure body owner.
+    ///
+    /// ```text
+    /// Closure ⊆ PathCallSiteId × ExecutableBodyId
+    /// ```
+    Closure {
+        source: PathCallSiteId,
+        target: ExecutableBodyId,
+    },
+    /// A path-style call site resolved to a block-local function item body owner.
+    ///
+    /// ```text
+    /// LocalFunction ⊆ PathCallSiteId × ExecutableBodyId
+    /// ```
+    LocalFunction {
+        source: PathCallSiteId,
+        target: ExecutableBodyId,
+    },
+    /// A dynamically shaped call site resolved to a local closure body owner.
+    ///
+    /// ```text
+    /// DynamicClosure ⊆ DynamicCallSiteId × ExecutableBodyId
+    /// ```
+    DynamicClosure {
+        source: DynamicCallSiteId,
+        target: ExecutableBodyId,
+    },
+    /// A method-style call site whose externally-defined method may invoke a
+    /// local function argument proven by caller evidence.
+    ///
+    /// ```text
+    /// MethodCallbackFunction ⊆ MethodCallSiteId × FunctionNodeId
+    /// ```
+    MethodCallbackFunction {
+        source: MethodCallSiteId,
+        target: FunctionNodeId,
+    },
+    /// A method-style call site whose externally-defined method may invoke a
+    /// local closure argument proven by caller evidence.
+    ///
+    /// ```text
+    /// MethodCallbackClosure ⊆ MethodCallSiteId × ExecutableBodyId
+    /// ```
+    MethodCallbackClosure {
+        source: MethodCallSiteId,
+        target: ExecutableBodyId,
+    },
+    /// A method-call site resolved to a local method definition.
+    ///
+    /// ```text
+    /// Method ⊆ MethodCallSiteId × MethodNodeId
+    /// ```
+    Method {
+        source: MethodCallSiteId,
+        target: MethodNodeId,
+    },
+    /// A path-style call site resolved to a local inherent associated function.
+    ///
+    /// ```text
+    /// AssociatedFunction ⊆ PathCallSiteId × MethodNodeId
+    /// ```
+    AssociatedFunction {
+        source: PathCallSiteId,
+        target: MethodNodeId,
+    },
+    /// A path-style call site resolved to a local tuple struct constructor.
+    ///
+    /// ```text
+    /// TupleStructConstructor ⊆ PathCallSiteId × StructNodeId
+    /// ```
+    TupleStructConstructor {
+        source: PathCallSiteId,
+        target: StructNodeId,
+    },
+    /// A path-style call site resolved to a local enum variant constructor.
+    ///
+    /// ```text
+    /// EnumVariantConstructor ⊆ PathCallSiteId × VariantNodeId
+    /// ```
+    EnumVariantConstructor {
+        source: PathCallSiteId,
+        target: VariantNodeId,
+    },
+}
+
+impl CallRelation {
+    /// Returns the relation kind as a stable string for diagnostics or database
+    /// projection.
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Self::Function { .. } => "Function",
+            Self::DynamicFunction { .. } => "DynamicFunction",
+            Self::Closure { .. } => "Closure",
+            Self::LocalFunction { .. } => "LocalFunction",
+            Self::DynamicClosure { .. } => "DynamicClosure",
+            Self::MethodCallbackFunction { .. } => "MethodCallbackFunction",
+            Self::MethodCallbackClosure { .. } => "MethodCallbackClosure",
+            Self::Method { .. } => "Method",
+            Self::AssociatedFunction { .. } => "AssociatedFunction",
+            Self::TupleStructConstructor { .. } => "TupleStructConstructor",
+            Self::EnumVariantConstructor { .. } => "EnumVariantConstructor",
+        }
+    }
+
+    /// Returns the structural call-site endpoint kind for database projection.
+    pub fn source_kind_str(&self) -> &'static str {
+        match self {
+            Self::Function { .. }
+            | Self::Closure { .. }
+            | Self::LocalFunction { .. }
+            | Self::AssociatedFunction { .. }
+            | Self::TupleStructConstructor { .. }
+            | Self::EnumVariantConstructor { .. } => "Path",
+            Self::DynamicFunction { .. } | Self::DynamicClosure { .. } => "Dynamic",
+            Self::Method { .. }
+            | Self::MethodCallbackFunction { .. }
+            | Self::MethodCallbackClosure { .. } => "Method",
+        }
+    }
+
+    /// Returns the callable target endpoint kind for database projection.
+    pub fn target_kind_str(&self) -> &'static str {
+        match self {
+            Self::Function { .. } | Self::DynamicFunction { .. } => "Function",
+            Self::MethodCallbackFunction { .. } => "Function",
+            Self::Closure { .. }
+            | Self::DynamicClosure { .. }
+            | Self::MethodCallbackClosure { .. } => "Closure",
+            Self::LocalFunction { .. } => "LocalItem",
+            Self::Method { .. } | Self::AssociatedFunction { .. } => "Method",
+            Self::TupleStructConstructor { .. } => "Struct",
+            Self::EnumVariantConstructor { .. } => "Variant",
+        }
+    }
+}
+
+/// Successful call-resolution proof class.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CallResolutionKind {
+    /// Exact local target proven from parser-owned local graph facts.
+    LocalExact,
+}
+
+/// Resolver outcome for one structural call-site occurrence.
+///
+/// Every supported resolver pass should emit exactly one status for each call
+/// site it considers. A resolved status may be accompanied by a typed
+/// [`CallRelation`]. Unresolved, ambiguous, external, and unsupported statuses
+/// must not fabricate target edges.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CallResolutionStatus {
+    /// The call site resolved to a typed local target.
+    Resolved {
+        source: AnyCallSiteId,
+        kind: CallResolutionKind,
+    },
+    /// The resolver supports the call shape but found no local target.
+    Unresolved { source: AnyCallSiteId },
+    /// The resolver found more than one plausible target and refused to choose.
+    Ambiguous { source: AnyCallSiteId },
+    /// The call appears to target an external crate or runtime surface.
+    External { source: AnyCallSiteId },
+    /// The call shape is structurally recorded but outside this resolver slice.
+    Unsupported { source: AnyCallSiteId },
+}
+
+impl CallResolutionStatus {
+    /// Returns the call-site occurrence this status describes.
+    pub fn source(&self) -> AnyCallSiteId {
+        match *self {
+            Self::Resolved { source, .. }
+            | Self::Unresolved { source }
+            | Self::Ambiguous { source }
+            | Self::External { source }
+            | Self::Unsupported { source } => source,
+        }
+    }
+
+    /// Returns the status kind as a stable string for diagnostics or database
+    /// projection.
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Self::Resolved { .. } => "Resolved",
+            Self::Unresolved { .. } => "Unresolved",
+            Self::Ambiguous { .. } => "Ambiguous",
+            Self::External { .. } => "External",
+            Self::Unsupported { .. } => "Unsupported",
         }
     }
 }

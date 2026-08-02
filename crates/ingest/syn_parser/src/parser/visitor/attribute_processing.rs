@@ -120,22 +120,31 @@ use crate::parser::visitor::cfg_evaluator::{ActiveCfg, CfgAtom, CfgExpr};
 /// `true` if the item should be included (all cfg conditions are satisfied), `false` otherwise.
 #[cfg(feature = "cfg_eval")]
 pub(crate) fn should_include_item(attrs: &[syn::Attribute], active_cfg: &ActiveCfg) -> bool {
-    attrs.iter().any(|attr| {
-        attr.path().is_ident("cfg")
-            && parse_cfg_attribute(attr).map_or_else(
-                || false,
-                |expr| expr == CfgExpr::Atom(CfgAtom::Feature("test".into())),
-            )
-    }) || attrs
+    attrs
         .iter()
         .filter(|attr| attr.path().is_ident("cfg"))
         .all(|attr| {
             let expr = parse_cfg_attribute(attr);
             match expr {
-                Some(cfg_expr) => active_cfg.eval(&cfg_expr),
+                Some(cfg_expr) => eval_item_cfg(&cfg_expr, active_cfg),
                 None => false, // Treat malformed cfg as include
             }
         })
+}
+
+#[cfg(feature = "cfg_eval")]
+fn eval_item_cfg(expr: &CfgExpr, active_cfg: &ActiveCfg) -> bool {
+    match expr {
+        CfgExpr::All(children) => children
+            .iter()
+            .all(|child| eval_item_cfg(child, active_cfg)),
+        CfgExpr::Any(children) => children
+            .iter()
+            .any(|child| eval_item_cfg(child, active_cfg)),
+        CfgExpr::Not(inner) => !eval_item_cfg(inner, active_cfg),
+        CfgExpr::Atom(CfgAtom::Feature(feature)) if feature == "test" => true,
+        CfgExpr::Atom(_) => active_cfg.eval(expr),
+    }
 }
 
 /// Parse the inner tokens of a `#[cfg(...)]` attribute (as stored on graph nodes) into a
@@ -171,9 +180,14 @@ fn parse_cfg_attribute(attr: &syn::Attribute) -> Option<CfgExpr> {
 #[cfg(feature = "cfg_eval")]
 fn parse_single_meta(meta: syn::Meta) -> Option<CfgExpr> {
     match meta {
-        syn::Meta::Path(path) => Some(CfgExpr::Atom(CfgAtom::Feature(
-            path.get_ident()?.to_string(),
-        ))),
+        syn::Meta::Path(path) => {
+            let ident = path.get_ident()?.to_string();
+            match ident.as_str() {
+                "unix" => Some(CfgExpr::Atom(CfgAtom::TargetFamily("unix".to_string()))),
+                "windows" => Some(CfgExpr::Atom(CfgAtom::TargetFamily("windows".to_string()))),
+                _ => Some(CfgExpr::Atom(CfgAtom::Feature(ident))),
+            }
+        }
         syn::Meta::NameValue(nv) => {
             let key = nv.path.get_ident()?.to_string();
             let value = match nv.value {
@@ -186,6 +200,8 @@ fn parse_single_meta(meta: syn::Meta) -> Option<CfgExpr> {
             match key.as_str() {
                 "feature" => Some(CfgExpr::Atom(CfgAtom::Feature(value))),
                 "target_os" => Some(CfgExpr::Atom(CfgAtom::TargetOs(value))),
+                "target_arch" => Some(CfgExpr::Atom(CfgAtom::TargetArch(value))),
+                "target_family" => Some(CfgExpr::Atom(CfgAtom::TargetFamily(value))),
                 _ => None,
             }
         }
@@ -295,4 +311,71 @@ pub(crate) fn extract_file_level_attributes(attrs: &[syn::Attribute]) -> Vec<Att
         .filter(|attr| !attr.path().is_ident("doc") && !attr.path().is_ident("cfg")) // Skip doc AND cfg comments
         .map(parse_attribute) // Uses the same helper
         .collect()
+}
+
+#[cfg(all(test, feature = "cfg_eval"))]
+mod tests {
+    use super::*;
+
+    fn active_cfg(features: &[&str]) -> ActiveCfg {
+        ActiveCfg {
+            features: features
+                .iter()
+                .map(|feature| (*feature).to_string())
+                .collect(),
+            target_os: "linux".to_string(),
+            target_arch: "x86_64".to_string(),
+            target_family: "unix".to_string(),
+        }
+    }
+
+    #[test]
+    fn should_include_item_treats_test_as_active_inside_any() {
+        let attrs = vec![syn::parse_quote!(#[cfg(any(test, feature = "__private"))])];
+
+        assert!(should_include_item(&attrs, &active_cfg(&[])));
+    }
+
+    #[test]
+    fn should_include_item_keeps_other_feature_terms_strict() {
+        let attrs = vec![syn::parse_quote!(#[cfg(all(test, feature = "__private"))])];
+
+        assert!(!should_include_item(&attrs, &active_cfg(&[])));
+        assert!(should_include_item(&attrs, &active_cfg(&["__private"])));
+    }
+
+    #[test]
+    fn should_include_item_treats_not_test_as_inactive() {
+        let attrs = vec![syn::parse_quote!(#[cfg(not(test))])];
+
+        assert!(!should_include_item(&attrs, &active_cfg(&[])));
+    }
+
+    #[test]
+    fn should_include_item_treats_unix_as_target_family() {
+        let attrs = vec![syn::parse_quote!(#[cfg(unix)])];
+
+        assert!(should_include_item(&attrs, &active_cfg(&[])));
+    }
+
+    #[test]
+    fn should_include_item_treats_windows_as_target_family() {
+        let attrs = vec![syn::parse_quote!(#[cfg(windows)])];
+
+        assert!(!should_include_item(&attrs, &active_cfg(&[])));
+    }
+
+    #[test]
+    fn should_include_item_supports_target_family_name_value() {
+        let attrs = vec![syn::parse_quote!(#[cfg(target_family = "unix")])];
+
+        assert!(should_include_item(&attrs, &active_cfg(&[])));
+    }
+
+    #[test]
+    fn should_include_item_supports_target_arch_name_value() {
+        let attrs = vec![syn::parse_quote!(#[cfg(target_arch = "x86_64")])];
+
+        assert!(should_include_item(&attrs, &active_cfg(&[])));
+    }
 }

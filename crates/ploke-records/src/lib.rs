@@ -26,6 +26,9 @@ pub mod journal;
 pub mod llm_response;
 pub mod oracle;
 pub mod playback;
+pub mod proof_authority;
+pub mod proof_effects;
+pub mod proof_facts;
 #[cfg(feature = "protocol")]
 pub mod protocol;
 pub mod record;

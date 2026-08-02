@@ -28,9 +28,11 @@ use ploke_records::{
 };
 use ploke_tui::tools::{
     Tool, ToolDefinition, ToolName, cargo::CargoTool, code_edit::GatCodeEdit,
-    code_item_lookup::CodeItemLookup, create_file::CreateFile, get_code_edges::CodeItemEdges,
-    insert_rust_item::InsertRustItem, list_dir::ListDir, ns_patch::NsPatch, ns_read::NsRead,
-    request_code_context::RequestCodeContextGat,
+    code_item_boundary_policy::CodeItemBoundaryPolicy, code_item_call_path::CodeItemCallPath,
+    code_item_effect_guard::CodeItemEffectGuard, code_item_lookup::CodeItemLookup,
+    code_private_uncalled::CodePrivateUncalled, create_file::CreateFile,
+    get_code_edges::CodeItemEdges, insert_rust_item::InsertRustItem, list_dir::ListDir,
+    ns_patch::NsPatch, ns_read::NsRead, request_code_context::RequestCodeContextGat,
 };
 
 use crate::{
@@ -3909,6 +3911,10 @@ fn current_tool_definition(tool: &str) -> Option<ToolDefinition> {
         ToolName::NsRead => NsRead::tool_def(),
         ToolName::CodeItemLookup => CodeItemLookup::tool_def(),
         ToolName::CodeItemEdges => CodeItemEdges::tool_def(),
+        ToolName::CodeItemCallPath => CodeItemCallPath::tool_def(),
+        ToolName::CodeItemEffectGuard => CodeItemEffectGuard::tool_def(),
+        ToolName::CodeItemBoundaryPolicy => CodeItemBoundaryPolicy::tool_def(),
+        ToolName::CodePrivateUncalled => CodePrivateUncalled::tool_def(),
         ToolName::Cargo => CargoTool::tool_def(),
         ToolName::ListDir => ListDir::tool_def(),
     })

@@ -5,10 +5,11 @@ use crate::error::SynParserError;
 use crate::parser::{
     // Updated node types
     nodes::{
-        ConstNode, FunctionNode, ImplNode, ImportNode, MacroNode, ModuleNode, StaticNode,
-        TraitNode, TypeDefNode, UnresolvedNode,
+        CallNode, ConstNode, ExecutableBodyNode, FunctionNode, ImplNode, ImportNode,
+        LocalBindingNode, MacroNode, ModuleNode, StaticNode, TraitNode, TypeDefNode,
+        UnresolvedNode,
     },
-    relations::SyntacticRelation, // Use new relation enum
+    relations::{CallSiteRelation, LocalBindingRelation, SyntacticRelation}, // Use new relation enum
     types::TypeNode,
 };
 
@@ -30,6 +31,21 @@ pub struct CodeGraph {
     pub traits: Vec<TraitNode>,
     // Relations between nodes
     pub relations: Vec<SyntacticRelation>, // Updated type
+    // Call-site records found in function-like bodies
+    #[serde(default)]
+    pub call_sites: Vec<CallNode>,
+    // Relations between function-like bodies and call-site records
+    #[serde(default)]
+    pub call_site_relations: Vec<CallSiteRelation>,
+    // Relations between function-like bodies, local bindings, and their sources
+    #[serde(default)]
+    pub local_binding_relations: Vec<LocalBindingRelation>,
+    // Parser-owned executable-local body records.
+    #[serde(default)]
+    pub executable_bodies: Vec<ExecutableBodyNode>,
+    // Parser-owned local binding/value-flow evidence records.
+    #[serde(default)]
+    pub local_bindings: Vec<LocalBindingNode>,
     // Modules defined in the code
     pub modules: Vec<ModuleNode>,
     // Constants defined in the code
@@ -67,6 +83,22 @@ impl GraphAccess for CodeGraph {
     fn relations(&self) -> &[SyntacticRelation] {
         // Updated type
         &self.relations
+    }
+
+    fn call_sites(&self) -> &[CallNode] {
+        &self.call_sites
+    }
+
+    fn call_site_relations(&self) -> &[CallSiteRelation] {
+        &self.call_site_relations
+    }
+
+    fn local_binding_relations(&self) -> &[LocalBindingRelation] {
+        &self.local_binding_relations
+    }
+
+    fn executable_bodies(&self) -> &[ExecutableBodyNode] {
+        &self.executable_bodies
     }
 
     fn modules(&self) -> &[ModuleNode] {
@@ -119,6 +151,22 @@ impl GraphAccess for CodeGraph {
         &mut self.relations
     }
 
+    fn call_sites_mut(&mut self) -> &mut Vec<CallNode> {
+        &mut self.call_sites
+    }
+
+    fn call_site_relations_mut(&mut self) -> &mut Vec<CallSiteRelation> {
+        &mut self.call_site_relations
+    }
+
+    fn local_binding_relations_mut(&mut self) -> &mut Vec<LocalBindingRelation> {
+        &mut self.local_binding_relations
+    }
+
+    fn executable_bodies_mut(&mut self) -> &mut Vec<ExecutableBodyNode> {
+        &mut self.executable_bodies
+    }
+
     fn modules_mut(&mut self) -> &mut Vec<ModuleNode> {
         &mut self.modules
     }
@@ -169,6 +217,13 @@ impl CodeGraph {
         self.impls.append(&mut other.impls);
         self.traits.append(&mut other.traits);
         self.relations.append(&mut other.relations);
+        self.call_sites.append(&mut other.call_sites);
+        self.call_site_relations
+            .append(&mut other.call_site_relations);
+        self.local_binding_relations
+            .append(&mut other.local_binding_relations);
+        self.executable_bodies.append(&mut other.executable_bodies);
+        self.local_bindings.append(&mut other.local_bindings);
         self.modules.append(&mut other.modules);
         self.consts.append(&mut other.consts); // Added
         self.statics.append(&mut other.statics); // Added

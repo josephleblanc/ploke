@@ -10,6 +10,7 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
+use uuid::Uuid;
 
 fn lookup_ancestor_rules_now() -> String {
     format!(
@@ -66,6 +67,383 @@ file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module
 
     let qr = db.raw_query(&script)?;
     // Map ploke_error::Error into DbError::Cozo for now; we can introduce a dedicated error variant later.
+    qr.to_embedding_nodes()
+        .map_err(|e| DbError::Cozo(e.to_string()))
+}
+
+/// Resolve an executable body owner by inherited module path, label, owner kind, and file.
+///
+/// `call_body_owner` rows are not primary syntax nodes: they inherit file and
+/// module metadata through their parent function/method/const/static/macro, and
+/// they store their display name in `label` rather than `name`.
+///
+/// This exact helper intentionally handles executable owners whose direct
+/// parent is a regular call owner. Nested executable-owner lookup should grow
+/// by adding a bounded proof shape rather than an unscoped recursive query.
+pub fn graph_resolve_exact_call_body_owner(
+    db: &Database,
+    file_path: &Path,
+    module_path: &[String],
+    item_name: &str,
+    owner_kind: &str,
+) -> Result<Vec<EmbeddingData>, DbError> {
+    graph_resolve_exact_call_body_owner_impl(
+        db,
+        file_path,
+        module_path,
+        item_name,
+        owner_kind,
+        None,
+    )
+}
+
+pub fn graph_resolve_exact_call_body_owner_for_parent(
+    db: &Database,
+    file_path: &Path,
+    module_path: &[String],
+    item_name: &str,
+    owner_kind: &str,
+    parent_name: &str,
+) -> Result<Vec<EmbeddingData>, DbError> {
+    graph_resolve_exact_call_body_owner_impl(
+        db,
+        file_path,
+        module_path,
+        item_name,
+        owner_kind,
+        Some(parent_name),
+    )
+}
+
+fn graph_resolve_exact_call_body_owner_impl(
+    db: &Database,
+    file_path: &Path,
+    module_path: &[String],
+    item_name: &str,
+    owner_kind: &str,
+    parent_name: Option<&str>,
+) -> Result<Vec<EmbeddingData>, DbError> {
+    let file_path_lit = serde_json::to_string(&file_path.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "\"\"".to_string());
+    let item_name_lit = serde_json::to_string(&item_name).unwrap_or_else(|_| "\"\"".to_string());
+    let owner_kind_lit = serde_json::to_string(&owner_kind).unwrap_or_else(|_| "\"\"".to_string());
+    let mod_path_lit = serde_json::to_string(&module_path).unwrap_or_else(|_| "[]".to_string());
+    let parent_predicate = parent_name
+        .map(|name| {
+            let parent_lit = serde_json::to_string(name).unwrap_or_else(|_| "\"\"".to_string());
+            format!(",\n  parent_name == {parent_lit}")
+        })
+        .unwrap_or_default();
+    let ancestor_rules = lookup_ancestor_rules_now();
+
+    let script = format!(
+        r#"
+{ancestor_rules}
+module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
+file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+
+parent_anchor[parent_id, hash, mod_id, parent_name] := *function{{ id: parent_id, tracking_hash: hash, name: parent_name @ 'NOW' }}, ancestor[parent_id, mod_id]
+parent_anchor[parent_id, hash, mod_id, parent_name] := *macro{{ id: parent_id, tracking_hash: hash, name: parent_name @ 'NOW' }}, ancestor[parent_id, mod_id]
+parent_anchor[parent_id, hash, mod_id, parent_name] := *method{{ id: parent_id, tracking_hash: hash, name: parent_name @ 'NOW' }}, ancestor[parent_id, mod_id]
+parent_anchor[parent_id, hash, mod_id, parent_name] := *const{{ id: parent_id, tracking_hash: hash, name: parent_name @ 'NOW' }}, ancestor[parent_id, mod_id]
+parent_anchor[parent_id, hash, mod_id, parent_name] := *static{{ id: parent_id, tracking_hash: hash, name: parent_name @ 'NOW' }}, ancestor[parent_id, mod_id]
+
+?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
+  *call_body_owner{{ id, owner_kind, parent_id, label: name, span @ 'NOW' }},
+  parent_anchor[parent_id, hash, mod_id, parent_name],
+  *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *module{{ id: file_owner_id, tracking_hash: file_hash @ 'NOW' }},
+  *file_mod{{ owner_id: file_owner_id, file_path, namespace @ 'NOW' }},
+  name == {item_name_lit},
+  owner_kind == {owner_kind_lit},
+  file_path == {file_path_lit},
+  mod_path == {mod_path_lit}{parent_predicate}
+"#,
+        item_name_lit = item_name_lit,
+        owner_kind_lit = owner_kind_lit,
+        file_path_lit = file_path_lit,
+        mod_path_lit = mod_path_lit,
+        parent_predicate = parent_predicate,
+    );
+
+    let qr = db.raw_query(&script)?;
+    let mut rows = qr
+        .to_embedding_nodes()
+        .map_err(|e| DbError::Cozo(e.to_string()))?;
+    rows.sort_by_key(|row| row.id);
+    rows.dedup_by_key(|row| row.id);
+    Ok(rows)
+}
+
+/// Resolve an enum variant by canonical module path, variant name, and file.
+///
+/// Variants are secondary nodes: the `variant` relation carries the variant id
+/// and name, while snippet metadata comes from the owning enum. This mirrors
+/// the variant handling in `Database::get_snippet_context_nodes_ordered`.
+pub fn graph_resolve_exact_variant(
+    db: &Database,
+    file_path: &Path,
+    module_path: &[String],
+    item_name: &str,
+) -> Result<Vec<EmbeddingData>, DbError> {
+    let file_path_lit = serde_json::to_string(&file_path.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "\"\"".to_string());
+    let item_name_lit = serde_json::to_string(&item_name).unwrap_or_else(|_| "\"\"".to_string());
+    let mod_path_lit = serde_json::to_string(&module_path).unwrap_or_else(|_| "[]".to_string());
+    let ancestor_rules = lookup_ancestor_rules_now();
+
+    let script = format!(
+        r#"
+{ancestor_rules}
+module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
+file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+
+?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
+  *variant{{ id, name, owner_id: enum_id @ 'NOW' }},
+  *enum{{ id: enum_id, tracking_hash: hash, span @ 'NOW' }},
+  ancestor[enum_id, mod_id],
+  *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *module{{ id: file_owner_id, tracking_hash: file_hash @ 'NOW' }},
+  *file_mod{{ owner_id: file_owner_id, file_path, namespace @ 'NOW' }},
+  name == {item_name_lit},
+  file_path == {file_path_lit},
+  mod_path == {mod_path_lit}
+"#
+    );
+
+    let qr = db.raw_query(&script)?;
+    qr.to_embedding_nodes()
+        .map_err(|e| DbError::Cozo(e.to_string()))
+}
+
+/// Resolve a method by canonical module path, item name, and owning trait.
+///
+/// This is intentionally separate from [`graph_resolve_exact`] so existing
+/// exact lookup semantics remain unchanged for callers that do not provide an
+/// owner qualifier. It is used when a real Rust file has several methods with
+/// the same name in the same module/file and the target is a trait item, e.g.
+/// `Handler::call`.
+pub fn graph_resolve_exact_trait_method(
+    db: &Database,
+    file_path: &Path,
+    module_path: &[String],
+    item_name: &str,
+    trait_name: &str,
+) -> Result<Vec<EmbeddingData>, DbError> {
+    let file_path_lit = serde_json::to_string(&file_path.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "\"\"".to_string());
+    let item_name_lit = serde_json::to_string(&item_name).unwrap_or_else(|_| "\"\"".to_string());
+    let trait_name_lit = serde_json::to_string(&trait_name).unwrap_or_else(|_| "\"\"".to_string());
+    let mod_path_lit = serde_json::to_string(&module_path).unwrap_or_else(|_| "[]".to_string());
+    let ancestor_rules = lookup_ancestor_rules_now();
+
+    let script = format!(
+        r#"
+{ancestor_rules}
+module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
+file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+
+?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
+  *method{{ id, name, tracking_hash: hash, span, owner_id: trait_id @ 'NOW' }},
+  *trait{{ id: trait_id, name: {trait_name_lit} @ 'NOW' }},
+  ancestor[id, mod_id],
+  *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *module{{ id: file_owner_id, tracking_hash: file_hash @ 'NOW' }},
+  *file_mod{{ owner_id: file_owner_id, file_path, namespace @ 'NOW' }},
+  name == {item_name_lit},
+  file_path == {file_path_lit},
+  mod_path == {mod_path_lit}
+"#
+    );
+
+    let qr = db.raw_query(&script)?;
+    qr.to_embedding_nodes()
+        .map_err(|e| DbError::Cozo(e.to_string()))
+}
+
+/// Resolve an inherent method by canonical module path, item name, and owning self type.
+///
+/// This mirrors [`graph_resolve_exact_trait_method`] for inherent impl items.
+/// It keeps the default exact lookup unchanged while allowing tools to
+/// disambiguate files that contain several methods with the same name.
+pub fn graph_resolve_exact_impl_method(
+    db: &Database,
+    file_path: &Path,
+    module_path: &[String],
+    item_name: &str,
+    type_name: &str,
+) -> Result<Vec<EmbeddingData>, DbError> {
+    let file_path_lit = serde_json::to_string(&file_path.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "\"\"".to_string());
+    let item_name_lit = serde_json::to_string(&item_name).unwrap_or_else(|_| "\"\"".to_string());
+    let type_name_lit = serde_json::to_string(&type_name).unwrap_or_else(|_| "\"\"".to_string());
+    let type_path_lit =
+        serde_json::to_string(&vec![type_name]).unwrap_or_else(|_| "[]".to_string());
+    let mod_path_lit = serde_json::to_string(&module_path).unwrap_or_else(|_| "[]".to_string());
+    let ancestor_rules = lookup_ancestor_rules_now();
+
+    let script = format!(
+        r#"
+{ancestor_rules}
+module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
+file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+
+impl_self_target[self_target_id] := *struct{{ id: self_target_id, name: {type_name_lit} @ 'NOW' }}
+impl_self_target[self_target_id] := *enum{{ id: self_target_id, name: {type_name_lit} @ 'NOW' }}
+impl_self_target[self_target_id] := *union{{ id: self_target_id, name: {type_name_lit} @ 'NOW' }}
+impl_self_type[self_type_id] :=
+  *type_relation{{
+    source_id: self_type_id,
+    target_id: self_target_id,
+    relation_kind: "Ordinary" @ 'NOW'
+  }},
+  impl_self_target[self_target_id]
+impl_self_type[self_type_id] :=
+  *named_type{{ type_id: self_type_id, path @ 'NOW' }},
+  path == {type_path_lit}
+
+?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
+  *method{{ id, name, tracking_hash: hash, span, owner_id: impl_id @ 'NOW' }},
+  *impl{{ id: impl_id, self_type: self_type_id @ 'NOW' }},
+  impl_self_type[self_type_id],
+  ancestor[id, mod_id],
+  *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *module{{ id: file_owner_id, tracking_hash: file_hash @ 'NOW' }},
+  *file_mod{{ owner_id: file_owner_id, file_path, namespace @ 'NOW' }},
+  name == {item_name_lit},
+  file_path == {file_path_lit},
+  mod_path == {mod_path_lit}
+"#
+    );
+
+    let qr = db.raw_query(&script)?;
+    qr.to_embedding_nodes()
+        .map_err(|e| DbError::Cozo(e.to_string()))
+}
+
+/// Resolve a trait impl method by canonical module path, item name, trait name, and self type.
+///
+/// This is the trait-impl counterpart to [`graph_resolve_exact_trait_method`]
+/// and [`graph_resolve_exact_impl_method`]. It is used for real Rust files
+/// where the method owner is an impl block such as
+/// `impl Service for HandlerService`.
+pub fn graph_resolve_exact_trait_impl_method(
+    db: &Database,
+    file_path: &Path,
+    module_path: &[String],
+    item_name: &str,
+    trait_name: &str,
+    type_name: &str,
+    trait_arg: Option<&str>,
+) -> Result<Vec<EmbeddingData>, DbError> {
+    let file_path_lit = serde_json::to_string(&file_path.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "\"\"".to_string());
+    let item_name_lit = serde_json::to_string(&item_name).unwrap_or_else(|_| "\"\"".to_string());
+    let trait_name_lit = serde_json::to_string(&trait_name).unwrap_or_else(|_| "\"\"".to_string());
+    let trait_path_lit =
+        serde_json::to_string(&vec![trait_name]).unwrap_or_else(|_| "[]".to_string());
+    let type_name_lit = serde_json::to_string(&type_name).unwrap_or_else(|_| "\"\"".to_string());
+    let type_path_lit =
+        serde_json::to_string(&vec![type_name]).unwrap_or_else(|_| "[]".to_string());
+    let mod_path_lit = serde_json::to_string(&module_path).unwrap_or_else(|_| "[]".to_string());
+    let trait_arg_filter = trait_arg.map_or_else(String::new, |arg| {
+        let arg_path = arg.split("::").collect::<Vec<_>>();
+        let arg_path_lit = serde_json::to_string(&arg_path).unwrap_or_else(|_| "[]".to_string());
+        let arg_name = arg_path.last().copied().unwrap_or(arg);
+        let arg_name_lit = serde_json::to_string(&arg_name).unwrap_or_else(|_| "\"\"".to_string());
+        format!(
+            r#"
+impl_trait_arg_target[arg_target_id] := *struct{{ id: arg_target_id, name: {arg_name_lit} @ 'NOW' }}
+impl_trait_arg_target[arg_target_id] := *enum{{ id: arg_target_id, name: {arg_name_lit} @ 'NOW' }}
+impl_trait_arg_target[arg_target_id] := *union{{ id: arg_target_id, name: {arg_name_lit} @ 'NOW' }}
+impl_trait_arg_target[arg_target_id] := *type_alias{{ id: arg_target_id, name: {arg_name_lit} @ 'NOW' }}
+impl_trait_arg_type[arg_type_id] :=
+  *named_type{{ type_id: arg_type_id, path @ 'NOW' }},
+  path == {arg_path_lit}
+impl_trait_arg_type[arg_type_id] :=
+  *type_relation{{
+    source_id: arg_type_id,
+    target_id: arg_target_id,
+    relation_kind: "Ordinary" @ 'NOW'
+  }},
+  impl_trait_arg_target[arg_target_id]
+impl_trait_arg_ok[trait_type_id] :=
+  *type_contains{{
+    parent_type_id: trait_type_id,
+    child_type_id: arg_type_id,
+    position: 0 @ 'NOW'
+  }},
+  impl_trait_arg_type[arg_type_id]
+"#
+        )
+    });
+    let trait_arg_condition = trait_arg
+        .map(|_| "  impl_trait_arg_ok[trait_type_id],\n")
+        .unwrap_or_default();
+    let ancestor_rules = lookup_ancestor_rules_now();
+
+    let script = format!(
+        r#"
+{ancestor_rules}
+module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
+file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+
+impl_self_target[self_target_id] := *struct{{ id: self_target_id, name: {type_name_lit} @ 'NOW' }}
+impl_self_target[self_target_id] := *enum{{ id: self_target_id, name: {type_name_lit} @ 'NOW' }}
+impl_self_target[self_target_id] := *union{{ id: self_target_id, name: {type_name_lit} @ 'NOW' }}
+impl_self_type[self_type_id] :=
+  *type_relation{{
+    source_id: self_type_id,
+    target_id: self_target_id,
+    relation_kind: "Ordinary" @ 'NOW'
+  }},
+  impl_self_target[self_target_id]
+impl_self_type[self_type_id] :=
+  *named_type{{ type_id: self_type_id, path @ 'NOW' }},
+  path == {type_path_lit}
+
+impl_trait_type[trait_type_id] :=
+  *named_type{{ type_id: trait_type_id, path @ 'NOW' }},
+  path == {trait_path_lit}
+impl_trait_type[trait_type_id] :=
+  *trait_bound_type{{ type_id: trait_type_id, path @ 'NOW' }},
+  path == {trait_path_lit}
+impl_trait_type[trait_type_id] :=
+  *type_relation{{
+    source_id: trait_type_id,
+    target_id: trait_target_id,
+    relation_kind: "Trait" @ 'NOW'
+  }},
+  *trait{{ id: trait_target_id, name: {trait_name_lit} @ 'NOW' }}
+{trait_arg_filter}
+
+?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
+  *method{{ id, name, tracking_hash: hash, span, owner_id: impl_id @ 'NOW' }},
+  *impl{{ id: impl_id, self_type: self_type_id, trait_type: trait_type_id @ 'NOW' }},
+  impl_self_type[self_type_id],
+  impl_trait_type[trait_type_id],
+{trait_arg_condition}
+  ancestor[id, mod_id],
+  *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *module{{ id: file_owner_id, tracking_hash: file_hash @ 'NOW' }},
+  *file_mod{{ owner_id: file_owner_id, file_path, namespace @ 'NOW' }},
+  name == {item_name_lit},
+  file_path == {file_path_lit},
+  mod_path == {mod_path_lit}
+"#
+    );
+
+    let qr = db.raw_query(&script)?;
     qr.to_embedding_nodes()
         .map_err(|e| DbError::Cozo(e.to_string()))
 }
@@ -155,6 +533,123 @@ edges_to_focus[source_name, target_name, source_id, target_id, canon_path, file_
         "graph_resolve_edges query result"
     );
     // Map ploke_error::Error into DbError::Cozo for now; we can introduce a dedicated error variant later.
+    qr.to_resolved_edges()
+        .map_err(|e| DbError::Cozo(e.to_string()))
+}
+
+/// Resolve graph edges for an already-disambiguated primary or associated node.
+pub fn graph_resolve_edges_for_id(
+    db: &Database,
+    relation: &str,
+    focus_id: Uuid,
+) -> Result<Vec<ResolvedEdgeData>, DbError> {
+    let common_fields_embedded: &str = COMMON_FIELDS_EMBEDDED.as_ref();
+    let ancestor_rules = lookup_ancestor_rules_now();
+    let mut params = BTreeMap::new();
+    params.insert(
+        "focus_id".to_string(),
+        cozo::DataValue::Uuid(cozo::UuidWrapper(focus_id)),
+    );
+
+    let script = format!(
+        r#"
+{common_fields_embedded}
+{ancestor_rules}
+
+module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
+file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+
+resolve_item[id, name] :=
+  *{rel}{{ id, name @ 'NOW' }},
+  id = $focus_id
+
+node_with_context[id, name, canon_path, file_path] :=
+  parent_of[id, mod_id],
+  *module{{ id: mod_id, path: canon_path @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }},
+  has_embedding[id, name, hash, span]
+
+edges_from_focus[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind] :=
+  resolve_item[source_id, source_name],
+  *syntax_edge{{source_id, target_id, relation_kind @ 'NOW'}},
+  node_with_context[target_id, target_name, canon_path, file_path]
+
+edges_to_focus[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind] :=
+  resolve_item[source_id, source_name],
+  *syntax_edge{{source_id: other_id, target_id: source_id, relation_kind @ 'NOW'}},
+  node_with_context[other_id, target_name, canon_path, file_path],
+  target_id = other_id
+
+?[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind] :=
+  edges_from_focus[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind]
+?[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind] :=
+  edges_to_focus[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind]
+"#,
+        rel = relation
+    );
+
+    let qr = db.raw_query_params(&script, params)?;
+    qr.to_resolved_edges()
+        .map_err(|e| DbError::Cozo(e.to_string()))
+}
+
+/// Resolve graph edges for an already-disambiguated executable body owner.
+///
+/// This mirrors [`graph_resolve_edges_for_id`] but uses the `call_body_owner`
+/// label field as the node display name.
+pub fn graph_resolve_edges_for_call_body_owner_id(
+    db: &Database,
+    focus_id: Uuid,
+) -> Result<Vec<ResolvedEdgeData>, DbError> {
+    let common_fields_embedded: &str = COMMON_FIELDS_EMBEDDED.as_ref();
+    let ancestor_rules = lookup_ancestor_rules_now();
+    let mut params = BTreeMap::new();
+    params.insert(
+        "focus_id".to_string(),
+        cozo::DataValue::Uuid(cozo::UuidWrapper(focus_id)),
+    );
+
+    let script = format!(
+        r#"
+{common_fields_embedded}
+{ancestor_rules}
+
+module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
+file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+
+resolve_item[id, name] :=
+  *call_body_owner{{ id, label: name @ 'NOW' }},
+  id = $focus_id
+
+node_with_context[id, name, canon_path, file_path] :=
+  parent_of[id, mod_id],
+  *module{{ id: mod_id, path: canon_path @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }},
+  has_embedding[id, name, hash, span]
+
+edges_from_focus[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind] :=
+  resolve_item[source_id, source_name],
+  *syntax_edge{{source_id, target_id, relation_kind @ 'NOW'}},
+  node_with_context[target_id, target_name, canon_path, file_path]
+
+edges_to_focus[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind] :=
+  resolve_item[source_id, source_name],
+  *syntax_edge{{source_id: other_id, target_id: source_id, relation_kind @ 'NOW'}},
+  node_with_context[other_id, target_name, canon_path, file_path],
+  target_id = other_id
+
+?[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind] :=
+  edges_from_focus[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind]
+?[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind] :=
+  edges_to_focus[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind]
+"#,
+    );
+
+    let qr = db.raw_query_params(&script, params)?;
     qr.to_resolved_edges()
         .map_err(|e| DbError::Cozo(e.to_string()))
 }
@@ -709,6 +1204,29 @@ mod tests {
     }
 
     #[test]
+    fn graph_resolve_exact_matches_local_embedding_backup_struct() -> Result<(), DbError> {
+        let fixture = &ploke_test_utils::FIXTURE_NODES_LOCAL_EMBEDDINGS;
+        let db = Database::init_with_schema().map_err(|e| DbError::Cozo(e.to_string()))?;
+        let fixture_path = fixture
+            .checked_path()
+            .map_err(|e| DbError::Cozo(e.to_string()))?
+            .into_path();
+        db.import_plain_fixture_backup_with_embeddings(&fixture_path)?;
+
+        let fixture_root = fixtures_crates_dir().join("fixture_nodes");
+        let file_path = fixture_root.join("src/structs.rs");
+        let module_path = vec!["crate".to_string(), "structs".to_string()];
+        let rows =
+            super::graph_resolve_exact(&db, "struct", &file_path, &module_path, "SampleStruct")?;
+
+        assert_eq!(rows.len(), 1, "expected a single struct result");
+        assert_eq!(rows[0].name, "SampleStruct");
+        assert_eq!(rows[0].file_path, file_path);
+
+        Ok(())
+    }
+
+    #[test]
     fn graph_resolve_exact_matches_fixture_nodes_method() -> Result<(), DbError> {
         let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")
             .expect("database must be set up correctly");
@@ -720,6 +1238,35 @@ mod tests {
         let rows = super::graph_resolve_exact(&db, "method", &file_path, &module_path, "new")?;
 
         assert_eq!(rows.len(), 1, "expected a single method result");
+        assert_eq!(rows[0].name, "new");
+        assert_eq!(rows[0].file_path, file_path);
+        assert!(
+            rows[0].start_byte < rows[0].end_byte,
+            "method span should be non-empty"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn graph_resolve_exact_impl_method_matches_fixture_nodes_inherent_method() -> Result<(), DbError>
+    {
+        let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")
+            .expect("database must be set up correctly");
+        let db = Database::new(cozo_db);
+
+        let fixture_root = fixtures_crates_dir().join("fixture_nodes");
+        let file_path = fixture_root.join("src/impls.rs");
+        let module_path = vec!["crate".to_string(), "impls".to_string()];
+        let rows = super::graph_resolve_exact_impl_method(
+            &db,
+            &file_path,
+            &module_path,
+            "new",
+            "SimpleStruct",
+        )?;
+
+        assert_eq!(rows.len(), 1, "expected one SimpleStruct::new method");
         assert_eq!(rows[0].name, "new");
         assert_eq!(rows[0].file_path, file_path);
         assert!(

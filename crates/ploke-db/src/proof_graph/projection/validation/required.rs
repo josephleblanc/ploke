@@ -1,0 +1,315 @@
+use super::*;
+
+pub(in crate::proof_graph::projection) fn validate_required_fields(
+    value: &Value,
+    kind: &str,
+) -> Result<(), DbError> {
+    match kind {
+        "build_domain" => require_fields(
+            value,
+            &[
+                "build_domain_id",
+                "cargo_metadata_hash",
+                "cargo_lock_hash",
+                "package_id",
+                "target_kind",
+                "target_name",
+                "target_root",
+                "target_triple",
+                "host_triple",
+                "profile",
+                "features_hash",
+                "active_cfg_hash",
+                "rustc_version",
+                "extractor_version",
+                "proof_policy_version",
+                "evidence_use",
+            ],
+        ),
+        "cfg_domain" => require_fields(
+            value,
+            &[
+                "cfg_domain_id",
+                "build_domain_id",
+                "active_cfg_hash",
+                "status",
+                "evidence_use",
+            ],
+        ),
+        "rustc_invocation" => require_fields(
+            value,
+            &[
+                "invocation_id",
+                "build_domain_id",
+                "rustc_program",
+                "rustc_version",
+                "working_directory",
+                "argument_vector_hash",
+                "environment_hash",
+                "status",
+                "evidence_use",
+            ],
+        ),
+        "expansion_boundary" => {
+            require_fields(
+                value,
+                &[
+                    "boundary_id",
+                    "build_domain_id",
+                    "boundary_kind",
+                    "expansion_state",
+                    "evidence_use",
+                ],
+            )?;
+            require_source_span(value)?;
+            require_summary_fields_for_state(value, "expansion_state")
+        }
+        "expanded_item" => {
+            require_fields(
+                value,
+                &[
+                    "expanded_item_id",
+                    "boundary_id",
+                    "build_domain_id",
+                    "definition_id",
+                    "evidence_use",
+                ],
+            )?;
+            require_source_span(value)
+        }
+        "call_site" => {
+            require_fields(
+                value,
+                &[
+                    "call_site_id",
+                    "build_domain_id",
+                    "caller_def_id",
+                    "evidence_use",
+                ],
+            )?;
+            require_source_span(value)
+        }
+        "call_edge" => require_fields(
+            value,
+            &[
+                "call_edge_id",
+                "call_site_id",
+                "caller_def_id",
+                "resolution_state",
+                "evidence_use",
+            ],
+        ),
+        "call_resolution" => {
+            require_fields(value, &["call_site_id", "resolution_state", "evidence_use"])?;
+            require_summary_fields_for_state(value, "resolution_state")
+        }
+        "binding_evidence" => {
+            require_fields(
+                value,
+                &[
+                    "binding_evidence_id",
+                    "build_domain_id",
+                    "call_site_id",
+                    "caller_def_id",
+                    "binding_evidence_kind",
+                    "callee_kind",
+                    "resolution_state",
+                    "detail",
+                    "evidence_use",
+                ],
+            )?;
+            require_json_string_array(value, "callee_path")?;
+            require_source_span(value)
+        }
+        "external_summary" => {
+            require_fields(
+                value,
+                &[
+                    "external_summary_id",
+                    "build_domain_id",
+                    "summary_class",
+                    "artifact_hash",
+                    "version",
+                    "review_method",
+                    "scope_of_validity",
+                    "required_containment",
+                    "invalidation_conditions",
+                    "status",
+                    "evidence_use",
+                ],
+            )?;
+            require_json_string_array(value, "allowed_effects")
+        }
+        "runtime_dispatch_summary" => require_fields(
+            value,
+            &[
+                "dispatch_summary_id",
+                "build_domain_id",
+                "call_site_id",
+                "summary_class",
+                "artifact_hash",
+                "version",
+                "review_method",
+                "scope_of_validity",
+                "required_containment",
+                "invalidation_conditions",
+                "status",
+                "evidence_use",
+            ],
+        ),
+        "entrypoint_summary" => require_fields(
+            value,
+            &[
+                "entrypoint_summary_id",
+                "build_domain_id",
+                "definition_id",
+                "target_kind",
+                "target_name",
+                "summary_class",
+                "artifact_hash",
+                "version",
+                "review_method",
+                "scope_of_validity",
+                "required_containment",
+                "invalidation_conditions",
+                "status",
+                "evidence_use",
+            ],
+        ),
+        "dependency_root" => {
+            require_fields(
+                value,
+                &[
+                    "dependency_root_id",
+                    "build_domain_id",
+                    "call_site_id",
+                    "caller_def_id",
+                    "resolved_def_id",
+                    "dependency_name",
+                    "target_kind",
+                    "target_name",
+                    "target_root",
+                    "artifact_hash",
+                    "version",
+                    "review_method",
+                    "scope_of_validity",
+                    "status",
+                    "evidence_use",
+                ],
+            )?;
+            require_json_string_array(value, "import_path")?;
+            require_json_string_array(value, "resolved_path")
+        }
+        "effect_seed" => {
+            require_fields(
+                value,
+                &[
+                    "effect_seed_id",
+                    "call_site_id",
+                    "effect_class",
+                    "confidence",
+                    "evidence_use",
+                ],
+            )?;
+            require_json_bool(value, "blocker_if_unresolved")
+        }
+        "effect_policy" => {
+            require_fields(
+                value,
+                &[
+                    "effect_policy_id",
+                    "build_domain_id",
+                    "definition_id",
+                    "proof_policy_version",
+                    "review_method",
+                    "scope_of_validity",
+                    "invalidation_conditions",
+                    "status",
+                    "evidence_use",
+                ],
+            )?;
+            require_json_string_array(value, "allowed_effects")
+        }
+        "authority" => {
+            require_fields(
+                value,
+                &[
+                    "authority_fact_id",
+                    "build_domain_id",
+                    "authority_term",
+                    "status",
+                    "evidence_use",
+                ],
+            )?;
+            require_source_span(value)
+        }
+        "proof_blocker" => require_fields(
+            value,
+            &["blocker_id", "reason", "status", "detail", "evidence_use"],
+        ),
+        other => Err(DbError::QueryConstruction(format!(
+            "unknown proof fact kind {other}"
+        ))),
+    }
+}
+
+fn require_fields(value: &Value, fields: &[&str]) -> Result<(), DbError> {
+    for field in fields {
+        required_json_string(value, field)?;
+    }
+    Ok(())
+}
+
+fn require_summary_fields_for_state(value: &Value, state_field: &str) -> Result<(), DbError> {
+    if value.get(state_field).and_then(Value::as_str) == Some("externally_summarized") {
+        required_json_string(value, "external_summary_id")?;
+        required_json_string(value, "evidence_use")?;
+    }
+    Ok(())
+}
+
+fn require_source_span(value: &Value) -> Result<(), DbError> {
+    let span = value.get("source_span").ok_or_else(|| {
+        DbError::QueryConstruction("proof fact JSON missing object field source_span".to_string())
+    })?;
+    required_json_string(span, "file")?;
+    for field in ["start_byte", "end_byte"] {
+        if span.get(field).and_then(Value::as_u64).is_none() {
+            return Err(DbError::QueryConstruction(format!(
+                "proof fact source_span missing integer field {field}"
+            )));
+        }
+    }
+    for field in ["line_start", "line_end"] {
+        if span.get(field).is_some() && span.get(field).and_then(Value::as_u64).is_none() {
+            return Err(DbError::QueryConstruction(format!(
+                "proof fact source_span field {field} is not an integer"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn require_json_bool(value: &Value, field: &str) -> Result<(), DbError> {
+    value
+        .get(field)
+        .and_then(Value::as_bool)
+        .map(|_| ())
+        .ok_or_else(|| {
+            DbError::QueryConstruction(format!("proof fact JSON missing bool field {field}"))
+        })
+}
+
+fn require_json_string_array(value: &Value, field: &str) -> Result<(), DbError> {
+    let Some(items) = value.get(field).and_then(Value::as_array) else {
+        return Err(DbError::QueryConstruction(format!(
+            "proof fact JSON missing string array field {field}"
+        )));
+    };
+    if items.is_empty() || items.iter().any(|item| item.as_str().is_none()) {
+        return Err(DbError::QueryConstruction(format!(
+            "proof fact JSON field {field} must be a non-empty string array"
+        )));
+    }
+    Ok(())
+}

@@ -147,3 +147,5 @@ pub fn use_all_const_static() {
     // Println to potentially use some values and avoid unused warnings further
     println!("Used: {}, {}, {}, {}", _int, _bool, _str, _crate_static);
 }
+
+static STATIC_FN_CALL: i32 = five();

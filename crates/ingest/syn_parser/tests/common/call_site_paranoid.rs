@@ -1,0 +1,2451 @@
+//! Paranoid call-site test helpers.
+//!
+//! This module is the call-site analogue of the node-level paranoid helpers in
+//! `macro_rule_tests.rs`: it regenerates the expected typed call-site ID,
+//! checks exact ID lookup, checks value lookup, checks containment relation
+//! facts, and checks resolver status/edge facts.
+
+use crate::common::{
+    AssocParanoidArgs, PARSED_FIXTURE_CRATE_CALL_GRAPH, PARSED_FIXTURE_CRATE_DIR_DETECTION,
+    PARSED_FIXTURE_CRATE_EDGE_CASES, PARSED_FIXTURE_CRATE_GENERICS, PARSED_FIXTURE_CRATE_IMPLS,
+    PARSED_FIXTURE_CRATE_NODES, PARSED_FIXTURE_CRATE_PATH_RESOLUTION,
+    PARSED_FIXTURE_CRATE_SPP_EDGE_CASES, PARSED_FIXTURE_CRATE_SPP_EDGE_CASES_NO_CFG,
+    PARSED_FIXTURE_CRATE_TYPE_RESOLUTION_V2, PARSED_FIXTURE_CRATE_TYPES, ParanoidArgs,
+};
+use syn_parser::error::SynParserError;
+use syn_parser::parser::ParsedCodeGraph;
+use syn_parser::parser::graph::GraphAccess;
+use syn_parser::parser::nodes::test_ids::{TestCallIds, generate_test_call_id};
+use syn_parser::parser::nodes::{
+    AnyCallSiteId, CallBodyOwnerId, CallNode, CallSiteKind, ConstNodeId, DynamicBranchTarget,
+    DynamicCallCallee, DynamicCallSiteId, ExecutableBodyId, FunctionNodeId, MacroCallSiteId,
+    MethodCallReceiver, MethodCallSiteId, MethodNodeId, PathCallCallee, PathCallSiteId,
+    StaticNodeId, StructNodeId, VariantNodeId,
+};
+use syn_parser::parser::relations::{
+    CallRelation, CallResolutionKind, CallResolutionStatus, CallSiteRelation,
+};
+use syn_parser::resolve::call_resolution::CallResolutionReport;
+
+/// The function-like body that should own an expected call site.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallOwnerContext {
+    /// Typed owner endpoint used by call-site IDs and containment relations.
+    pub id: CallBodyOwnerId,
+    /// Source span of the owner body/item; used as a sanity check around the
+    /// call-site expression span.
+    pub span: (usize, usize),
+    /// Human-readable owner label for failure messages.
+    pub label: String,
+}
+
+/// Expected structural method receiver classifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpectedMethodReceiver<'a> {
+    /// The receiver expression is literal `self`.
+    SelfValue,
+    /// The receiver expression is a field projection rooted at `self`.
+    SelfField { field_path: &'a [&'a str] },
+    /// The receiver expression is a named local binding.
+    LocalBinding { name: &'a str },
+    /// The receiver expression is a named local binding with an explicit type annotation.
+    TypedLocalBinding {
+        name: &'a str,
+        type_path: &'a [&'a str],
+    },
+    /// The receiver expression is a named local binding with a path initializer.
+    InitializedLocalBinding {
+        name: &'a str,
+        init_path: &'a [&'a str],
+    },
+    /// The receiver expression is a named local binding that aliases another value.
+    AliasedLocalBinding {
+        name: &'a str,
+        source_path: &'a [&'a str],
+    },
+    /// The receiver expression is a named local binding from a tuple-returning call.
+    TupleReturnBinding {
+        name: &'a str,
+        path: &'a [&'a str],
+        index: usize,
+    },
+    /// The receiver expression is a named local binding from a method tuple return.
+    TupleMethodReturn {
+        name: &'a str,
+        method_name: &'a str,
+        method_span: (usize, usize),
+        index: usize,
+    },
+    /// The receiver expression is a named local binding initialized by a method call.
+    MethodResultLocalBinding {
+        name: &'a str,
+        method_name: &'a str,
+        method_span: (usize, usize),
+    },
+    /// The receiver expression is a borrowed named local binding.
+    BorrowedLocalBinding { name: &'a str },
+    /// The receiver expression is a borrowed named local binding with an explicit type.
+    BorrowedTypedLocalBinding {
+        name: &'a str,
+        type_path: &'a [&'a str],
+    },
+    /// The receiver expression is a borrowed named local binding with path initializer proof.
+    BorrowedInitializedLocalBinding {
+        name: &'a str,
+        init_path: &'a [&'a str],
+    },
+    /// The receiver expression is a dereferenced named local binding.
+    DereferencedLocalBinding { name: &'a str },
+    /// The receiver expression is a dereferenced named local binding with path initializer proof.
+    DereferencedInitializedLocalBinding {
+        name: &'a str,
+        init_path: &'a [&'a str],
+    },
+    /// The receiver expression is a field projection rooted at a named local binding.
+    FieldLocalBinding {
+        name: &'a str,
+        field_path: &'a [&'a str],
+    },
+    /// The receiver expression is a field projection rooted at a typed local binding.
+    FieldTypedLocalBinding {
+        name: &'a str,
+        type_path: &'a [&'a str],
+        field_path: &'a [&'a str],
+    },
+    /// The receiver expression is a field projection rooted at a path-initialized local binding.
+    FieldInitializedLocalBinding {
+        name: &'a str,
+        init_path: &'a [&'a str],
+        field_path: &'a [&'a str],
+    },
+    /// The receiver expression is the result of a path call.
+    PathCallResult { path: &'a [&'a str] },
+    /// The receiver expression is the result of a method call.
+    MethodCallResult { method_name: &'a str },
+    /// The receiver expression is the result of an await expression.
+    AwaitResult,
+    /// The receiver expression is the awaited result of a path call.
+    AwaitPathCallResult { path: &'a [&'a str] },
+    /// The receiver expression is the awaited result of a method call.
+    AwaitMethodCallResult { method_name: &'a str },
+    /// The receiver expression is the result of a try expression.
+    TryResult,
+    /// The receiver expression is the try result of a path call.
+    TryPathCallResult { path: &'a [&'a str] },
+    /// The receiver expression is the try result of a method call.
+    TryMethodCallResult { method_name: &'a str },
+    /// The receiver expression is an if expression with path-valued branches.
+    IfBranchPaths { paths: &'a [&'a [&'a str]] },
+    /// The receiver expression is a literal.
+    Literal,
+    /// The receiver expression is visible but unsupported by the classifier.
+    Unsupported,
+}
+
+impl ExpectedMethodReceiver<'_> {
+    fn to_actual(self) -> MethodCallReceiver {
+        match self {
+            Self::SelfValue => MethodCallReceiver::SelfValue,
+            Self::SelfField { field_path } => MethodCallReceiver::SelfField {
+                field_path: field_path.iter().copied().map(String::from).collect(),
+            },
+            Self::LocalBinding { name } => MethodCallReceiver::LocalBinding {
+                name: name.to_string(),
+            },
+            Self::TypedLocalBinding { name, type_path } => MethodCallReceiver::TypedLocalBinding {
+                name: name.to_string(),
+                type_path: type_path.iter().copied().map(String::from).collect(),
+            },
+            Self::InitializedLocalBinding { name, init_path } => {
+                MethodCallReceiver::InitializedLocalBinding {
+                    name: name.to_string(),
+                    init_path: init_path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::AliasedLocalBinding { name, source_path } => {
+                MethodCallReceiver::AliasedLocalBinding {
+                    name: name.to_string(),
+                    source_path: source_path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::TupleReturnBinding { name, path, index } => {
+                MethodCallReceiver::TupleReturnBinding {
+                    name: name.to_string(),
+                    path: path.iter().copied().map(String::from).collect(),
+                    index,
+                }
+            }
+            Self::TupleMethodReturn {
+                name,
+                method_name,
+                method_span,
+                index,
+            } => MethodCallReceiver::TupleMethodReturn {
+                name: name.to_string(),
+                method_name: method_name.to_string(),
+                method_span,
+                index,
+            },
+            Self::MethodResultLocalBinding {
+                name,
+                method_name,
+                method_span,
+            } => MethodCallReceiver::MethodResultLocalBinding {
+                name: name.to_string(),
+                method_name: method_name.to_string(),
+                method_span,
+            },
+            Self::BorrowedLocalBinding { name } => MethodCallReceiver::BorrowedLocalBinding {
+                name: name.to_string(),
+            },
+            Self::BorrowedTypedLocalBinding { name, type_path } => {
+                MethodCallReceiver::BorrowedTypedLocalBinding {
+                    name: name.to_string(),
+                    type_path: type_path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::BorrowedInitializedLocalBinding { name, init_path } => {
+                MethodCallReceiver::BorrowedInitializedLocalBinding {
+                    name: name.to_string(),
+                    init_path: init_path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::DereferencedLocalBinding { name } => {
+                MethodCallReceiver::DereferencedLocalBinding {
+                    name: name.to_string(),
+                }
+            }
+            Self::DereferencedInitializedLocalBinding { name, init_path } => {
+                MethodCallReceiver::DereferencedInitializedLocalBinding {
+                    name: name.to_string(),
+                    init_path: init_path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::FieldLocalBinding { name, field_path } => MethodCallReceiver::FieldLocalBinding {
+                name: name.to_string(),
+                field_path: field_path.iter().copied().map(String::from).collect(),
+            },
+            Self::FieldTypedLocalBinding {
+                name,
+                type_path,
+                field_path,
+            } => MethodCallReceiver::FieldTypedLocalBinding {
+                name: name.to_string(),
+                type_path: type_path.iter().copied().map(String::from).collect(),
+                field_path: field_path.iter().copied().map(String::from).collect(),
+            },
+            Self::FieldInitializedLocalBinding {
+                name,
+                init_path,
+                field_path,
+            } => MethodCallReceiver::FieldInitializedLocalBinding {
+                name: name.to_string(),
+                init_path: init_path.iter().copied().map(String::from).collect(),
+                field_path: field_path.iter().copied().map(String::from).collect(),
+            },
+            Self::PathCallResult { path } => MethodCallReceiver::PathCallResult {
+                path: path.iter().copied().map(String::from).collect(),
+            },
+            Self::MethodCallResult { method_name } => MethodCallReceiver::MethodCallResult {
+                method_name: method_name.to_string(),
+            },
+            Self::AwaitResult => MethodCallReceiver::AwaitResult,
+            Self::AwaitPathCallResult { path } => MethodCallReceiver::AwaitPathCallResult {
+                path: path.iter().copied().map(String::from).collect(),
+            },
+            Self::AwaitMethodCallResult { method_name } => {
+                MethodCallReceiver::AwaitMethodCallResult {
+                    method_name: method_name.to_string(),
+                }
+            }
+            Self::TryResult => MethodCallReceiver::TryResult,
+            Self::TryPathCallResult { path } => MethodCallReceiver::TryPathCallResult {
+                path: path.iter().copied().map(String::from).collect(),
+            },
+            Self::TryMethodCallResult { method_name } => MethodCallReceiver::TryMethodCallResult {
+                method_name: method_name.to_string(),
+            },
+            Self::IfBranchPaths { paths } => MethodCallReceiver::IfBranchPaths {
+                paths: paths
+                    .iter()
+                    .map(|path| path.iter().copied().map(String::from).collect())
+                    .collect(),
+            },
+            Self::Literal => MethodCallReceiver::Literal,
+            Self::Unsupported => MethodCallReceiver::Unsupported,
+        }
+    }
+}
+
+/// Expected structural path-call callee classifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpectedPathCallee<'a> {
+    /// The path call should be treated as an item path candidate.
+    ItemPath,
+    /// The path call is shadowed by a visible local value binding.
+    ValueBinding { path: &'a [&'a str] },
+    /// The path call is shadowed by a visible local closure binding.
+    ClosureBinding {
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+    },
+    /// The path call is shadowed by a visible async closure binding that is not awaited.
+    AsyncClosureBinding {
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+    },
+    /// The path call is shadowed by a visible async closure binding that is awaited.
+    AwaitedAsyncClosureBinding {
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+    },
+    /// The path call is shadowed by a visible block-local function item.
+    LocalFunctionBinding {
+        path: &'a [&'a str],
+        body_id: ExecutableBodyId,
+    },
+    /// The path call is a visible local binding initialized by another path.
+    InitializedValueBinding {
+        path: &'a [&'a str],
+        init_path: &'a [&'a str],
+    },
+    /// The path call is a visible local binding branch-initialized by more
+    /// than one possible function item.
+    AmbiguousInitializedValueBinding {
+        path: &'a [&'a str],
+        init_paths: &'a [&'a [&'a str]],
+    },
+    /// The path call is a visible local binding aliasing another value binding.
+    AliasedValueBinding {
+        path: &'a [&'a str],
+        source_path: &'a [&'a str],
+    },
+}
+
+impl ExpectedPathCallee<'_> {
+    fn to_actual(self) -> PathCallCallee {
+        match self {
+            Self::ItemPath => PathCallCallee::ItemPath,
+            Self::ValueBinding { path } => PathCallCallee::ValueBinding {
+                path: path.iter().copied().map(String::from).collect(),
+            },
+            Self::ClosureBinding { path, closure_id } => PathCallCallee::ClosureBinding {
+                path: path.iter().copied().map(String::from).collect(),
+                closure_id,
+            },
+            Self::AsyncClosureBinding { path, closure_id } => PathCallCallee::AsyncClosureBinding {
+                path: path.iter().copied().map(String::from).collect(),
+                closure_id,
+            },
+            Self::AwaitedAsyncClosureBinding { path, closure_id } => {
+                PathCallCallee::AwaitedAsyncClosureBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    closure_id,
+                }
+            }
+            Self::LocalFunctionBinding { path, body_id } => PathCallCallee::LocalFunctionBinding {
+                path: path.iter().copied().map(String::from).collect(),
+                body_id,
+            },
+            Self::InitializedValueBinding { path, init_path } => {
+                PathCallCallee::InitializedValueBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    init_path: init_path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::AmbiguousInitializedValueBinding { path, init_paths } => {
+                PathCallCallee::AmbiguousInitializedValueBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    init_paths: init_paths
+                        .iter()
+                        .map(|path| path.iter().copied().map(String::from).collect())
+                        .collect(),
+                }
+            }
+            Self::AliasedValueBinding { path, source_path } => {
+                PathCallCallee::AliasedValueBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    source_path: source_path.iter().copied().map(String::from).collect(),
+                }
+            }
+        }
+    }
+}
+
+/// Expected structural dynamic-call callee classifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpectedDynamicCallee<'a> {
+    /// The callee expression is not represented by this conservative slice.
+    Other,
+    /// The callee expression is a parenthesized path that is not shadowed by a visible local binding.
+    Path { path: &'a [&'a str] },
+    /// The callee expression is a path cast to a bare function pointer before being called.
+    FnPointerCastPath { path: &'a [&'a str] },
+    /// The callee expression is the result of calling a path.
+    ReturnedPathCall {
+        path: &'a [&'a str],
+        is_awaited: bool,
+    },
+    /// The callee expression is an initialized local binding cast to a bare function pointer.
+    FnPointerCastInitializedLocalBinding {
+        path: &'a [&'a str],
+        init_path: &'a [&'a str],
+    },
+    /// The callee expression is an opaque local binding or parameter cast to a bare function pointer.
+    FnPointerCastLocalBinding { path: &'a [&'a str] },
+    /// The callee expression is an aliased local binding cast to a bare function pointer.
+    FnPointerCastAliasedLocalBinding {
+        path: &'a [&'a str],
+        source_path: &'a [&'a str],
+    },
+    /// The callee expression is a local closure binding cast to a bare function pointer.
+    FnPointerCastClosureBinding {
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+    },
+    /// The callee expression is a dereferenced initialized local binding.
+    DereferencedInitializedLocalBinding {
+        path: &'a [&'a str],
+        init_path: &'a [&'a str],
+    },
+    /// The callee expression is a dereferenced local closure binding.
+    DereferencedClosureBinding {
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+    },
+    /// The callee expression names a visible local value binding or parameter.
+    LocalBinding { path: &'a [&'a str] },
+    /// The callee expression names a local alias to another value binding.
+    AliasedLocalBinding {
+        path: &'a [&'a str],
+        source_path: &'a [&'a str],
+    },
+    /// The callee expression names a visible local closure binding with a known executable owner.
+    ClosureBinding {
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+    },
+    /// The callee expression names a visible async closure binding that is not awaited.
+    AsyncClosureBinding {
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+    },
+    /// The callee expression names a visible async closure binding that is awaited.
+    AwaitedAsyncClosureBinding {
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+    },
+    /// The callee expression is an inline non-async closure literal with a known executable owner.
+    ClosureLiteral { closure_id: ExecutableBodyId },
+    /// The callee expression is an inline async closure literal whose returned future is awaited.
+    AwaitedAsyncClosureLiteral { closure_id: ExecutableBodyId },
+    /// The callee expression names a local value binding initialized by another path.
+    InitializedLocalBinding {
+        path: &'a [&'a str],
+        init_path: &'a [&'a str],
+    },
+    /// The callee expression is a field projection rooted at a named local binding.
+    FieldLocalBinding { path: &'a [&'a str] },
+    /// The callee expression is a field projection rooted at `self`.
+    SelfField { path: &'a [&'a str] },
+    /// The callee expression is a field projection rooted at a constructed local binding.
+    FieldInitializedLocalBinding {
+        path: &'a [&'a str],
+        init_path: &'a [&'a str],
+    },
+    /// The callee expression is an indexed local binding initialized by path-valued elements.
+    IndexedInitializedLocalBinding {
+        path: &'a [&'a str],
+        init_path: &'a [&'a str],
+    },
+    /// The callee expression is an if expression with path-valued branches.
+    IfBranchPaths { paths: &'a [&'a [&'a str]] },
+    /// The callee expression is an if expression with mixed path/closure branches.
+    IfBranchTargets {
+        targets: &'a [ExpectedDynamicBranchTarget<'a>],
+    },
+    /// The callee expression is a match expression with path-valued arms.
+    MatchArmPaths { paths: &'a [&'a [&'a str]] },
+    /// The callee expression is a match expression with mixed path/closure arms.
+    MatchArmTargets {
+        targets: &'a [ExpectedDynamicBranchTarget<'a>],
+    },
+    /// The callee expression is an if expression whose branches name the same parameter.
+    IfBranchParameter { path: &'a [&'a str] },
+    /// The callee expression is a match expression whose arms name the same parameter.
+    MatchArmParameter { path: &'a [&'a str] },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpectedDynamicBranchTarget<'a> {
+    Path { path: &'a [&'a str] },
+    Closure { closure_id: ExecutableBodyId },
+}
+
+impl ExpectedDynamicBranchTarget<'_> {
+    fn to_actual(self) -> DynamicBranchTarget {
+        match self {
+            Self::Path { path } => DynamicBranchTarget::Path {
+                path: path.iter().copied().map(String::from).collect(),
+            },
+            Self::Closure { closure_id } => DynamicBranchTarget::Closure { closure_id },
+        }
+    }
+}
+
+impl ExpectedDynamicCallee<'_> {
+    fn to_actual(self) -> DynamicCallCallee {
+        match self {
+            Self::Other => DynamicCallCallee::Other,
+            Self::Path { path } => DynamicCallCallee::Path {
+                path: path.iter().copied().map(String::from).collect(),
+            },
+            Self::FnPointerCastPath { path } => DynamicCallCallee::FnPointerCastPath {
+                path: path.iter().copied().map(String::from).collect(),
+            },
+            Self::ReturnedPathCall { path, is_awaited } => DynamicCallCallee::ReturnedPathCall {
+                path: path.iter().copied().map(String::from).collect(),
+                is_awaited,
+            },
+            Self::FnPointerCastInitializedLocalBinding { path, init_path } => {
+                DynamicCallCallee::FnPointerCastInitializedLocalBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    init_path: init_path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::FnPointerCastLocalBinding { path } => {
+                DynamicCallCallee::FnPointerCastLocalBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::FnPointerCastAliasedLocalBinding { path, source_path } => {
+                DynamicCallCallee::FnPointerCastAliasedLocalBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    source_path: source_path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::FnPointerCastClosureBinding { path, closure_id } => {
+                DynamicCallCallee::FnPointerCastClosureBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    closure_id,
+                }
+            }
+            Self::DereferencedInitializedLocalBinding { path, init_path } => {
+                DynamicCallCallee::DereferencedInitializedLocalBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    init_path: init_path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::DereferencedClosureBinding { path, closure_id } => {
+                DynamicCallCallee::DereferencedClosureBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    closure_id,
+                }
+            }
+            Self::LocalBinding { path } => DynamicCallCallee::LocalBinding {
+                path: path.iter().copied().map(String::from).collect(),
+            },
+            Self::AliasedLocalBinding { path, source_path } => {
+                DynamicCallCallee::AliasedLocalBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    source_path: source_path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::ClosureBinding { path, closure_id } => DynamicCallCallee::ClosureBinding {
+                path: path.iter().copied().map(String::from).collect(),
+                closure_id,
+            },
+            Self::AsyncClosureBinding { path, closure_id } => {
+                DynamicCallCallee::AsyncClosureBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    closure_id,
+                }
+            }
+            Self::AwaitedAsyncClosureBinding { path, closure_id } => {
+                DynamicCallCallee::AwaitedAsyncClosureBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    closure_id,
+                }
+            }
+            Self::ClosureLiteral { closure_id } => DynamicCallCallee::ClosureLiteral { closure_id },
+            Self::AwaitedAsyncClosureLiteral { closure_id } => {
+                DynamicCallCallee::AwaitedAsyncClosureLiteral { closure_id }
+            }
+            Self::InitializedLocalBinding { path, init_path } => {
+                DynamicCallCallee::InitializedLocalBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    init_path: init_path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::FieldLocalBinding { path } => DynamicCallCallee::FieldLocalBinding {
+                path: path.iter().copied().map(String::from).collect(),
+            },
+            Self::SelfField { path } => DynamicCallCallee::SelfField {
+                path: path.iter().copied().map(String::from).collect(),
+            },
+            Self::FieldInitializedLocalBinding { path, init_path } => {
+                DynamicCallCallee::FieldInitializedLocalBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    init_path: init_path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::IndexedInitializedLocalBinding { path, init_path } => {
+                DynamicCallCallee::IndexedInitializedLocalBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    init_path: init_path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::IfBranchPaths { paths } => DynamicCallCallee::IfBranchPaths {
+                paths: paths
+                    .iter()
+                    .map(|path| path.iter().copied().map(String::from).collect())
+                    .collect(),
+            },
+            Self::IfBranchTargets { targets } => DynamicCallCallee::IfBranchTargets {
+                targets: targets
+                    .iter()
+                    .copied()
+                    .map(|target| target.to_actual())
+                    .collect(),
+            },
+            Self::MatchArmPaths { paths } => DynamicCallCallee::MatchArmPaths {
+                paths: paths
+                    .iter()
+                    .map(|path| path.iter().copied().map(String::from).collect())
+                    .collect(),
+            },
+            Self::MatchArmTargets { targets } => DynamicCallCallee::MatchArmTargets {
+                targets: targets
+                    .iter()
+                    .copied()
+                    .map(|target| target.to_actual())
+                    .collect(),
+            },
+            Self::IfBranchParameter { path } => DynamicCallCallee::IfBranchParameter {
+                path: path.iter().copied().map(String::from).collect(),
+            },
+            Self::MatchArmParameter { path } => DynamicCallCallee::MatchArmParameter {
+                path: path.iter().copied().map(String::from).collect(),
+            },
+        }
+    }
+}
+
+/// Expected structural call-site class and class-specific fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpectedCallKind<'a> {
+    /// Path-style call expression, e.g. `foo()` or `Type::new()`.
+    Path {
+        path: &'a [&'a str],
+        callee: ExpectedPathCallee<'a>,
+        arg_count: usize,
+        generic_arg_count: usize,
+    },
+    /// Method-call expression, e.g. `self.foo()` or `self.field.len()`.
+    Method {
+        method_name: &'a str,
+        receiver: ExpectedMethodReceiver<'a>,
+        arg_count: usize,
+        generic_arg_count: usize,
+    },
+    /// Dynamic expression call, e.g. `(f)()` or `(|| 1)()`.
+    Dynamic {
+        callee: ExpectedDynamicCallee<'a>,
+        arg_count: usize,
+    },
+    /// Macro invocation expression/statement, e.g. `println!(...)`.
+    Macro { macro_name: &'a str },
+}
+
+/// Expected resolver outcome for a call site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpectedCallOutcome {
+    /// Resolver should fail closed with `Unsupported` and no semantic edge.
+    Unsupported,
+    /// Resolver should fail closed with `Unresolved` and no semantic edge.
+    Unresolved,
+    /// Resolver should fail closed with `Ambiguous` and no semantic edge.
+    Ambiguous,
+    /// Resolver should report `Ambiguous` while preserving proven dynamic
+    /// function candidates.
+    AmbiguousDynamicFunctionCandidates {
+        first: FunctionNodeId,
+        second: FunctionNodeId,
+    },
+    /// Resolver should report `Ambiguous` while preserving proven path-call
+    /// function candidates.
+    AmbiguousPathFunctionCandidates {
+        first: FunctionNodeId,
+        second: FunctionNodeId,
+    },
+    /// Resolver should report `Ambiguous` while preserving mixed dynamic
+    /// function/closure candidates.
+    AmbiguousDynamicMixedCandidates {
+        function: FunctionNodeId,
+        closure: ExecutableBodyId,
+    },
+    /// Resolver should classify the target as external and emit no local edge.
+    External,
+    /// Resolver should produce a local exact method edge.
+    ResolvedMethodLocalExact { target: MethodNodeId },
+    /// Resolver should produce a local exact function edge.
+    ResolvedFunctionLocalExact { target: FunctionNodeId },
+    /// Resolver should produce a local exact function edge from a dynamic call site.
+    ResolvedDynamicFunctionLocalExact { target: FunctionNodeId },
+    /// Resolver should produce a local exact closure edge from a dynamic call site.
+    ResolvedDynamicClosureLocalExact { target: ExecutableBodyId },
+    /// Resolver should produce a local exact closure edge from a path call site.
+    ResolvedClosureLocalExact { target: ExecutableBodyId },
+    /// Resolver should produce a local exact block-local function item edge.
+    ResolvedLocalFunctionLocalExact { target: ExecutableBodyId },
+    /// Resolver should produce a local exact associated-function edge.
+    ResolvedAssociatedFunctionLocalExact { target: MethodNodeId },
+    /// Resolver should produce a local exact method-callback edge to a function item.
+    ResolvedMethodCallbackFunctionLocalExact { target: FunctionNodeId },
+    /// Resolver should produce a local exact tuple struct constructor edge.
+    ResolvedTupleStructConstructorLocalExact { target: StructNodeId },
+    /// Resolver should produce a local exact enum variant constructor edge.
+    ResolvedEnumVariantConstructorLocalExact { target: VariantNodeId },
+}
+
+/// Full expected call-site fact row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExpectedCallSite<'a> {
+    /// Structural kind and kind-specific fields.
+    pub kind: ExpectedCallKind<'a>,
+    /// Byte span of the full call expression/invocation.
+    pub span: (usize, usize),
+    /// Effective cfg strings expected on the call occurrence.
+    pub cfgs: &'a [&'a str],
+    /// Expected resolver status and edge policy.
+    pub outcome: ExpectedCallOutcome,
+}
+
+impl<'a> ExpectedCallSite<'a> {
+    /// Constructor for a path-call expectation.
+    pub const fn path(
+        path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        generic_arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Path {
+                path,
+                callee: ExpectedPathCallee::ItemPath,
+                arg_count,
+                generic_arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a path-call expectation shadowed by a value binding.
+    pub const fn path_value_binding(
+        path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        generic_arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Path {
+                path,
+                callee: ExpectedPathCallee::ValueBinding { path },
+                arg_count,
+                generic_arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a path-call expectation through a local alias to a value binding.
+    pub const fn path_aliased_value_binding(
+        path: &'a [&'a str],
+        source_path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        generic_arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Path {
+                path,
+                callee: ExpectedPathCallee::AliasedValueBinding { path, source_path },
+                arg_count,
+                generic_arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a path-call expectation shadowed by a closure binding.
+    pub const fn path_closure_binding(
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        generic_arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Path {
+                path,
+                callee: ExpectedPathCallee::ClosureBinding { path, closure_id },
+                arg_count,
+                generic_arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a path-call expectation shadowed by a non-awaited async closure binding.
+    pub const fn path_async_closure_binding(
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        generic_arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Path {
+                path,
+                callee: ExpectedPathCallee::AsyncClosureBinding { path, closure_id },
+                arg_count,
+                generic_arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a path-call expectation shadowed by an awaited async closure binding.
+    pub const fn path_awaited_async_closure_binding(
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        generic_arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Path {
+                path,
+                callee: ExpectedPathCallee::AwaitedAsyncClosureBinding { path, closure_id },
+                arg_count,
+                generic_arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a path-call expectation shadowed by a local function item.
+    pub const fn path_local_function_binding(
+        path: &'a [&'a str],
+        body_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        generic_arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Path {
+                path,
+                callee: ExpectedPathCallee::LocalFunctionBinding { path, body_id },
+                arg_count,
+                generic_arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a path-call expectation through an initialized binding.
+    pub const fn path_initialized_value_binding(
+        path: &'a [&'a str],
+        init_path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        generic_arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Path {
+                path,
+                callee: ExpectedPathCallee::InitializedValueBinding { path, init_path },
+                arg_count,
+                generic_arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a path-call expectation through an ambiguous initialized binding.
+    pub const fn path_ambiguous_initialized_value_binding(
+        path: &'a [&'a str],
+        init_paths: &'a [&'a [&'a str]],
+        span: (usize, usize),
+        arg_count: usize,
+        generic_arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Path {
+                path,
+                callee: ExpectedPathCallee::AmbiguousInitializedValueBinding { path, init_paths },
+                arg_count,
+                generic_arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a method-call expectation.
+    pub const fn method(
+        method_name: &'a str,
+        receiver: ExpectedMethodReceiver<'a>,
+        span: (usize, usize),
+        arg_count: usize,
+        generic_arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Method {
+                method_name,
+                receiver,
+                arg_count,
+                generic_arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation.
+    pub const fn dynamic(
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::Other,
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a path.
+    pub const fn dynamic_path(
+        path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::Path { path },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a function-pointer cast path.
+    pub const fn dynamic_fn_pointer_cast_path(
+        path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::FnPointerCastPath { path },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a returned path call.
+    pub const fn dynamic_returned_path_call(
+        path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::ReturnedPathCall {
+                    path,
+                    is_awaited: false,
+                },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for an awaited dynamic-call expectation whose callee is a returned path call.
+    pub const fn dynamic_awaited_returned_path_call(
+        path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::ReturnedPathCall {
+                    path,
+                    is_awaited: true,
+                },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is an initialized local binding cast to a function pointer.
+    pub const fn dynamic_fn_pointer_cast_initialized_local_binding(
+        path: &'a [&'a str],
+        init_path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::FnPointerCastInitializedLocalBinding {
+                    path,
+                    init_path,
+                },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is an opaque local binding cast to a function pointer.
+    pub const fn dynamic_fn_pointer_cast_local_binding(
+        path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::FnPointerCastLocalBinding { path },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is an aliased binding cast to a function pointer.
+    pub const fn dynamic_fn_pointer_cast_aliased_local_binding(
+        path: &'a [&'a str],
+        source_path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::FnPointerCastAliasedLocalBinding {
+                    path,
+                    source_path,
+                },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a local closure binding cast to a function pointer.
+    pub const fn dynamic_fn_pointer_cast_closure_binding(
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::FnPointerCastClosureBinding { path, closure_id },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a dereferenced initialized local binding.
+    pub const fn dynamic_dereferenced_initialized_local_binding(
+        path: &'a [&'a str],
+        init_path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::DereferencedInitializedLocalBinding {
+                    path,
+                    init_path,
+                },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a dereferenced local closure binding.
+    pub const fn dynamic_dereferenced_closure_binding(
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::DereferencedClosureBinding { path, closure_id },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a local binding.
+    pub const fn dynamic_local_binding(
+        path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::LocalBinding { path },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation through a local alias to a value binding.
+    pub const fn dynamic_aliased_local_binding(
+        path: &'a [&'a str],
+        source_path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::AliasedLocalBinding { path, source_path },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a local closure binding.
+    pub const fn dynamic_closure_binding(
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::ClosureBinding { path, closure_id },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a non-awaited async closure binding.
+    pub const fn dynamic_async_closure_binding(
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::AsyncClosureBinding { path, closure_id },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is an awaited async closure binding.
+    pub const fn dynamic_awaited_async_closure_binding(
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::AwaitedAsyncClosureBinding { path, closure_id },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is an inline closure literal.
+    pub const fn dynamic_closure_literal(
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::ClosureLiteral { closure_id },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for an awaited dynamic-call expectation whose callee is an async closure literal.
+    pub const fn dynamic_awaited_async_closure_literal(
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::AwaitedAsyncClosureLiteral { closure_id },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is an initialized local binding.
+    pub const fn dynamic_initialized_local_binding(
+        path: &'a [&'a str],
+        init_path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::InitializedLocalBinding { path, init_path },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a field projection.
+    pub const fn dynamic_field_local_binding(
+        path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::FieldLocalBinding { path },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a self field.
+    pub const fn dynamic_self_field(
+        path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::SelfField { path },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose field callee has initializer proof.
+    pub const fn dynamic_field_initialized_local_binding(
+        path: &'a [&'a str],
+        init_path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::FieldInitializedLocalBinding { path, init_path },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose indexed callee has initializer proof.
+    pub const fn dynamic_indexed_initialized_local_binding(
+        path: &'a [&'a str],
+        init_path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::IndexedInitializedLocalBinding { path, init_path },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is an if expression with path branches.
+    pub const fn dynamic_if_branch_paths(
+        paths: &'a [&'a [&'a str]],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::IfBranchPaths { paths },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is an if expression with mixed path/closure branches.
+    pub const fn dynamic_if_branch_targets(
+        targets: &'a [ExpectedDynamicBranchTarget<'a>],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::IfBranchTargets { targets },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a match expression with path arms.
+    pub const fn dynamic_match_arm_paths(
+        paths: &'a [&'a [&'a str]],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::MatchArmPaths { paths },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a match expression with mixed path/closure arms.
+    pub const fn dynamic_match_arm_targets(
+        targets: &'a [ExpectedDynamicBranchTarget<'a>],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::MatchArmTargets { targets },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is an if expression over one parameter.
+    pub const fn dynamic_if_branch_parameter(
+        path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::IfBranchParameter { path },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a match expression over one parameter.
+    pub const fn dynamic_match_arm_parameter(
+        path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::MatchArmParameter { path },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a macro-call expectation.
+    pub const fn macro_call(
+        macro_name: &'a str,
+        span: (usize, usize),
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Macro { macro_name },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    fn expected_id(&self, owner: CallBodyOwnerId, cfgs: &[String]) -> AnyCallSiteId {
+        match self.kind {
+            ExpectedCallKind::Path { path, .. } => {
+                let discriminator = path.join("::");
+                PathCallSiteId::new_call_test(generate_test_call_id(
+                    owner,
+                    CallSiteKind::Path,
+                    discriminator.as_str(),
+                    self.span,
+                    cfgs,
+                ))
+                .into()
+            }
+            ExpectedCallKind::Method { method_name, .. } => MethodCallSiteId::new_call_test(
+                generate_test_call_id(owner, CallSiteKind::Method, method_name, self.span, cfgs),
+            )
+            .into(),
+            ExpectedCallKind::Dynamic { .. } => DynamicCallSiteId::new_call_test(
+                generate_test_call_id(owner, CallSiteKind::Dynamic, "dynamic", self.span, cfgs),
+            )
+            .into(),
+            ExpectedCallKind::Macro { macro_name } => MacroCallSiteId::new_call_test(
+                generate_test_call_id(owner, CallSiteKind::Macro, macro_name, self.span, cfgs),
+            )
+            .into(),
+        }
+    }
+
+    fn matches_values(
+        &self,
+        call: &CallNode,
+        owner: CallBodyOwnerId,
+        expected_cfgs: &[String],
+    ) -> bool {
+        if call.owner() != owner || call.span() != self.span || call.cfgs() != expected_cfgs {
+            return false;
+        }
+
+        match (self.kind, call) {
+            (
+                ExpectedCallKind::Path {
+                    path,
+                    callee,
+                    arg_count,
+                    generic_arg_count,
+                },
+                CallNode::PathCall(actual),
+            ) => {
+                path_matches(&actual.path, path)
+                    && actual.callee == callee.to_actual()
+                    && actual.arg_count == arg_count
+                    && actual.generic_arg_count == generic_arg_count
+            }
+            (
+                ExpectedCallKind::Method {
+                    method_name,
+                    receiver,
+                    arg_count,
+                    generic_arg_count,
+                },
+                CallNode::MethodCall(actual),
+            ) => {
+                actual.method_name == method_name
+                    && actual.receiver == receiver.to_actual()
+                    && actual.arg_count == arg_count
+                    && actual.generic_arg_count == generic_arg_count
+            }
+            (ExpectedCallKind::Dynamic { callee, arg_count }, CallNode::DynamicCall(actual)) => {
+                actual.callee == callee.to_actual() && actual.arg_count == arg_count
+            }
+            (ExpectedCallKind::Macro { macro_name }, CallNode::MacroCall(actual)) => {
+                actual.macro_name == macro_name
+            }
+            _ => false,
+        }
+    }
+
+    fn assert_fields(
+        &self,
+        call: &CallNode,
+        owner: &CallOwnerContext,
+        expected_cfgs: &[String],
+        expected_id: AnyCallSiteId,
+    ) {
+        assert_eq!(
+            call.owner(),
+            owner.id,
+            "call-site owner mismatch for {}",
+            self.label()
+        );
+        assert_eq!(
+            call.id(),
+            expected_id,
+            "call-site typed ID mismatch for {}",
+            self.label()
+        );
+        assert_eq!(
+            call.span(),
+            self.span,
+            "call-site span mismatch for {}",
+            self.label()
+        );
+        assert_eq!(
+            call.cfgs(),
+            expected_cfgs,
+            "call-site cfgs mismatch for {}",
+            self.label()
+        );
+        assert!(
+            owner.span.0 <= self.span.0 && self.span.1 <= owner.span.1,
+            "call-site span {:?} for {} should be inside owner {} span {:?}",
+            self.span,
+            self.label(),
+            owner.label,
+            owner.span
+        );
+
+        match (self.kind, call, expected_id) {
+            (
+                ExpectedCallKind::Path {
+                    path,
+                    callee,
+                    arg_count,
+                    generic_arg_count,
+                },
+                CallNode::PathCall(actual),
+                AnyCallSiteId::Path(expected_path_id),
+            ) => {
+                assert_eq!(actual.id, expected_path_id);
+                assert_eq!(actual.owner, owner.id);
+                assert!(
+                    path_matches(&actual.path, path),
+                    "path-call path mismatch for {}: expected {:?}, actual {:?}",
+                    self.label(),
+                    path,
+                    actual.path
+                );
+                assert_eq!(actual.callee, callee.to_actual());
+                assert_eq!(actual.arg_count, arg_count);
+                assert_eq!(actual.generic_arg_count, generic_arg_count);
+            }
+            (
+                ExpectedCallKind::Method {
+                    method_name,
+                    receiver,
+                    arg_count,
+                    generic_arg_count,
+                },
+                CallNode::MethodCall(actual),
+                AnyCallSiteId::Method(expected_method_id),
+            ) => {
+                assert_eq!(actual.id, expected_method_id);
+                assert_eq!(actual.owner, owner.id);
+                assert_eq!(actual.method_name, method_name);
+                assert_eq!(actual.receiver, receiver.to_actual());
+                assert_eq!(actual.arg_count, arg_count);
+                assert_eq!(actual.generic_arg_count, generic_arg_count);
+            }
+            (
+                ExpectedCallKind::Dynamic { callee, arg_count },
+                CallNode::DynamicCall(actual),
+                AnyCallSiteId::Dynamic(expected_dynamic_id),
+            ) => {
+                assert_eq!(actual.id, expected_dynamic_id);
+                assert_eq!(actual.owner, owner.id);
+                assert_eq!(actual.callee, callee.to_actual());
+                assert_eq!(actual.arg_count, arg_count);
+            }
+            (
+                ExpectedCallKind::Macro { macro_name },
+                CallNode::MacroCall(actual),
+                AnyCallSiteId::Macro(expected_macro_id),
+            ) => {
+                assert_eq!(actual.id, expected_macro_id);
+                assert_eq!(actual.owner, owner.id);
+                assert_eq!(actual.macro_name, macro_name);
+            }
+            _ => panic!(
+                "call-site variant mismatch for {}: expected {:?}, actual {}",
+                self.label(),
+                self.kind,
+                describe_call(call)
+            ),
+        }
+    }
+
+    fn label(&self) -> String {
+        match self.kind {
+            ExpectedCallKind::Path { path, .. } => format!("path call {}()", path.join("::")),
+            ExpectedCallKind::Method { method_name, .. } => {
+                format!("method call {method_name}()")
+            }
+            ExpectedCallKind::Dynamic { .. } => "dynamic call".to_string(),
+            ExpectedCallKind::Macro { macro_name } => format!("macro call {macro_name}!(...)"),
+        }
+    }
+}
+
+/// Returns parsed phase-2 fixture rows for a known fixture name.
+pub fn parsed_graphs_for_fixture(fixture: &str) -> &'static [ParsedCodeGraph] {
+    match fixture {
+        "fixture_nodes" => &PARSED_FIXTURE_CRATE_NODES,
+        "fixture_call_graph" => &PARSED_FIXTURE_CRATE_CALL_GRAPH,
+        "fixture_edge_cases" => &PARSED_FIXTURE_CRATE_EDGE_CASES,
+        "fixture_generics" => &PARSED_FIXTURE_CRATE_GENERICS,
+        "fixture_impls" => &PARSED_FIXTURE_CRATE_IMPLS,
+        "file_dir_detection" => &PARSED_FIXTURE_CRATE_DIR_DETECTION,
+        "fixture_path_resolution" => &PARSED_FIXTURE_CRATE_PATH_RESOLUTION,
+        "fixture_spp_edge_cases_no_cfg" => &PARSED_FIXTURE_CRATE_SPP_EDGE_CASES_NO_CFG,
+        "fixture_spp_edge_cases" => &PARSED_FIXTURE_CRATE_SPP_EDGE_CASES,
+        "fixture_type_resolution_v2" => &PARSED_FIXTURE_CRATE_TYPE_RESOLUTION_V2,
+        "fixture_types" => &PARSED_FIXTURE_CRATE_TYPES,
+        _ => panic!(
+            "Unknown fixture name for lazy_static lookup: {fixture}. Ensure it is registered in tests/common/parsed_fixtures.rs and call_site_paranoid.rs."
+        ),
+    }
+}
+
+/// Builds a function owner context from module path and function name.
+pub fn function_owner_context(
+    graph: &impl GraphAccess,
+    module_path: &[&str],
+    function_name: &str,
+) -> CallOwnerContext {
+    let module_path_vec = module_path
+        .iter()
+        .copied()
+        .map(String::from)
+        .collect::<Vec<_>>();
+    let module = graph
+        .find_module_by_path_checked(&module_path_vec)
+        .expect("call-site test fixture module should exist");
+    let matches = graph
+        .functions()
+        .iter()
+        .filter(|function| {
+            function.name == function_name
+                && graph.module_contains_node(module.id, function.id.into())
+        })
+        .collect::<Vec<_>>();
+    let function = match matches.as_slice() {
+        [function] => function,
+        [] => panic!(
+            "expected function {function_name:?} in module path {}",
+            module_path_vec.join("::")
+        ),
+        many => panic!(
+            "expected exactly one function {function_name:?} in module path {}, found {}",
+            module_path_vec.join("::"),
+            many.len()
+        ),
+    };
+
+    CallOwnerContext {
+        id: CallBodyOwnerId::Function(function.id),
+        span: function.span,
+        label: format!("function {}::{}", module_path_vec.join("::"), function.name),
+    }
+}
+
+/// Builds a macro owner context from module path and macro name.
+pub fn macro_owner_context(
+    graph: &impl GraphAccess,
+    module_path: &[&str],
+    macro_name: &str,
+) -> CallOwnerContext {
+    let module_path_vec = module_path
+        .iter()
+        .copied()
+        .map(String::from)
+        .collect::<Vec<_>>();
+    let module = graph
+        .find_module_by_path_checked(&module_path_vec)
+        .expect("call-site test fixture module should exist");
+    let matches = graph
+        .macros()
+        .iter()
+        .filter(|macro_node| {
+            macro_node.name == macro_name
+                && graph.module_contains_node(module.id, macro_node.id.into())
+        })
+        .collect::<Vec<_>>();
+    let macro_node = match matches.as_slice() {
+        [macro_node] => macro_node,
+        [] => panic!(
+            "expected macro {macro_name:?} in module path {}",
+            module_path_vec.join("::")
+        ),
+        many => panic!(
+            "expected exactly one macro {macro_name:?} in module path {}, found {}",
+            module_path_vec.join("::"),
+            many.len()
+        ),
+    };
+    CallOwnerContext {
+        id: CallBodyOwnerId::Macro(macro_node.id),
+        span: macro_node.span,
+        label: format!("macro {}::{}", module_path_vec.join("::"), macro_node.name),
+    }
+}
+
+/// Builds a method owner context from associated-item paranoid args.
+pub fn method_owner_context(
+    graph: &impl GraphAccess,
+    parsed_graphs: &[ParsedCodeGraph],
+    args: &AssocParanoidArgs<'_>,
+) -> Result<CallOwnerContext, SynParserError> {
+    let method_info = args.generate_method_pid(parsed_graphs)?;
+    let method = graph
+        .find_node_unique(method_info.test_any_id())
+        .unwrap_or_else(|_| panic!("{} id should resolve to a unique graph node", args.ident))
+        .as_method()
+        .unwrap_or_else(|| panic!("{} id should resolve to MethodNode", args.ident));
+
+    Ok(CallOwnerContext {
+        id: CallBodyOwnerId::Method(method_info.test_method_id()),
+        span: method.span,
+        label: format!("method {}", args.ident),
+    })
+}
+
+/// Builds an associated const initializer owner context from associated-item paranoid args.
+pub fn assoc_const_owner_context(
+    graph: &impl GraphAccess,
+    parsed_graphs: &[ParsedCodeGraph],
+    args: &AssocParanoidArgs<'_>,
+) -> Result<CallOwnerContext, SynParserError> {
+    let const_info = args.generate_const_pid(parsed_graphs)?;
+    let const_node = graph
+        .consts()
+        .iter()
+        .find(|node| node.id == const_info.test_const_id())
+        .unwrap_or_else(|| panic!("{} id should resolve to ConstNode", args.ident));
+
+    Ok(CallOwnerContext {
+        id: CallBodyOwnerId::Const(const_info.test_const_id()),
+        span: const_node.span,
+        label: format!("associated const {}", args.ident),
+    })
+}
+
+/// Builds a const initializer owner context from paranoid node args.
+pub fn const_owner_context(
+    graph: &impl GraphAccess,
+    parsed_graphs: &[ParsedCodeGraph],
+    args: &ParanoidArgs<'_>,
+) -> Result<CallOwnerContext, SynParserError> {
+    let const_info = args.generate_pid(parsed_graphs)?;
+    let const_id = ConstNodeId::try_from(const_info.test_pid())
+        .expect("const owner args should regenerate a ConstNodeId");
+    let const_node = graph
+        .consts()
+        .iter()
+        .find(|node| node.id == const_id)
+        .unwrap_or_else(|| panic!("{} id should resolve to ConstNode", args.ident));
+
+    Ok(CallOwnerContext {
+        id: CallBodyOwnerId::Const(const_id),
+        span: const_node.span,
+        label: format!("const {}", args.ident),
+    })
+}
+
+/// Builds a static initializer owner context from paranoid node args.
+pub fn static_owner_context(
+    graph: &impl GraphAccess,
+    parsed_graphs: &[ParsedCodeGraph],
+    args: &ParanoidArgs<'_>,
+) -> Result<CallOwnerContext, SynParserError> {
+    let static_info = args.generate_pid(parsed_graphs)?;
+    let static_id = StaticNodeId::try_from(static_info.test_pid())
+        .expect("static owner args should regenerate a StaticNodeId");
+    let static_node = graph
+        .statics()
+        .iter()
+        .find(|node| node.id == static_id)
+        .unwrap_or_else(|| panic!("{} id should resolve to StaticNode", args.ident));
+
+    Ok(CallOwnerContext {
+        id: CallBodyOwnerId::Static(static_id),
+        span: static_node.span,
+        label: format!("static {}", args.ident),
+    })
+}
+
+/// Performs exact-ID, value, relation, and resolver checks for one expected
+/// call-site occurrence.
+pub fn assert_paranoid_call_site(
+    graph: &impl GraphAccess,
+    report: &CallResolutionReport,
+    owner: &CallOwnerContext,
+    expected: &ExpectedCallSite<'_>,
+) {
+    let expected_cfgs = expected
+        .cfgs
+        .iter()
+        .copied()
+        .map(String::from)
+        .collect::<Vec<_>>();
+    let expected_id = expected.expected_id(owner.id, &expected_cfgs);
+
+    let id_matches = graph
+        .call_sites()
+        .iter()
+        .filter(|call| call.id() == expected_id)
+        .collect::<Vec<_>>();
+    let owner_candidates = graph
+        .call_sites()
+        .iter()
+        .filter(|call| call.owner() == owner.id)
+        .map(describe_call)
+        .collect::<Vec<_>>();
+    let all_candidates = graph
+        .call_sites()
+        .iter()
+        .map(describe_call)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        id_matches.len(),
+        1,
+        "expected exactly one call site with regenerated ID {expected_id:?} for {}. Matches: {:#?}. Owner candidates: {:#?}. All candidates: {:#?}",
+        expected.label(),
+        id_matches,
+        owner_candidates,
+        all_candidates
+    );
+    let call_by_id = id_matches[0];
+    expected.assert_fields(call_by_id, owner, &expected_cfgs, expected_id);
+
+    let value_matches = graph
+        .call_sites()
+        .iter()
+        .filter(|call| expected.matches_values(call, owner.id, &expected_cfgs))
+        .collect::<Vec<_>>();
+    assert!(
+        !value_matches.is_empty(),
+        "expected at least one value match for {} owned by {}",
+        expected.label(),
+        owner.label
+    );
+    for duplicate in value_matches
+        .iter()
+        .copied()
+        .filter(|call| call.id() != expected_id)
+    {
+        log::warn!(
+            "Duplicate call-site values with different ID for {}: expected {:?}, duplicate {}",
+            expected.label(),
+            expected_id,
+            describe_call(duplicate)
+        );
+    }
+    let value_and_id_matches = value_matches
+        .iter()
+        .copied()
+        .filter(|call| call.id() == expected_id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        value_and_id_matches.len(),
+        1,
+        "expected exactly one call site matching values and regenerated ID for {}. Value matches: {:#?}",
+        expected.label(),
+        value_matches
+    );
+
+    assert_body_contains_call(graph, owner.id, expected_id, expected);
+    assert_resolution_outcome(report, expected_id, expected.outcome);
+}
+
+fn assert_body_contains_call(
+    graph: &impl GraphAccess,
+    owner: CallBodyOwnerId,
+    expected_id: AnyCallSiteId,
+    expected: &ExpectedCallSite<'_>,
+) {
+    let relation_count = graph
+        .call_site_relations()
+        .iter()
+        .filter(|relation| {
+            matches!(
+                relation,
+                CallSiteRelation::BodyContainsCall { source, target }
+                    if *source == owner && *target == expected_id
+            )
+        })
+        .count();
+    assert_eq!(
+        relation_count,
+        1,
+        "expected exactly one BodyContainsCall relation for {}",
+        expected.label()
+    );
+}
+
+fn assert_resolution_outcome(
+    report: &CallResolutionReport,
+    expected_id: AnyCallSiteId,
+    expected_outcome: ExpectedCallOutcome,
+) {
+    let statuses = report
+        .statuses
+        .iter()
+        .copied()
+        .filter(|status| status.source() == expected_id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        statuses.len(),
+        1,
+        "expected exactly one resolver status for {expected_id:?}, found {statuses:#?}"
+    );
+    let status = statuses[0];
+
+    match expected_outcome {
+        ExpectedCallOutcome::Unsupported => assert!(
+            matches!(status, CallResolutionStatus::Unsupported { source } if source == expected_id),
+            "expected Unsupported status for {expected_id:?}, got {status:?}"
+        ),
+        ExpectedCallOutcome::Unresolved => assert!(
+            matches!(status, CallResolutionStatus::Unresolved { source } if source == expected_id),
+            "expected Unresolved status for {expected_id:?}, got {status:?}"
+        ),
+        ExpectedCallOutcome::Ambiguous => assert!(
+            matches!(status, CallResolutionStatus::Ambiguous { source } if source == expected_id),
+            "expected Ambiguous status for {expected_id:?}, got {status:?}"
+        ),
+        ExpectedCallOutcome::AmbiguousDynamicFunctionCandidates { .. } => assert!(
+            matches!(status, CallResolutionStatus::Ambiguous { source } if source == expected_id),
+            "expected Ambiguous status for {expected_id:?}, got {status:?}"
+        ),
+        ExpectedCallOutcome::AmbiguousPathFunctionCandidates { .. } => assert!(
+            matches!(status, CallResolutionStatus::Ambiguous { source } if source == expected_id),
+            "expected Ambiguous status for {expected_id:?}, got {status:?}"
+        ),
+        ExpectedCallOutcome::AmbiguousDynamicMixedCandidates { .. } => assert!(
+            matches!(status, CallResolutionStatus::Ambiguous { source } if source == expected_id),
+            "expected Ambiguous status for {expected_id:?}, got {status:?}"
+        ),
+        ExpectedCallOutcome::External => assert!(
+            matches!(status, CallResolutionStatus::External { source } if source == expected_id),
+            "expected External status for {expected_id:?}, got {status:?}"
+        ),
+        ExpectedCallOutcome::ResolvedMethodLocalExact { .. }
+        | ExpectedCallOutcome::ResolvedFunctionLocalExact { .. }
+        | ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { .. }
+        | ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { .. }
+        | ExpectedCallOutcome::ResolvedClosureLocalExact { .. }
+        | ExpectedCallOutcome::ResolvedLocalFunctionLocalExact { .. }
+        | ExpectedCallOutcome::ResolvedAssociatedFunctionLocalExact { .. }
+        | ExpectedCallOutcome::ResolvedMethodCallbackFunctionLocalExact { .. }
+        | ExpectedCallOutcome::ResolvedTupleStructConstructorLocalExact { .. }
+        | ExpectedCallOutcome::ResolvedEnumVariantConstructorLocalExact { .. } => assert!(
+            matches!(
+                status,
+                CallResolutionStatus::Resolved {
+                    source,
+                    kind: CallResolutionKind::LocalExact,
+                } if source == expected_id
+            ),
+            "expected Resolved(LocalExact) status for {expected_id:?}, got {status:?}"
+        ),
+    }
+
+    let relations = report
+        .relations
+        .iter()
+        .copied()
+        .filter(|relation| relation_source(*relation) == expected_id)
+        .collect::<Vec<_>>();
+
+    match expected_outcome {
+        ExpectedCallOutcome::Unsupported
+        | ExpectedCallOutcome::Unresolved
+        | ExpectedCallOutcome::Ambiguous
+        | ExpectedCallOutcome::External => assert_eq!(
+            relations.len(),
+            0,
+            "non-resolved call site {expected_id:?} should not emit semantic call edges; got {relations:#?}"
+        ),
+        ExpectedCallOutcome::AmbiguousDynamicFunctionCandidates { first, second } => {
+            let source = match expected_id {
+                AnyCallSiteId::Dynamic(source) => source,
+                other => {
+                    panic!(
+                        "ambiguous dynamic-function candidates expected a dynamic call-site ID, got {other:?}"
+                    )
+                }
+            };
+            let mut actual = relations
+                .iter()
+                .map(|relation| match relation {
+                    CallRelation::DynamicFunction {
+                        source: actual_source,
+                        target,
+                    } if *actual_source == source => *target,
+                    other => panic!(
+                        "expected only DynamicFunction candidate edges from {source:?}, got {other:?}"
+                    ),
+                })
+                .collect::<Vec<_>>();
+            let mut expected = vec![first, second];
+            actual.sort_unstable();
+            expected.sort_unstable();
+            assert_eq!(
+                actual, expected,
+                "ambiguous dynamic call site {expected_id:?} should preserve proven function candidates"
+            );
+        }
+        ExpectedCallOutcome::AmbiguousPathFunctionCandidates { first, second } => {
+            let source = match expected_id {
+                AnyCallSiteId::Path(source) => source,
+                other => {
+                    panic!(
+                        "ambiguous path-function candidates expected a path call-site ID, got {other:?}"
+                    )
+                }
+            };
+            let mut actual = relations
+                .iter()
+                .map(|relation| match relation {
+                    CallRelation::Function {
+                        source: actual_source,
+                        target,
+                    } if *actual_source == source => *target,
+                    other => panic!(
+                        "expected only Function candidate edges from {source:?}, got {other:?}"
+                    ),
+                })
+                .collect::<Vec<_>>();
+            let mut expected = vec![first, second];
+            actual.sort_unstable();
+            expected.sort_unstable();
+            assert_eq!(
+                actual, expected,
+                "ambiguous path call site {expected_id:?} should preserve proven function candidates"
+            );
+        }
+        ExpectedCallOutcome::AmbiguousDynamicMixedCandidates { function, closure } => {
+            let source = match expected_id {
+                AnyCallSiteId::Dynamic(source) => source,
+                other => {
+                    panic!(
+                        "ambiguous mixed dynamic candidates expected a dynamic call-site ID, got {other:?}"
+                    )
+                }
+            };
+            assert_eq!(
+                relations.len(),
+                2,
+                "ambiguous mixed dynamic call site {expected_id:?} should preserve both candidates; got {relations:#?}"
+            );
+            assert!(
+                relations.iter().any(|relation| matches!(
+                    relation,
+                    CallRelation::DynamicFunction { source: actual_source, target }
+                        if *actual_source == source && *target == function
+                )),
+                "expected DynamicFunction candidate {source:?} -> {function:?}, got {relations:#?}"
+            );
+            assert!(
+                relations.iter().any(|relation| matches!(
+                    relation,
+                    CallRelation::DynamicClosure { source: actual_source, target }
+                        if *actual_source == source && *target == closure
+                )),
+                "expected DynamicClosure candidate {source:?} -> {closure:?}, got {relations:#?}"
+            );
+        }
+        ExpectedCallOutcome::ResolvedMethodLocalExact { target } => {
+            let source = match expected_id {
+                AnyCallSiteId::Method(source) => source,
+                other => panic!("method relation expected a method call-site ID, got {other:?}"),
+            };
+            assert_eq!(
+                relations.len(),
+                1,
+                "resolved method call site {expected_id:?} should emit exactly one semantic edge; got {relations:#?}"
+            );
+            assert!(
+                matches!(relations[0], CallRelation::Method { source: actual_source, target: actual_target }
+                    if actual_source == source && actual_target == target),
+                "expected Method edge {source:?} -> {target:?}, got {:?}",
+                relations[0]
+            );
+        }
+        ExpectedCallOutcome::ResolvedFunctionLocalExact { target } => {
+            let source = match expected_id {
+                AnyCallSiteId::Path(source) => source,
+                other => panic!("function relation expected a path call-site ID, got {other:?}"),
+            };
+            assert_eq!(
+                relations.len(),
+                1,
+                "resolved function call site {expected_id:?} should emit exactly one semantic edge; got {relations:#?}"
+            );
+            assert!(
+                matches!(relations[0], CallRelation::Function { source: actual_source, target: actual_target }
+                    if actual_source == source && actual_target == target),
+                "expected Function edge {source:?} -> {target:?}, got {:?}",
+                relations[0]
+            );
+        }
+        ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target } => {
+            let source = match expected_id {
+                AnyCallSiteId::Dynamic(source) => source,
+                other => {
+                    panic!(
+                        "dynamic-function relation expected a dynamic call-site ID, got {other:?}"
+                    )
+                }
+            };
+            assert_eq!(
+                relations.len(),
+                1,
+                "resolved dynamic function call site {expected_id:?} should emit exactly one semantic edge; got {relations:#?}"
+            );
+            assert!(
+                matches!(relations[0], CallRelation::DynamicFunction { source: actual_source, target: actual_target }
+                    if actual_source == source && actual_target == target),
+                "expected DynamicFunction edge {source:?} -> {target:?}, got {:?}",
+                relations[0]
+            );
+        }
+        ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { target } => {
+            let source = match expected_id {
+                AnyCallSiteId::Dynamic(source) => source,
+                other => {
+                    panic!(
+                        "dynamic-closure relation expected a dynamic call-site ID, got {other:?}"
+                    )
+                }
+            };
+            assert_eq!(
+                relations.len(),
+                1,
+                "resolved dynamic closure call site {expected_id:?} should emit exactly one semantic edge; got {relations:#?}"
+            );
+            assert!(
+                matches!(relations[0], CallRelation::DynamicClosure { source: actual_source, target: actual_target }
+                    if actual_source == source && actual_target == target),
+                "expected DynamicClosure edge {source:?} -> {target:?}, got {:?}",
+                relations[0]
+            );
+        }
+        ExpectedCallOutcome::ResolvedClosureLocalExact { target } => {
+            let source = match expected_id {
+                AnyCallSiteId::Path(source) => source,
+                other => panic!("closure relation expected a path call-site ID, got {other:?}"),
+            };
+            assert_eq!(
+                relations.len(),
+                1,
+                "resolved closure call site {expected_id:?} should emit exactly one semantic edge; got {relations:#?}"
+            );
+            assert!(
+                matches!(relations[0], CallRelation::Closure { source: actual_source, target: actual_target }
+                    if actual_source == source && actual_target == target),
+                "expected Closure edge {source:?} -> {target:?}, got {:?}",
+                relations[0]
+            );
+        }
+        ExpectedCallOutcome::ResolvedLocalFunctionLocalExact { target } => {
+            let source = match expected_id {
+                AnyCallSiteId::Path(source) => source,
+                other => {
+                    panic!("local-function relation expected a path call-site ID, got {other:?}")
+                }
+            };
+            assert_eq!(
+                relations.len(),
+                1,
+                "resolved local-function call site {expected_id:?} should emit exactly one semantic edge; got {relations:#?}"
+            );
+            assert!(
+                matches!(relations[0], CallRelation::LocalFunction { source: actual_source, target: actual_target }
+                    if actual_source == source && actual_target == target),
+                "expected LocalFunction edge {source:?} -> {target:?}, got {:?}",
+                relations[0]
+            );
+        }
+        ExpectedCallOutcome::ResolvedAssociatedFunctionLocalExact { target } => {
+            let source = match expected_id {
+                AnyCallSiteId::Path(source) => source,
+                other => panic!(
+                    "associated-function relation expected a path call-site ID, got {other:?}"
+                ),
+            };
+            assert_eq!(
+                relations.len(),
+                1,
+                "resolved associated-function call site {expected_id:?} should emit exactly one semantic edge; got {relations:#?}"
+            );
+            assert!(
+                matches!(relations[0], CallRelation::AssociatedFunction { source: actual_source, target: actual_target }
+                    if actual_source == source && actual_target == target),
+                "expected AssociatedFunction edge {source:?} -> {target:?}, got {:?}",
+                relations[0]
+            );
+        }
+        ExpectedCallOutcome::ResolvedMethodCallbackFunctionLocalExact { target } => {
+            let source = match expected_id {
+                AnyCallSiteId::Method(source) => source,
+                other => panic!(
+                    "method-callback function relation expected a method call-site ID, got {other:?}"
+                ),
+            };
+            assert_eq!(
+                relations.len(),
+                1,
+                "resolved method-callback function call site {expected_id:?} should emit exactly one semantic edge; got {relations:#?}"
+            );
+            assert!(
+                matches!(relations[0], CallRelation::MethodCallbackFunction { source: actual_source, target: actual_target }
+                    if actual_source == source && actual_target == target),
+                "expected MethodCallbackFunction edge {source:?} -> {target:?}, got {:?}",
+                relations[0]
+            );
+        }
+        ExpectedCallOutcome::ResolvedTupleStructConstructorLocalExact { target } => {
+            let source = match expected_id {
+                AnyCallSiteId::Path(source) => source,
+                other => panic!(
+                    "tuple struct constructor relation expected a path call-site ID, got {other:?}"
+                ),
+            };
+            assert_eq!(
+                relations.len(),
+                1,
+                "resolved tuple struct constructor call site {expected_id:?} should emit exactly one semantic edge; got {relations:#?}"
+            );
+            assert!(
+                matches!(relations[0], CallRelation::TupleStructConstructor { source: actual_source, target: actual_target }
+                    if actual_source == source && actual_target == target),
+                "expected TupleStructConstructor edge {source:?} -> {target:?}, got {:?}",
+                relations[0]
+            );
+        }
+        ExpectedCallOutcome::ResolvedEnumVariantConstructorLocalExact { target } => {
+            let source = match expected_id {
+                AnyCallSiteId::Path(source) => source,
+                other => panic!(
+                    "enum variant constructor relation expected a path call-site ID, got {other:?}"
+                ),
+            };
+            assert_eq!(
+                relations.len(),
+                1,
+                "resolved enum variant constructor call site {expected_id:?} should emit exactly one semantic edge; got {relations:#?}"
+            );
+            assert!(
+                matches!(relations[0], CallRelation::EnumVariantConstructor { source: actual_source, target: actual_target }
+                    if actual_source == source && actual_target == target),
+                "expected EnumVariantConstructor edge {source:?} -> {target:?}, got {:?}",
+                relations[0]
+            );
+        }
+    }
+}
+
+fn relation_source(relation: CallRelation) -> AnyCallSiteId {
+    match relation {
+        CallRelation::Function { source, .. } => source.into(),
+        CallRelation::DynamicFunction { source, .. } => source.into(),
+        CallRelation::DynamicClosure { source, .. } => source.into(),
+        CallRelation::Closure { source, .. } => source.into(),
+        CallRelation::LocalFunction { source, .. } => source.into(),
+        CallRelation::MethodCallbackFunction { source, .. } => source.into(),
+        CallRelation::MethodCallbackClosure { source, .. } => source.into(),
+        CallRelation::Method { source, .. } => source.into(),
+        CallRelation::AssociatedFunction { source, .. } => source.into(),
+        CallRelation::TupleStructConstructor { source, .. } => source.into(),
+        CallRelation::EnumVariantConstructor { source, .. } => source.into(),
+    }
+}
+
+fn path_matches(actual: &[String], expected: &[&str]) -> bool {
+    actual
+        .iter()
+        .map(String::as_str)
+        .eq(expected.iter().copied())
+}
+
+fn describe_call(call: &CallNode) -> String {
+    match call {
+        CallNode::PathCall(call) => format!(
+            "PathCall(id={:?}, owner={:?}, path={:?}, span={:?}, args={}, generics={})",
+            call.id, call.owner, call.path, call.span, call.arg_count, call.generic_arg_count
+        ),
+        CallNode::MethodCall(call) => format!(
+            "MethodCall(id={:?}, owner={:?}, method={}, receiver={:?}, span={:?}, args={}, generics={})",
+            call.id,
+            call.owner,
+            call.method_name,
+            call.receiver,
+            call.span,
+            call.arg_count,
+            call.generic_arg_count
+        ),
+        CallNode::DynamicCall(call) => format!(
+            "DynamicCall(id={:?}, owner={:?}, span={:?}, args={})",
+            call.id, call.owner, call.span, call.arg_count
+        ),
+        CallNode::MacroCall(call) => format!(
+            "MacroCall(id={:?}, owner={:?}, macro={}, span={:?})",
+            call.id, call.owner, call.macro_name, call.span
+        ),
+    }
+}

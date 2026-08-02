@@ -1,15 +1,30 @@
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use cozo::{DataValue, Db, MemStorage, ScriptMutability};
 use ploke_core::WorkspaceId;
-use syn_parser::{ParsedWorkspace, discovery::workspace::WorkspaceMetadataSection};
+use syn_parser::{
+    ParsedCodeGraph, ParsedWorkspace,
+    discovery::{CrateContext, DependencyMap, workspace::WorkspaceMetadataSection},
+    resolve::{
+        call_resolution::{
+            CallWorkspace, WorkspaceCrate, resolve_call_relations_after_tree_with_workspace,
+        },
+        module_tree::ModuleTree,
+    },
+};
 
 use crate::error::TransformError;
 use crate::schema::crate_node::WorkspaceMetadataSchema;
 use tracing::instrument;
 
-use super::transform_parsed_graph;
+use super::transform_parsed_graph_with_call_report;
+
+struct ParsedCrateSlice {
+    context: CrateContext,
+    graph: ParsedCodeGraph,
+    tree: ModuleTree,
+}
 
 /// Transforms workspace metadata into a database row and then transforms each parsed crate graph.
 #[instrument(skip_all, fields(crate_count = parsed_workspace.crates.len()))]
@@ -19,23 +34,131 @@ pub fn transform_parsed_workspace(
 ) -> Result<(), TransformError> {
     transform_workspace_metadata(db, &parsed_workspace.workspace)?;
 
+    let mut crates = Vec::new();
     for parsed_crate in parsed_workspace.crates {
+        let context = parsed_crate.crate_context;
         let mut parser_output = parsed_crate.parser_output;
-        let merged_graph = parser_output.extract_merged_graph().ok_or_else(|| {
+        let graph = parser_output.extract_merged_graph().ok_or_else(|| {
             TransformError::Transformation(
                 "ParsedWorkspace crate was missing its merged graph".to_string(),
             )
         })?;
-        let module_tree = parser_output.extract_module_tree().ok_or_else(|| {
+        let tree = parser_output.extract_module_tree().ok_or_else(|| {
             TransformError::Transformation(
                 "ParsedWorkspace crate was missing its module tree".to_string(),
             )
         })?;
 
-        transform_parsed_graph(db, merged_graph, &module_tree)?;
+        crates.push(ParsedCrateSlice {
+            context,
+            graph,
+            tree,
+        });
+    }
+
+    let reports = crates
+        .iter()
+        .enumerate()
+        .map(|(idx, krate)| {
+            let deps = dependency_crates(&crates, idx);
+            let workspace = CallWorkspace {
+                crates: deps.as_slice(),
+            };
+            resolve_call_relations_after_tree_with_workspace(&krate.graph, &krate.tree, workspace)
+                .map_err(|err| {
+                    TransformError::Transformation(format!(
+                        "typed workspace call relation resolution failed: {err}"
+                    ))
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for (krate, report) in crates.into_iter().zip(reports) {
+        transform_parsed_graph_with_call_report(db, krate.graph, &krate.tree, report)?;
     }
 
     Ok(())
+}
+
+fn dependency_crates<'a>(
+    crates: &'a [ParsedCrateSlice],
+    source_idx: usize,
+) -> Vec<WorkspaceCrate<'a>> {
+    let source = &crates[source_idx];
+    let mut deps = Vec::new();
+    collect_deps(
+        &mut deps,
+        source.context.dependencies(),
+        source,
+        crates,
+        source_idx,
+    );
+    collect_deps(
+        &mut deps,
+        source.context.dev_dependencies(),
+        source,
+        crates,
+        source_idx,
+    );
+    deps
+}
+
+fn collect_deps<'a>(
+    deps: &mut Vec<WorkspaceCrate<'a>>,
+    manifest: &'a impl DependencyMap,
+    source: &'a ParsedCrateSlice,
+    crates: &'a [ParsedCrateSlice],
+    source_idx: usize,
+) {
+    for (name, dep_path) in manifest.path_dependencies() {
+        for (idx, target) in crates.iter().enumerate() {
+            if idx == source_idx {
+                continue;
+            }
+            if !paths_match(
+                &source.context.root_path,
+                dep_path,
+                &target.context.root_path,
+            ) {
+                continue;
+            }
+            if deps.iter().any(|dep| {
+                dep.dependency_name == name
+                    && dep.graph.crate_namespace == target.graph.crate_namespace
+            }) {
+                continue;
+            }
+            deps.push(WorkspaceCrate {
+                dependency_name: name,
+                graph: &target.graph,
+                tree: &target.tree,
+            });
+        }
+    }
+}
+
+fn paths_match(source_root: &Path, dep_path: &str, target_root: &Path) -> bool {
+    let dep_path = Path::new(dep_path);
+    let resolved = if dep_path.is_absolute() {
+        normalize(dep_path)
+    } else {
+        normalize(source_root.join(dep_path))
+    };
+    resolved == normalize(target_root)
+}
+
+fn normalize(path: impl AsRef<Path>) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.as_ref().components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 pub(super) fn transform_workspace_metadata(
@@ -130,7 +253,8 @@ mod tests {
     use ploke_common::workspace_root;
     use ploke_core::WorkspaceId;
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
+    use std::fs;
+    use std::path::{Path, PathBuf};
     use syn_parser::{discovery::workspace::WorkspaceMetadataSection, parse_workspace};
 
     use crate::{
@@ -206,6 +330,170 @@ mod tests {
         assert_eq!(row[5], DataValue::Null);
         assert_eq!(row[6], DataValue::from("0.2.0"));
 
+        Ok(())
+    }
+
+    #[test]
+    fn transform_parsed_workspace_classifies_workspace_reexported_external_receiver_alias()
+    -> Result<(), Box<dyn std::error::Error>> {
+        assert_external_receiver_case(
+            &[(
+                "src/lib.rs",
+                r#"use provider::Request;
+
+pub fn call_workspace_reexported_external_receiver<B>(mut req: Request<B>) {
+    req.extensions_mut();
+}
+"#,
+            )],
+            "call_workspace_reexported_external_receiver",
+            "workspace re-exported external receiver alias",
+        )
+    }
+
+    #[test]
+    fn transform_parsed_workspace_classifies_same_crate_reexported_workspace_external_receiver_alias()
+    -> Result<(), Box<dyn std::error::Error>> {
+        assert_external_receiver_case(
+            &[
+                (
+                    "src/lib.rs",
+                    r#"pub mod extract;
+pub mod nested;
+"#,
+                ),
+                ("src/extract/mod.rs", "pub use provider::Request;\n"),
+                (
+                    "src/nested.rs",
+                    r#"use crate::extract::Request;
+
+pub fn call_same_crate_reexported_external_receiver<B>(mut req: Request<B>) {
+    req.extensions_mut();
+}
+"#,
+                ),
+            ],
+            "call_same_crate_reexported_external_receiver",
+            "same-crate re-exported workspace external receiver alias",
+        )
+    }
+
+    fn assert_external_receiver_case(
+        files: &[(&str, &str)],
+        owner: &str,
+        label: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempfile::tempdir()?;
+        let root = workspace.path();
+        let provider = root.join("provider");
+        let consumer = root.join("consumer");
+        fs::create_dir_all(provider.join("src"))?;
+        fs::create_dir_all(consumer.join("src"))?;
+
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"[workspace]
+members = ["provider", "consumer"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+provider = { path = "provider" }
+"#,
+        )?;
+        fs::write(
+            provider.join("Cargo.toml"),
+            r#"[package]
+name = "provider"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+http = "1"
+"#,
+        )?;
+        fs::write(
+            provider.join("src/lib.rs"),
+            "pub type Request<T = ()> = http::Request<T>;\n",
+        )?;
+        fs::write(
+            consumer.join("Cargo.toml"),
+            r#"[package]
+name = "consumer"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+provider = { workspace = true }
+"#,
+        )?;
+        for (path, content) in files {
+            write_consumer_file(&consumer, path, content)?;
+        }
+
+        let parsed_workspace = parse_workspace(root, None)?;
+        let db = Db::new(MemStorage::default()).expect("Failed to create database");
+        db.initialize().expect("Failed to initialize database");
+        create_schema_all(&db)?;
+
+        transform_parsed_workspace(&db, parsed_workspace)?;
+
+        let rows = db.run_script(
+            r#"?[owner_name, method_name, receiver_kind, receiver_path, status_kind, resolution_kind] :=
+                *function { id: owner_id, name: owner_name @ 'NOW' },
+                owner_name = $owner,
+                *call_site {
+                    id: site_id,
+                    owner_id,
+                    call_kind: "Method",
+                    method_name,
+                    receiver_kind,
+                    receiver_path @ 'NOW'
+                },
+                method_name = "extensions_mut",
+                *call_resolution_status {
+                    source_id: site_id,
+                    status_kind,
+                    resolution_kind @ 'NOW'
+                }"#,
+            BTreeMap::from([("owner".to_string(), DataValue::from(owner))]),
+            cozo::ScriptMutability::Immutable,
+        )?;
+
+        assert_eq!(
+            rows.rows.len(),
+            1,
+            "{label} should project one method row: {rows:#?}"
+        );
+        let row = &rows.rows[0];
+        assert_eq!(&row[1], &DataValue::from("extensions_mut"));
+        assert_eq!(&row[2], &DataValue::from("LocalBinding"));
+        assert_eq!(&row[3], &DataValue::List(vec![DataValue::from("req")]));
+        assert_eq!(&row[4], &DataValue::from("External"));
+        assert_eq!(&row[5], &DataValue::Null);
+
+        Ok(())
+    }
+
+    fn write_consumer_file(
+        consumer: &Path,
+        path: &str,
+        content: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let path = consumer.join(path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, content)?;
         Ok(())
     }
 }

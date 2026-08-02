@@ -1133,31 +1133,10 @@ impl ModuleTree {
             return Ok(());
         }
 
-        let mut start_idx = 0;
-        while start_idx < path_segments.len() && path_segments[start_idx].is_empty() {
-            start_idx += 1;
-        }
-        let trimmed_segments = &path_segments[start_idx..];
-        if trimmed_segments.is_empty() {
+        let Some((trimmed_segments, base_module_id, segments_to_resolve)) =
+            self.import_resolution_segments(source_mod_id, path_segments)
+        else {
             return Ok(());
-        }
-
-        let leading_global = start_idx > 0;
-        let starts_with_crate = trimmed_segments
-            .first()
-            .map(|seg| seg == "crate")
-            .unwrap_or(false);
-        let (base_module_id, segments_to_resolve) = if leading_global || starts_with_crate {
-            (
-                self.root(),
-                if starts_with_crate {
-                    &trimmed_segments[1..]
-                } else {
-                    trimmed_segments
-                },
-            )
-        } else {
-            (source_mod_id, trimmed_segments)
         };
 
         if import_node.is_glob {
@@ -1194,6 +1173,24 @@ impl ModuleTree {
             log::debug!(
                 target: LOG_TARGET_MOD_TREE_BUILD,
                 "ImportedBy created: {:?} -> import {} ({})",
+                target_primary_id,
+                import_node.visible_name,
+                import_node.source_path.join("::")
+            );
+            return Ok(());
+        }
+
+        if let Some(target_primary_id) =
+            self.lookup_public_glob_reexported_definition(source_mod_id, trimmed_segments, graph)?
+        {
+            let relation = SyntacticRelation::ImportedBy {
+                source: target_primary_id,
+                target: import_node.id,
+            };
+            self.add_rel(relation.into());
+            log::debug!(
+                target: LOG_TARGET_MOD_TREE_BUILD,
+                "ImportedBy created through public glob re-export: {:?} -> import {} ({})",
                 target_primary_id,
                 import_node.visible_name,
                 import_node.source_path.join("::")
@@ -1281,9 +1278,130 @@ impl ModuleTree {
                 import_node.visible_name,
                 import_node.source_path.join("::")
             );
+            return Ok(());
+        }
+
+        if let Ok(reexport_import_id) = ImportNodeId::try_from(target_any_id) {
+            for target_primary_id in self.reexport_primary_targets(reexport_import_id) {
+                let relation = SyntacticRelation::ImportedBy {
+                    source: target_primary_id,
+                    target: import_node.id,
+                };
+                self.add_rel(relation.into());
+                log::debug!(
+                    target: LOG_TARGET_MOD_TREE_BUILD,
+                    "ImportedBy created through re-export: {:?} -> import {} ({})",
+                    target_primary_id,
+                    import_node.visible_name,
+                    import_node.source_path.join("::")
+                );
+            }
         }
 
         Ok(())
+    }
+
+    fn reexport_primary_targets(&self, import_id: ImportNodeId) -> Vec<PrimaryNodeId> {
+        self.get_iter_relations_from(&import_id.as_any())
+            .into_iter()
+            .flatten()
+            .filter_map(|relation| match relation.rel() {
+                SyntacticRelation::ReExports { source, target } if *source == import_id => {
+                    Some(*target)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn lookup_public_glob_reexported_definition(
+        &self,
+        source_mod_id: ModuleNodeId,
+        path_segments: &[String],
+        graph: &ParsedCodeGraph,
+    ) -> Result<Option<PrimaryNodeId>, ModuleTreeError> {
+        let Some((member_name, parent_segments)) = path_segments.split_last() else {
+            return Ok(None);
+        };
+        if parent_segments.is_empty() {
+            return Ok(None);
+        }
+
+        let Some((_, base_module_id, segments_to_resolve)) =
+            self.import_resolution_segments(source_mod_id, parent_segments)
+        else {
+            return Ok(None);
+        };
+        let parent_any_id =
+            match self.resolve_path_relative_to(base_module_id, segments_to_resolve, graph) {
+                Ok(parent_any_id) => parent_any_id,
+                Err(_) => return Ok(None),
+            };
+        let Ok(parent_module_id) = ModuleNodeId::try_from(parent_any_id) else {
+            return Ok(None);
+        };
+        let parent_scope_id = self.definition_module_or_self(parent_module_id)?;
+
+        for relation in self
+            .get_iter_relations_from(&parent_scope_id.as_any())
+            .into_iter()
+            .flatten()
+        {
+            let SyntacticRelation::ModuleImports { target, .. } = relation.rel() else {
+                continue;
+            };
+            let glob_import_id = *target;
+            let glob_import = graph.get_import_checked(glob_import_id)?;
+            if !glob_import.is_glob || !glob_import.is_public_use() {
+                continue;
+            }
+
+            let mut glob_member_path = glob_import.source_path().to_vec();
+            glob_member_path.push(member_name.clone());
+            let Some(target_primary_id) =
+                self.lookup_definition_by_segments(parent_scope_id, &glob_member_path)?
+            else {
+                continue;
+            };
+            if self.is_glob_visible_child(target_primary_id, graph)? {
+                return Ok(Some(target_primary_id));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn import_resolution_segments<'a>(
+        &self,
+        source_mod_id: ModuleNodeId,
+        path_segments: &'a [String],
+    ) -> Option<(&'a [String], ModuleNodeId, &'a [String])> {
+        let mut start_idx = 0;
+        while start_idx < path_segments.len() && path_segments[start_idx].is_empty() {
+            start_idx += 1;
+        }
+        let trimmed_segments = &path_segments[start_idx..];
+        if trimmed_segments.is_empty() {
+            return None;
+        }
+        let leading_global = start_idx > 0;
+        let starts_with_crate = trimmed_segments
+            .first()
+            .map(|seg| seg == "crate")
+            .unwrap_or(false);
+        if leading_global || starts_with_crate {
+            Some((
+                trimmed_segments,
+                self.root(),
+                if starts_with_crate {
+                    &trimmed_segments[1..]
+                } else {
+                    trimmed_segments
+                },
+            ))
+        } else {
+            Some((trimmed_segments, source_mod_id, trimmed_segments))
+        }
     }
 
     fn link_glob_import(
@@ -1333,20 +1451,7 @@ impl ModuleTree {
         import_node: &ImportNode,
         graph: &ParsedCodeGraph,
     ) -> Result<(), ModuleTreeError> {
-        let module_entry = match self.modules.get(&module_id) {
-            Some(module) => module,
-            None => return Err(ModuleTreeError::ModuleNotFound(module_id)),
-        };
-
-        let target_module_id = if module_entry.items().is_some() {
-            module_id
-        } else if let Some(def_id) = module_entry.resolved_definition() {
-            def_id
-        } else if let Some(def_id) = self.find_definition_for_declaration(module_id) {
-            def_id
-        } else {
-            module_id
-        };
+        let target_module_id = self.definition_module_or_self(module_id)?;
 
         let module = self
             .modules
@@ -1384,6 +1489,26 @@ impl ModuleTree {
         }
 
         Ok(())
+    }
+
+    fn definition_module_or_self(
+        &self,
+        module_id: ModuleNodeId,
+    ) -> Result<ModuleNodeId, ModuleTreeError> {
+        let module_entry = self
+            .modules
+            .get(&module_id)
+            .ok_or(ModuleTreeError::ModuleNotFound(module_id))?;
+
+        if module_entry.items().is_some() {
+            Ok(module_id)
+        } else if let Some(def_id) = module_entry.resolved_definition() {
+            Ok(def_id)
+        } else if let Some(def_id) = self.find_definition_for_declaration(module_id) {
+            Ok(def_id)
+        } else {
+            Ok(module_id)
+        }
     }
 
     fn is_glob_visible_child(

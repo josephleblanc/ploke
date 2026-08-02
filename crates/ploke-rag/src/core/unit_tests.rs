@@ -16,21 +16,23 @@ mod tests {
     use std::{collections::BTreeMap, default, ops::Deref, sync::Arc};
 
     use crate::{ApproxCharTokenizer, AssemblyPolicy, RetrievalStrategy, TokenBudget};
-    #[cfg(feature = "typed_type_graph")]
-    use cozo::DataValue;
+    use cozo::{DataValue, Db, MemStorage, UuidWrapper};
     use itertools::Itertools;
     use lazy_static::lazy_static;
-    #[cfg(feature = "typed_type_graph")]
     use ploke_core::rag_types::TypeContextKind;
+    use ploke_core::rag_types::{
+        CallCalleeInfo, CallContextInfo, CallExpansionKind, CallReceiverInfo, CallResolutionKind,
+        CallSiteKind, CallStatusKind, CallTargetKind, ContextPart, ProofContextInfo,
+    };
     use ploke_core::{CrateId, EmbeddingData, RetrievalScope};
-    #[cfg(feature = "typed_type_graph")]
     use ploke_db::get_by_id::{GetNodeInfo, NodePaths};
+    use ploke_db::{
+        CallPathOptions, DbError, TypeContextSeed, TypeUseCoordinate, TypeUseRoot, to_uuid,
+    };
     use ploke_db::{
         Database, create_index_primary_with_index,
         multi_embedding::{db_ext::EmbeddingExt, debug::DebugAll, hnsw_ext::HnswExt},
     };
-    #[cfg(feature = "typed_type_graph")]
-    use ploke_db::{DbError, TypeContextSeed, TypeUseCoordinate, TypeUseRoot, to_uuid};
     use ploke_embed::{
         indexer::{EmbeddingProcessor, EmbeddingSource},
         local::{EmbeddingConfig, LocalEmbedder},
@@ -38,7 +40,6 @@ mod tests {
     };
     use ploke_error::Error;
     use ploke_io::IoManagerHandle;
-    #[cfg(feature = "typed_type_graph")]
     use ploke_test_utils::{
         ContainingOwnerSelector, CoordinateSpec, OwnerSelector, ShapePipelineCoverage,
         TargetSelector, TypeShapeCase, positive_type_shape_cases, setup_db_full_multi_embedding,
@@ -86,13 +87,52 @@ mod tests {
         RagService::new(db, embedding_runtime).expect("valid db and RagService constructor args")
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn init_test_rag_mock(db: Arc<Database>) -> RagService {
         let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
             Arc::clone(&db.active_embedding_set),
             EmbeddingProcessor::new_mock(),
         ));
         RagService::new(db, embedding_runtime).expect("valid db and RagService constructor args")
+    }
+
+    fn callee_shape_matches(actual: &CallCalleeInfo, expected: &CallCalleeInfo) -> bool {
+        match (actual, expected) {
+            (
+                CallCalleeInfo::Method {
+                    name: actual_name,
+                    receiver: actual_receiver,
+                },
+                CallCalleeInfo::Method {
+                    name: expected_name,
+                    receiver: expected_receiver,
+                },
+            ) => {
+                actual_name == expected_name
+                    && receiver_shape_matches(actual_receiver, expected_receiver)
+            }
+            _ => actual == expected,
+        }
+    }
+
+    fn receiver_shape_matches(
+        actual: &Option<CallReceiverInfo>,
+        expected: &Option<CallReceiverInfo>,
+    ) -> bool {
+        match (actual, expected) {
+            (
+                Some(CallReceiverInfo::MethodResultField {
+                    method_name: actual_method,
+                    field_path: actual_path,
+                    ..
+                }),
+                Some(CallReceiverInfo::MethodResultField {
+                    method_name: expected_method,
+                    field_path: expected_path,
+                    ..
+                }),
+            ) => actual_method == expected_method && actual_path == expected_path,
+            _ => actual == expected,
+        }
     }
 
     async fn init_test_rag_bm25(db: Arc<Database>) -> RagService {
@@ -132,7 +172,6 @@ mod tests {
             .expect("valid db and RagService constructor args")
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn unique_id_by_name(db: &Database, relation: &str, name: &str) -> Result<Uuid, Error> {
         let script = format!(
             r#"?[id] :=
@@ -148,7 +187,6 @@ mod tests {
         to_uuid(&rows.rows[0][0]).map_err(Error::from)
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn impl_self_target_for_method_name(db: &Database, method_name: &str) -> Result<Uuid, Error> {
         let script = format!(
             r#"?[target_id] :=
@@ -171,12 +209,10 @@ mod tests {
         to_uuid(&rows.rows[0][0]).map_err(Error::from)
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn covers(case: &TypeShapeCase, coverage: ShapePipelineCoverage) -> bool {
         case.coverage.iter().any(|candidate| *candidate == coverage)
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn resolve_matrix_owner(db: &Database, selector: OwnerSelector) -> Result<Uuid, DbError> {
         match selector {
             OwnerSelector::FunctionInModule { module_path, name } => {
@@ -286,7 +322,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn resolve_matrix_target(
         db: &Database,
         owner_id: Uuid,
@@ -345,7 +380,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn resolve_containing_owner(
         db: &Database,
         selector: ContainingOwnerSelector,
@@ -379,7 +413,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn resolve_matrix_coordinate(
         db: &Database,
         spec: CoordinateSpec,
@@ -438,7 +471,6 @@ mod tests {
         })
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn exactly_one_matrix_root(
         db: &Database,
         owner_id: Uuid,
@@ -461,7 +493,6 @@ mod tests {
         Ok(matching[0].clone())
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn one_uuid(db: &Database, script: &str) -> Result<Uuid, DbError> {
         let rows = db.raw_query(script)?;
         assert_eq!(
@@ -473,7 +504,70 @@ mod tests {
         to_uuid(&rows.rows[0][0])
     }
 
-    #[cfg(feature = "typed_type_graph")]
+    fn closure_owner_for_parent(db: &Database, parent: Uuid) -> Result<Uuid, DbError> {
+        executable_owner_for_parent(db, parent, "Closure", "closure")
+    }
+
+    fn closure_owner_for_method_parent(db: &Database, parent: Uuid) -> Result<Uuid, DbError> {
+        executable_owner_for_parent_kind(db, parent, "Method", "Closure", "closure")
+    }
+
+    fn async_block_owner_for_parent(db: &Database, parent: Uuid) -> Result<Uuid, DbError> {
+        executable_owner_for_parent(db, parent, "AsyncBlock", "async_block")
+    }
+
+    fn async_block_owner_for_method_parent(db: &Database, parent: Uuid) -> Result<Uuid, DbError> {
+        executable_owner_for_parent_kind(db, parent, "Method", "AsyncBlock", "async_block")
+    }
+
+    fn async_closure_owner_for_parent(db: &Database, parent: Uuid) -> Result<Uuid, DbError> {
+        executable_owner_for_parent(db, parent, "Closure", "async_closure")
+    }
+
+    fn local_item_owner_for_parent(db: &Database, parent: Uuid) -> Result<Uuid, DbError> {
+        local_item_owner_for_parent_with_label(db, parent, "local_const")
+    }
+
+    fn local_item_owner_for_parent_with_label(
+        db: &Database,
+        parent: Uuid,
+        label: &str,
+    ) -> Result<Uuid, DbError> {
+        executable_owner_for_parent(db, parent, "LocalItem", label)
+    }
+
+    fn executable_owner_for_parent(
+        db: &Database,
+        parent: Uuid,
+        owner_kind: &str,
+        label: &str,
+    ) -> Result<Uuid, DbError> {
+        executable_owner_for_parent_kind(db, parent, "Function", owner_kind, label)
+    }
+
+    fn executable_owner_for_parent_kind(
+        db: &Database,
+        parent: Uuid,
+        parent_kind: &str,
+        owner_kind: &str,
+        label: &str,
+    ) -> Result<Uuid, DbError> {
+        one_uuid(
+            db,
+            &format!(
+                r#"?[id] :=
+                    parent = to_uuid("{parent}"),
+                    *call_body_owner {{
+                        id,
+                        owner_kind: "{owner_kind}",
+                        parent_id: parent,
+                        parent_kind: "{parent_kind}",
+                        label: "{label}" @ 'NOW'
+                    }}"#
+            ),
+        )
+    }
+
     fn one_uuid_by_file_suffix(
         db: &Database,
         script: &str,
@@ -500,7 +594,6 @@ mod tests {
         to_uuid(&matching[0])
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn module_path(items: &[&str]) -> String {
         format!(
             "[{}]",
@@ -512,7 +605,6 @@ mod tests {
         )
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn function_in_module_query(module_path_items: &[&str], name: &str) -> String {
         let module_path = module_path(module_path_items);
         format!(
@@ -522,12 +614,10 @@ mod tests {
         )
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn function_in_file_query(name: &str) -> String {
         item_in_file_query("function", name)
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn item_in_file_query(relation: &str, name: &str) -> String {
         format!(
             r#"?[id, file_path] :=
@@ -541,7 +631,6 @@ mod tests {
         )
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn struct_in_module_query(module_path_items: &[&str], name: &str) -> String {
         let module_path = module_path(module_path_items);
         format!(
@@ -556,12 +645,17 @@ mod tests {
         )
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn struct_in_file_query(name: &str) -> String {
         item_in_file_query("struct", name)
     }
+    fn variant_by_enum_query(enum_name: &str, variant_name: &str) -> String {
+        format!(
+            r#"?[id] :=
+                *enum {{ id: enum_id, name: "{enum_name}" @ 'NOW' }},
+                *variant {{ id, name: "{variant_name}", owner_id: enum_id @ 'NOW' }}"#
+        )
+    }
 
-    #[cfg(feature = "typed_type_graph")]
     fn trait_in_module_query(module_path_items: &[&str], name: &str) -> String {
         let module_path = module_path(module_path_items);
         format!(
@@ -576,12 +670,17 @@ mod tests {
         )
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn trait_in_file_query(name: &str) -> String {
         item_in_file_query("trait", name)
     }
+    fn trait_method_query(trait_name: &str, method: &str) -> String {
+        format!(
+            r#"?[method_id] :=
+                *method {{ id: method_id, name: "{method}", owner_id: trait_id @ 'NOW' }},
+                *trait {{ id: trait_id, name: "{trait_name}" @ 'NOW' }}"#
+        )
+    }
 
-    #[cfg(feature = "typed_type_graph")]
     fn method_by_impl_self_query(self_type: &str, method: &str) -> String {
         format!(
             r#"?[method_id] :=
@@ -601,7 +700,6 @@ mod tests {
         )
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn method_by_impl_trait_self_query(trait_name: &str, self_type: &str, method: &str) -> String {
         format!(
             r#"?[method_id] :=
@@ -632,7 +730,6 @@ mod tests {
         )
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn method_by_raw_pointer_impl_query(trait_name: &str, mutable: bool, method: &str) -> String {
         format!(
             r#"?[method_id, file_path] :=
@@ -666,7 +763,6 @@ mod tests {
         )
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn impl_by_trait_query(trait_name: &str) -> String {
         format!(
             r#"?[impl_id, file_path] :=
@@ -691,7 +787,6 @@ mod tests {
         )
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn generic_type_param_id_by_owner_name(
         db: &Database,
         owner_id: Uuid,
@@ -710,7 +805,6 @@ mod tests {
         )
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn where_generic_param_bound_owner(
         db: &Database,
         containing_owner_id: Uuid,
@@ -753,7 +847,6 @@ mod tests {
         )
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn generic_type_name(db: &Database, target_id: Uuid) -> Result<String, DbError> {
         let rows = db.raw_query(&format!(
             r#"?[name] :=
@@ -1638,27 +1731,20 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         Ok(())
     }
 
-    #[cfg(feature = "typed_type_graph")]
-    async fn stale_plain_starting_db() -> Result<Arc<Database>, Error> {
+    fn plain_fixture_starting_db() -> Result<Arc<Database>, Error> {
         use ploke_test_utils::FIXTURE_NODES_CANONICAL;
-        use ploke_test_utils::fixture_dbs::backup_fixture_path_or_seed;
 
-        let path = backup_fixture_path_or_seed(&FIXTURE_NODES_CANONICAL).map_err(Error::from)?;
-        let db = Database::create_new_backup_default(&path)
-            .await
-            .map_err(Error::from)?;
-        Ok(Arc::new(db))
+        Ok(Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL)?))
     }
 
-    #[cfg(feature = "typed_type_graph")]
     #[tokio::test]
     async fn type_context_disabled_safely_when_relations_absent() -> Result<(), Error> {
         init_tracing_once();
 
-        let db = stale_plain_starting_db().await?;
+        let db = plain_fixture_starting_db()?;
         assert!(
             !db.has_typed_type_graph_relations().map_err(Error::from)?,
-            "stale plain starting-db restore must lack typed-graph relations for this regression"
+            "plain fixture import must not expose populated typed-graph relations for this regression"
         );
 
         let rag = {
@@ -1687,8 +1773,48 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
 
         Ok(())
     }
+    mod call_context;
+    mod proof_context;
+    fn assert_incoming_expansion(part: &ContextPart, call: &CallContextInfo, target_id: Uuid) {
+        assert_call_expansion(
+            part,
+            call,
+            target_id,
+            CallExpansionKind::IncomingCaller,
+            target_id,
+        );
+    }
+    fn assert_outgoing_expansion(
+        part: &ContextPart,
+        call: &CallContextInfo,
+        seed_id: Uuid,
+        target_id: Uuid,
+    ) {
+        assert_call_expansion(
+            part,
+            call,
+            seed_id,
+            CallExpansionKind::OutgoingTarget,
+            target_id,
+        );
+    }
+    fn assert_call_expansion(
+        part: &ContextPart,
+        call: &CallContextInfo,
+        seed_id: Uuid,
+        relation: CallExpansionKind,
+        target_id: Uuid,
+    ) {
+        let expansion = part
+            .call_expansion
+            .expect("expanded call-context part should carry call-expansion provenance");
+        assert_eq!(expansion.seed_id, seed_id);
+        assert_eq!(expansion.relation, relation);
+        assert_eq!(expansion.call_site_id, call.site_id);
+        assert_eq!(expansion.target_id, target_id);
+        assert_eq!(expansion.distance, 1);
+    }
 
-    #[cfg(feature = "typed_type_graph")]
     #[tokio::test]
     async fn type_context_expansion_adds_materializable_type_neighbors() -> Result<(), Error> {
         init_tracing_once();
@@ -1727,7 +1853,6 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         Ok(())
     }
 
-    #[cfg(feature = "typed_type_graph")]
     #[tokio::test]
     async fn corpus_type_shape_matrix_expands_db_and_rag_type_context() -> Result<(), Error> {
         init_tracing_once();
@@ -1736,7 +1861,7 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
             .iter()
             .filter(|case| covers(case, ShapePipelineCoverage::RagApi))
         {
-            let db = Arc::new(fresh_backup_fixture_db(case.fixture.searchable_fixture())?);
+            let db = Arc::new(fresh_backup_fixture_db(case.fixture.fixture())?);
             let owner_id = resolve_matrix_owner(&db, case.owner).map_err(Error::from)?;
             let target_id = resolve_matrix_target(&db, owner_id, case).map_err(Error::from)?;
 
@@ -1781,13 +1906,12 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         Ok(())
     }
 
-    #[cfg(feature = "typed_type_graph")]
     #[tokio::test]
     async fn axum_struct_seed_materializes_nested_trait_object_target() -> Result<(), Error> {
         init_tracing_once();
 
         let db = Arc::new(fresh_backup_fixture_db(
-            &ploke_test_utils::CORPUS_AXUM_OPENROUTER_EMBEDDINGS,
+            &ploke_test_utils::CORPUS_AXUM_TYPE_GRAPH,
         )?);
         let seed_id = one_uuid_by_file_suffix(
             &db,
@@ -1819,14 +1943,13 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         Ok(())
     }
 
-    #[cfg(feature = "typed_type_graph")]
     #[tokio::test]
     async fn axum_boxed_into_route_sparse_context_emits_nested_trait_type_context()
     -> Result<(), Error> {
         init_tracing_once();
 
         let db = Arc::new(fresh_backup_fixture_db(
-            &ploke_test_utils::CORPUS_AXUM_OPENROUTER_EMBEDDINGS,
+            &ploke_test_utils::CORPUS_AXUM_TYPE_GRAPH,
         )?);
         let seed_id = one_uuid_by_file_suffix(
             &db,
@@ -1880,13 +2003,12 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         Ok(())
     }
 
-    #[cfg(feature = "typed_type_graph")]
     #[tokio::test]
     async fn chrono_single_day_owner_seeded_expands_weekday_type_context() -> Result<(), Error> {
         init_tracing_once();
 
         let db = Arc::new(fresh_backup_fixture_db(
-            &ploke_test_utils::CORPUS_CHRONO_OPENROUTER_EMBEDDINGS,
+            &ploke_test_utils::CORPUS_CHRONO_TYPE_GRAPH,
         )?);
         let seed_id = one_uuid(&db, &method_by_impl_self_query("WeekdaySet", "single_day"))
             .map_err(Error::from)?;
@@ -1907,13 +2029,12 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         Ok(())
     }
 
-    #[cfg(feature = "typed_type_graph")]
     #[tokio::test]
     async fn chrono_single_day_bm25_precise_query_retrieves_method_owner() -> Result<(), Error> {
         init_tracing_once();
 
         let db = Arc::new(fresh_backup_fixture_db(
-            &ploke_test_utils::CORPUS_CHRONO_OPENROUTER_EMBEDDINGS,
+            &ploke_test_utils::CORPUS_CHRONO_TYPE_GRAPH,
         )?);
         let method_id = one_uuid(&db, &method_by_impl_self_query("WeekdaySet", "single_day"))
             .map_err(Error::from)?;
@@ -1933,13 +2054,12 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         Ok(())
     }
 
-    #[cfg(feature = "typed_type_graph")]
     #[tokio::test]
     async fn axum_map_layer_field_seeded_expands_layer_fn_type_context() -> Result<(), Error> {
         init_tracing_once();
 
         let db = Arc::new(fresh_backup_fixture_db(
-            &ploke_test_utils::CORPUS_AXUM_OPENROUTER_EMBEDDINGS,
+            &ploke_test_utils::CORPUS_AXUM_TYPE_GRAPH,
         )?);
         let map_id =
             one_uuid_by_file_suffix(&db, &struct_in_file_query("Map"), "axum/src/boxed.rs")
@@ -1975,13 +2095,12 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         Ok(())
     }
 
-    #[cfg(feature = "typed_type_graph")]
     #[tokio::test]
     async fn axum_map_bm25_precise_query_retrieves_map_struct() -> Result<(), Error> {
         init_tracing_once();
 
         let db = Arc::new(fresh_backup_fixture_db(
-            &ploke_test_utils::CORPUS_AXUM_OPENROUTER_EMBEDDINGS,
+            &ploke_test_utils::CORPUS_AXUM_TYPE_GRAPH,
         )?);
         let map_id =
             one_uuid_by_file_suffix(&db, &struct_in_file_query("Map"), "axum/src/boxed.rs")
@@ -2002,7 +2121,6 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         Ok(())
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn context_label(db: &Database, id: Uuid) -> String {
         db.paths_from_id(id)
             .ok()

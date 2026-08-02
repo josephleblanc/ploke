@@ -13,6 +13,16 @@ pub struct ContextPart {
     pub modality: Modality,
     #[serde(default)]
     pub type_context: Option<TypeContextInfo>,
+    #[serde(default)]
+    pub call_expansion: Option<CallExpansionInfo>,
+    #[serde(default)]
+    pub call_context: Vec<CallContextInfo>,
+    #[serde(default)]
+    pub call_paths_from_owner: Vec<CallPathInfo>,
+    #[serde(default)]
+    pub call_paths_to_target: Vec<CallPathInfo>,
+    #[serde(default)]
+    pub proof_context: Vec<ProofContextInfo>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -116,6 +126,850 @@ pub struct TypeContextInfo {
     pub distance: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum CallExpansionKind {
+    OutgoingTarget,
+    IncomingCaller,
+}
+
+impl CallExpansionKind {
+    pub fn to_static_str(self) -> &'static str {
+        match self {
+            Self::OutgoingTarget => "OutgoingTarget",
+            Self::IncomingCaller => "IncomingCaller",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallExpansionInfo {
+    pub seed_id: Uuid,
+    pub relation: CallExpansionKind,
+    pub call_site_id: Uuid,
+    pub target_id: Uuid,
+    pub distance: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum CallSiteKind {
+    Path,
+    Method,
+    Dynamic,
+    Macro,
+}
+
+impl CallSiteKind {
+    pub fn to_static_str(&self) -> &'static str {
+        match self {
+            Self::Path => "Path",
+            Self::Method => "Method",
+            Self::Dynamic => "Dynamic",
+            Self::Macro => "Macro",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum CallReceiverInfo {
+    SelfValue,
+    SelfField {
+        path: Vec<String>,
+    },
+    LocalBinding {
+        name: String,
+    },
+    TypedLocalBinding {
+        name: String,
+        type_path: Vec<String>,
+    },
+    InitializedLocalBinding {
+        name: String,
+        init_path: Vec<String>,
+    },
+    AliasedLocalBinding {
+        name: String,
+        source_path: Vec<String>,
+    },
+    TupleReturnBinding {
+        name: String,
+        path: Vec<String>,
+        index: usize,
+    },
+    TupleMethodReturn {
+        name: String,
+        method_name: String,
+        method_span: (usize, usize),
+        index: usize,
+    },
+    MethodResultLocalBinding {
+        name: String,
+        method_name: String,
+        method_span: (usize, usize),
+    },
+    MethodResultField {
+        method_name: String,
+        method_span: (usize, usize),
+        field_path: Vec<String>,
+    },
+    EnumVariantBinding {
+        name: String,
+        enum_path: Vec<String>,
+        variant_name: String,
+        field_index: usize,
+    },
+    BorrowedLocalBinding {
+        name: String,
+    },
+    BorrowedTypedLocalBinding {
+        name: String,
+        type_path: Vec<String>,
+    },
+    BorrowedInitializedLocalBinding {
+        name: String,
+        init_path: Vec<String>,
+    },
+    DereferencedLocalBinding {
+        name: String,
+    },
+    DereferencedInitializedLocalBinding {
+        name: String,
+        init_path: Vec<String>,
+    },
+    FieldLocalBinding {
+        name: String,
+        field_path: Vec<String>,
+    },
+    FieldTypedLocalBinding {
+        name: String,
+        type_path: Vec<String>,
+        field_path: Vec<String>,
+    },
+    FieldInitializedLocalBinding {
+        name: String,
+        init_path: Vec<String>,
+        field_path: Vec<String>,
+    },
+    PathCallResult {
+        path: Vec<String>,
+    },
+    MethodCallResult {
+        method_name: String,
+    },
+    AwaitResult,
+    AwaitPathCallResult {
+        path: Vec<String>,
+    },
+    AwaitMethodCallResult {
+        method_name: String,
+    },
+    TryResult,
+    TryPathCallResult {
+        path: Vec<String>,
+    },
+    TryMethodCallResult {
+        method_name: String,
+    },
+    IfBranchPaths {
+        paths: Vec<Vec<String>>,
+    },
+    Literal,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum CallCalleeInfo {
+    Path {
+        path: Vec<String>,
+    },
+    Method {
+        name: String,
+        receiver: Option<CallReceiverInfo>,
+    },
+    Macro {
+        name: String,
+    },
+    Dynamic,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum CallTargetKind {
+    Function,
+    DynamicFunction,
+    Closure,
+    LocalFunction,
+    DynamicClosure,
+    MethodCallbackFunction,
+    MethodCallbackClosure,
+    Method,
+    AssociatedFunction,
+    TupleStructConstructor,
+    EnumVariantConstructor,
+}
+
+impl CallTargetKind {
+    pub fn to_static_str(&self) -> &'static str {
+        match self {
+            Self::Function => "Function",
+            Self::DynamicFunction => "DynamicFunction",
+            Self::Closure => "Closure",
+            Self::LocalFunction => "LocalFunction",
+            Self::DynamicClosure => "DynamicClosure",
+            Self::MethodCallbackFunction => "MethodCallbackFunction",
+            Self::MethodCallbackClosure => "MethodCallbackClosure",
+            Self::Method => "Method",
+            Self::AssociatedFunction => "AssociatedFunction",
+            Self::TupleStructConstructor => "TupleStructConstructor",
+            Self::EnumVariantConstructor => "EnumVariantConstructor",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallTargetInfo {
+    pub target_id: Uuid,
+    pub relation: CallTargetKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallSiteBucketInfo {
+    pub kind: CallSiteKind,
+    pub relation: CallTargetKind,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum CallEndpointKind {
+    Function,
+    Closure,
+    LocalItem,
+    Method,
+    Struct,
+    Variant,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum CallStatusKind {
+    Resolved,
+    Unresolved,
+    Ambiguous,
+    External,
+    Unsupported,
+}
+
+impl CallStatusKind {
+    pub fn to_static_str(&self) -> &'static str {
+        match self {
+            Self::Resolved => "Resolved",
+            Self::Unresolved => "Unresolved",
+            Self::Ambiguous => "Ambiguous",
+            Self::External => "External",
+            Self::Unsupported => "Unsupported",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum CallResolutionKind {
+    LocalExact,
+}
+
+impl CallResolutionKind {
+    pub fn to_static_str(&self) -> &'static str {
+        match self {
+            Self::LocalExact => "LocalExact",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallContextInfo {
+    pub site_id: Uuid,
+    pub owner_id: Uuid,
+    pub kind: CallSiteKind,
+    pub span: (u32, u32),
+    #[serde(default)]
+    pub path: Option<Vec<String>>,
+    #[serde(default)]
+    pub arg_count: Option<u32>,
+    #[serde(default)]
+    pub generic_arg_count: Option<u32>,
+    pub callee: CallCalleeInfo,
+    pub status: CallStatusKind,
+    #[serde(default)]
+    pub resolution: Option<CallResolutionKind>,
+    #[serde(default)]
+    pub targets: Vec<CallTargetInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallCalleeEvidenceInfo {
+    pub site_id: Uuid,
+    pub site_kind: CallSiteKind,
+    pub callee_kind: String,
+    pub callee_path: Vec<String>,
+    #[serde(default)]
+    pub closure_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallPathEdgeInfo {
+    pub caller_id: Uuid,
+    pub callee_id: Uuid,
+    pub call_site_id: Uuid,
+    #[serde(default)]
+    pub span: (u32, u32),
+    pub relation: CallTargetKind,
+    pub source_kind: CallSiteKind,
+    pub target_kind: CallEndpointKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallPathNodeInfo {
+    pub id: Uuid,
+    pub file_path: NodeFilepath,
+    pub canon_path: CanonPath,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallPathInfo {
+    pub start_id: Uuid,
+    pub end_id: Uuid,
+    pub depth: u32,
+    pub edges: Vec<CallPathEdgeInfo>,
+    pub nodes: Vec<CallPathNodeInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallNodeInfo {
+    pub id: Uuid,
+    pub kind: String,
+    pub name: String,
+    pub visibility: String,
+    pub is_public: bool,
+    #[serde(default)]
+    pub is_unsafe: bool,
+    #[serde(default)]
+    pub is_async: bool,
+    #[serde(default)]
+    pub module_path: Vec<String>,
+    pub file_path: NodeFilepath,
+    pub canon_path: CanonPath,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallImpactInfo {
+    pub target: CallNodeInfo,
+    pub paths: Vec<CallPathInfo>,
+    pub callers: Vec<CallNodeInfo>,
+    pub direct_callers: Vec<CallNodeInfo>,
+    pub direct_call_sites: Vec<CallContextInfo>,
+    #[serde(default)]
+    pub callsite_buckets: Vec<CallSiteBucketInfo>,
+    pub public_callers: Vec<CallNodeInfo>,
+    pub test_callers: Vec<CallNodeInfo>,
+    pub non_test_callers: Vec<CallNodeInfo>,
+    pub source_files: Vec<NodeFilepath>,
+    #[serde(default)]
+    pub source_crates: Vec<String>,
+    #[serde(default)]
+    pub source_cfgs: Vec<String>,
+    #[serde(default)]
+    pub source_modules: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallGuardInfo {
+    pub source: CallNodeInfo,
+    pub target: CallNodeInfo,
+    pub guard: CallNodeInfo,
+    pub guarded: bool,
+    pub paths: Vec<CallPathInfo>,
+    pub violations: Vec<CallPathInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallEffectGuardInfo {
+    pub owner: CallNodeInfo,
+    pub guard: CallNodeInfo,
+    pub effect_class: String,
+    pub guarded: bool,
+    pub effects: Vec<CallReachEffectInfo>,
+    pub violations: Vec<CallReachEffectInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallReachInfo {
+    pub owner: CallNodeInfo,
+    pub paths: Vec<CallPathInfo>,
+    pub callees: Vec<CallNodeInfo>,
+    pub direct_callees: Vec<CallNodeInfo>,
+    pub direct_call_sites: Vec<CallContextInfo>,
+    pub boundary_call_sites: Vec<CallContextInfo>,
+    #[serde(default)]
+    pub boundary_edges: Vec<CallPathEdgeInfo>,
+    pub public_callees: Vec<CallNodeInfo>,
+    pub frontier_calls: Vec<CallContextInfo>,
+    pub external_frontier_calls: Vec<CallContextInfo>,
+    pub unsupported_frontier_calls: Vec<CallContextInfo>,
+    #[serde(default)]
+    pub unresolved_frontier_calls: Vec<CallContextInfo>,
+    #[serde(default)]
+    pub ambiguous_frontier_calls: Vec<CallContextInfo>,
+    pub source_files: Vec<NodeFilepath>,
+    #[serde(default)]
+    pub source_crates: Vec<String>,
+    #[serde(default)]
+    pub source_cfgs: Vec<String>,
+    #[serde(default)]
+    pub source_modules: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ModuleBoundaryEdgeInfo {
+    pub edge: CallPathEdgeInfo,
+    pub caller: CallNodeInfo,
+    pub callee: CallNodeInfo,
+    pub site: CallContextInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CrateBoundaryEdgeInfo {
+    pub edge: CallPathEdgeInfo,
+    pub caller: CallNodeInfo,
+    pub caller_crate: String,
+    pub callee: CallNodeInfo,
+    pub callee_crate: String,
+    pub site: CallContextInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ModuleBoundaryPolicyViolationInfo {
+    pub rule_id: String,
+    pub edge: ModuleBoundaryEdgeInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CrateBoundaryPolicyViolationInfo {
+    pub rule_id: String,
+    pub edge: CrateBoundaryEdgeInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallReachEffectInfo {
+    pub effect_seed_id: String,
+    pub effect_class: String,
+    #[serde(default)]
+    pub confidence: Option<String>,
+    #[serde(default)]
+    pub blocker_if_unresolved: Option<bool>,
+    #[serde(default)]
+    pub paths_to_owner: Vec<CallPathInfo>,
+    pub call_site: CallContextInfo,
+    #[serde(default)]
+    pub blocker_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct UnsafeBlockCallInfo {
+    #[serde(default)]
+    pub paths_to_owner: Vec<CallPathInfo>,
+    pub call_site: CallContextInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallEffectPolicyViolationInfo {
+    pub allowed_effects: Vec<String>,
+    pub effect: CallReachEffectInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallProofInvariantFindingInfo {
+    pub invariant: String,
+    pub status: String,
+    pub reason: String,
+    #[serde(default)]
+    pub call_site_id: Option<String>,
+    #[serde(default)]
+    pub call_site: Option<CallContextInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ExternalSummaryNeedInfo {
+    #[serde(default)]
+    pub paths_to_owner: Vec<CallPathInfo>,
+    pub call_site: CallContextInfo,
+    #[serde(default)]
+    pub blocker_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct RuntimeDispatchNeedInfo {
+    #[serde(default)]
+    pub paths_to_owner: Vec<CallPathInfo>,
+    pub call_site: CallContextInfo,
+    #[serde(default)]
+    pub blocker_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct AwaitedCallSiteInfo {
+    pub site_id: Uuid,
+    pub owner_id: Uuid,
+    pub kind: CallSiteKind,
+    pub span: (u32, u32),
+    #[serde(default)]
+    pub path: Option<Vec<String>>,
+    #[serde(default)]
+    pub arg_count: Option<u32>,
+    #[serde(default)]
+    pub generic_arg_count: Option<u32>,
+    pub callee: CallCalleeInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalBindingRelationKind {
+    OwnerContainsBinding,
+    BindingSourceClosure,
+    BindingSourceCallResult,
+    BindingSourceFunction,
+    BindingSourceLocalItem,
+    BindingProjectsField,
+    BindingSourceParameter,
+    BindingAliasesBinding,
+    ArgumentSuppliesParameter,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct LocalBindingInfo {
+    pub id: Uuid,
+    pub owner_id: Uuid,
+    pub owner_kind: String,
+    pub kind: String,
+    pub name: String,
+    pub span: (u32, u32),
+    #[serde(default)]
+    pub cfgs: Vec<String>,
+    pub source_kind: String,
+    #[serde(default)]
+    pub source_id: Option<Uuid>,
+    #[serde(default)]
+    pub source_call_kind: Option<String>,
+    #[serde(default)]
+    pub source_path: Option<Vec<String>>,
+    #[serde(default)]
+    pub callee_kind: Option<String>,
+    #[serde(default)]
+    pub callee_path: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct LocalBindingEdgeInfo {
+    pub source_id: Uuid,
+    pub target_id: Uuid,
+    pub relation: LocalBindingRelationKind,
+    pub source_kind: String,
+    pub target_kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct SelfFieldParameterFlowInfo {
+    pub site: CallContextInfo,
+    pub constructor_id: Uuid,
+    pub return_binding: LocalBindingInfo,
+    pub field_binding: LocalBindingInfo,
+    pub parameter_binding: LocalBindingInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct SelfFieldAssignmentFlowInfo {
+    pub site: CallContextInfo,
+    pub owner_type: String,
+    pub setter_id: Uuid,
+    pub assignment_binding: LocalBindingInfo,
+    pub parameter_binding: LocalBindingInfo,
+    pub source_edge: LocalBindingEdgeInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct SelfFieldAssignmentArgumentFlowInfo {
+    pub field_flow: SelfFieldAssignmentFlowInfo,
+    pub setter_call: CallContextInfo,
+    pub argument_edge: LocalBindingEdgeInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct FuturePollFieldProducerFlowInfo {
+    pub site: CallContextInfo,
+    pub poll_owner_type: String,
+    pub producer_id: Uuid,
+    pub return_binding: LocalBindingInfo,
+    pub field_binding: LocalBindingInfo,
+    pub source_site: CallContextInfo,
+    pub source_edge: LocalBindingEdgeInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ReturnedCallSourceKind {
+    Closure,
+    Path,
+    Method,
+    Dynamic,
+    Macro,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ReturnedCallSiteInfo {
+    pub id: Uuid,
+    pub span: (u32, u32),
+    pub path: Vec<String>,
+    pub target_id: Uuid,
+    pub relation: CallTargetKind,
+    pub target_kind: CallEndpointKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ReturnedCallProducerInfo {
+    pub id: Uuid,
+    pub site_id: Uuid,
+    pub span: (u32, u32),
+    pub path: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ReturnedCallSourceInfo {
+    pub id: Uuid,
+    pub relation: LocalBindingRelationKind,
+    pub kind: ReturnedCallSourceKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ReturnedCallBindingInfo {
+    pub id: Uuid,
+    pub source: ReturnedCallSourceInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ReturnedCallBindingFlowInfo {
+    pub caller_id: Uuid,
+    pub dynamic: ReturnedCallSiteInfo,
+    pub producer: ReturnedCallProducerInfo,
+    pub binding: ReturnedCallBindingInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ReturnedFutureSiteInfo {
+    pub id: Uuid,
+    pub span: (u32, u32),
+    pub path: Vec<String>,
+    pub callee_kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ReturnedFutureFlowInfo {
+    pub caller_id: Uuid,
+    pub producer: ReturnedCallProducerInfo,
+    pub binding: ReturnedCallBindingInfo,
+    pub future: ReturnedFutureSiteInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ReturnedFutureExecutionFlowInfo {
+    pub caller_id: Uuid,
+    pub producer: ReturnedCallProducerInfo,
+    pub producer_binding: ReturnedCallBindingInfo,
+    pub future: ReturnedFutureSiteInfo,
+    pub maker: ReturnedCallProducerInfo,
+    pub callable_binding: ReturnedCallBindingInfo,
+    pub body_edge: CallPathEdgeInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallBuildDomainInfo {
+    pub build_domain_id: String,
+    #[serde(default)]
+    pub target_kind: Option<String>,
+    #[serde(default)]
+    pub target_name: Option<String>,
+    #[serde(default)]
+    pub target_root: Option<String>,
+    #[serde(default)]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub rustc_version: Option<String>,
+    #[serde(default)]
+    pub proof_policy_version: Option<String>,
+    #[serde(default)]
+    pub active_cfg_hash: Option<String>,
+    #[serde(default)]
+    pub evidence_use: Option<String>,
+    #[serde(default)]
+    pub blocker_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallTestEntrypointInfo {
+    pub entrypoint_summary_id: String,
+    #[serde(default)]
+    pub build_domain_id: Option<String>,
+    #[serde(default)]
+    pub definition_id: Option<String>,
+    #[serde(default)]
+    pub target_kind: Option<String>,
+    #[serde(default)]
+    pub target_name: Option<String>,
+    #[serde(default)]
+    pub target_root: Option<String>,
+    #[serde(default)]
+    pub summary_class: Option<String>,
+    #[serde(default)]
+    pub artifact_hash: Option<String>,
+    #[serde(default)]
+    pub summary_version: Option<String>,
+    #[serde(default)]
+    pub review_method: Option<String>,
+    #[serde(default)]
+    pub scope_of_validity: Option<String>,
+    #[serde(default)]
+    pub required_containment: Option<String>,
+    #[serde(default)]
+    pub invalidation_conditions: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub evidence_use: Option<String>,
+    #[serde(default)]
+    pub allowed_effects: Vec<String>,
+    #[serde(default)]
+    pub blocker_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallTestSelectionInfo {
+    pub target: CallNodeInfo,
+    #[serde(default)]
+    pub source_test_callers: Vec<CallNodeInfo>,
+    #[serde(default)]
+    pub source_test_paths: Vec<CallPathInfo>,
+    #[serde(default)]
+    pub generated_entrypoints: Vec<CallTestEntrypointInfo>,
+    #[serde(default)]
+    pub build_domains: Vec<CallBuildDomainInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord, Hash, PartialEq)]
+pub struct ProofContextInfo {
+    pub fact_id: String,
+    pub kind: String,
+    #[serde(default)]
+    pub build_domain_id: Option<String>,
+    #[serde(default)]
+    pub call_site_id: Option<String>,
+    #[serde(default)]
+    pub call_edge_id: Option<String>,
+    #[serde(default)]
+    pub caller_def_id: Option<String>,
+    #[serde(default)]
+    pub callee_def_id: Option<String>,
+    #[serde(default)]
+    pub resolution_state: Option<String>,
+    #[serde(default)]
+    pub resolved_def_id: Option<String>,
+    #[serde(default)]
+    pub candidate_def_ids: Vec<String>,
+    #[serde(default)]
+    pub external_summary_id: Option<String>,
+    #[serde(default)]
+    pub boundary_id: Option<String>,
+    #[serde(default)]
+    pub boundary_kind: Option<String>,
+    #[serde(default)]
+    pub expanded_item_id: Option<String>,
+    #[serde(default)]
+    pub definition_id: Option<String>,
+    #[serde(default)]
+    pub target_kind: Option<String>,
+    #[serde(default)]
+    pub target_name: Option<String>,
+    #[serde(default)]
+    pub target_root: Option<String>,
+    #[serde(default)]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub rustc_version: Option<String>,
+    #[serde(default)]
+    pub proof_policy_version: Option<String>,
+    #[serde(default)]
+    pub cfg_domain_id: Option<String>,
+    #[serde(default)]
+    pub active_cfg_hash: Option<String>,
+    #[serde(default)]
+    pub invocation_id: Option<String>,
+    #[serde(default)]
+    pub rustc_program: Option<String>,
+    #[serde(default)]
+    pub working_directory: Option<String>,
+    #[serde(default)]
+    pub argument_vector_hash: Option<String>,
+    #[serde(default)]
+    pub environment_hash: Option<String>,
+    #[serde(default)]
+    pub effect_seed_id: Option<String>,
+    #[serde(default)]
+    pub confidence: Option<String>,
+    #[serde(default)]
+    pub blocker_if_unresolved: Option<bool>,
+    #[serde(default)]
+    pub unsafe_block: Option<bool>,
+    #[serde(default)]
+    pub authority_term: Option<String>,
+    #[serde(default)]
+    pub summary_class: Option<String>,
+    #[serde(default)]
+    pub artifact_hash: Option<String>,
+    #[serde(default)]
+    pub summary_version: Option<String>,
+    #[serde(default)]
+    pub review_method: Option<String>,
+    #[serde(default)]
+    pub scope_of_validity: Option<String>,
+    #[serde(default)]
+    pub allowed_effects: Vec<String>,
+    #[serde(default)]
+    pub required_containment: Option<String>,
+    #[serde(default)]
+    pub invalidation_conditions: Option<String>,
+    #[serde(default)]
+    pub evidence_use: Option<String>,
+    #[serde(default)]
+    pub source_file: Option<String>,
+    #[serde(default)]
+    pub start_byte: Option<u32>,
+    #[serde(default)]
+    pub end_byte: Option<u32>,
+    #[serde(default)]
+    pub line_start: Option<u32>,
+    #[serde(default)]
+    pub line_end: Option<u32>,
+    #[serde(default)]
+    pub effect_class: Option<String>,
+    #[serde(default)]
+    pub blocker_reason: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub detail: Option<String>,
+}
+
 impl Modality {
     pub fn to_static_str(self) -> &'static str {
         self.into()
@@ -174,6 +1028,36 @@ impl From<ContextPart> for ConciseContext {
             canon_path: value.canon_path.clone(),
             snippet: value.text,
             type_context: value.type_context,
+            call_expansion: value.call_expansion,
+            call_context: value.call_context,
+            call_paths_from_owner: value.call_paths_from_owner,
+            call_paths_to_target: value.call_paths_to_target,
+            call_cycles_from_owner: Vec::new(),
+            call_impact: None,
+            call_reach: None,
+            call_reach_effects: Vec::new(),
+            unsafe_block_calls: Vec::new(),
+            call_effect_policy_violations: Vec::new(),
+            call_proof_invariant_findings: Vec::new(),
+            external_summary_needs: Vec::new(),
+            runtime_dispatch_needs: Vec::new(),
+            local_bindings: Vec::new(),
+            local_binding_edges: Vec::new(),
+            call_callee_evidence: Vec::new(),
+            self_field_parameter_flows: Vec::new(),
+            self_field_assignment_flows: Vec::new(),
+            self_field_assignment_argument_flows: Vec::new(),
+            future_poll_field_producer_flows: Vec::new(),
+            awaited_call_sites: Vec::new(),
+            returned_call_binding_flows: Vec::new(),
+            returned_future_flows: Vec::new(),
+            returned_future_execution_flows: Vec::new(),
+            module_boundary_edges: Vec::new(),
+            crate_boundary_edges: Vec::new(),
+            call_build_domains: Vec::new(),
+            call_test_entrypoints: Vec::new(),
+            call_test_selection: None,
+            proof_context: value.proof_context,
         }
     }
 }
@@ -218,6 +1102,69 @@ pub struct ConciseContext {
     pub snippet: String,
     #[serde(default)]
     pub type_context: Option<TypeContextInfo>,
+    #[serde(default)]
+    pub call_expansion: Option<CallExpansionInfo>,
+    #[serde(default)]
+    pub call_context: Vec<CallContextInfo>,
+    #[serde(default)]
+    pub call_paths_from_owner: Vec<CallPathInfo>,
+    #[serde(default)]
+    pub call_paths_to_target: Vec<CallPathInfo>,
+    #[serde(default)]
+    pub call_cycles_from_owner: Vec<CallPathInfo>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_impact: Option<CallImpactInfo>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_reach: Option<CallReachInfo>,
+    #[serde(default)]
+    pub call_reach_effects: Vec<CallReachEffectInfo>,
+    #[serde(default)]
+    pub unsafe_block_calls: Vec<UnsafeBlockCallInfo>,
+    #[serde(default)]
+    pub call_effect_policy_violations: Vec<CallEffectPolicyViolationInfo>,
+    #[serde(default)]
+    pub call_proof_invariant_findings: Vec<CallProofInvariantFindingInfo>,
+    #[serde(default)]
+    pub external_summary_needs: Vec<ExternalSummaryNeedInfo>,
+    #[serde(default)]
+    pub runtime_dispatch_needs: Vec<RuntimeDispatchNeedInfo>,
+    #[serde(default)]
+    pub local_bindings: Vec<LocalBindingInfo>,
+    #[serde(default)]
+    pub local_binding_edges: Vec<LocalBindingEdgeInfo>,
+    #[serde(default)]
+    pub call_callee_evidence: Vec<CallCalleeEvidenceInfo>,
+    #[serde(default)]
+    pub self_field_parameter_flows: Vec<SelfFieldParameterFlowInfo>,
+    #[serde(default)]
+    pub self_field_assignment_flows: Vec<SelfFieldAssignmentFlowInfo>,
+    #[serde(default)]
+    pub self_field_assignment_argument_flows: Vec<SelfFieldAssignmentArgumentFlowInfo>,
+    #[serde(default)]
+    pub future_poll_field_producer_flows: Vec<FuturePollFieldProducerFlowInfo>,
+    #[serde(default)]
+    pub awaited_call_sites: Vec<AwaitedCallSiteInfo>,
+    #[serde(default)]
+    pub returned_call_binding_flows: Vec<ReturnedCallBindingFlowInfo>,
+    #[serde(default)]
+    pub returned_future_flows: Vec<ReturnedFutureFlowInfo>,
+    #[serde(default)]
+    pub returned_future_execution_flows: Vec<ReturnedFutureExecutionFlowInfo>,
+    #[serde(default)]
+    pub module_boundary_edges: Vec<ModuleBoundaryEdgeInfo>,
+    #[serde(default)]
+    pub crate_boundary_edges: Vec<CrateBoundaryEdgeInfo>,
+    #[serde(default)]
+    pub call_build_domains: Vec<CallBuildDomainInfo>,
+    #[serde(default)]
+    pub call_test_entrypoints: Vec<CallTestEntrypointInfo>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_test_selection: Option<CallTestSelectionInfo>,
+    #[serde(default)]
+    pub proof_context: Vec<ProofContextInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
