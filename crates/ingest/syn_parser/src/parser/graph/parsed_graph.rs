@@ -86,6 +86,122 @@ fn root_selection_key(path: &Path) -> (u8, PathBuf) {
 }
 
 impl ParsedCodeGraph {
+    fn structural_call_owners(&self) -> HashSet<CallBodyOwnerId> {
+        self.functions()
+            .iter()
+            .map(|function| CallBodyOwnerId::Function(function.id))
+            .chain(
+                self.consts()
+                    .iter()
+                    .map(|const_node| CallBodyOwnerId::Const(const_node.id)),
+            )
+            .chain(
+                self.statics()
+                    .iter()
+                    .map(|static_node| CallBodyOwnerId::Static(static_node.id)),
+            )
+            .chain(
+                self.macros()
+                    .iter()
+                    .map(|macro_node| CallBodyOwnerId::Macro(macro_node.id)),
+            )
+            .chain(
+                self.impls()
+                    .iter()
+                    .flat_map(|imp| imp.methods.iter())
+                    .chain(self.traits().iter().flat_map(|tr| tr.methods.iter()))
+                    .map(|method| CallBodyOwnerId::Method(method.id)),
+            )
+            .collect()
+    }
+
+    fn live_call_owners(&self) -> HashSet<CallBodyOwnerId> {
+        let mut owners = self.structural_call_owners();
+
+        // Executable-local bodies are live only when their parent chain reaches
+        // a live structural owner.
+        loop {
+            let before = owners.len();
+            for body in self.executable_bodies() {
+                if owners.contains(&body.parent) {
+                    owners.insert(CallBodyOwnerId::Executable(body.id));
+                }
+            }
+            if owners.len() == before {
+                break;
+            }
+        }
+
+        owners
+    }
+
+    fn retain_live_calls(&mut self) {
+        let live_owners = self.live_call_owners();
+        self.graph.executable_bodies.retain(|body| {
+            live_owners.contains(&body.parent)
+                && live_owners.contains(&CallBodyOwnerId::Executable(body.id))
+        });
+        self.graph
+            .local_bindings
+            .retain(|binding| live_owners.contains(&binding.owner));
+        let live_bindings: HashSet<LocalBindingId> = self
+            .graph
+            .local_bindings
+            .iter()
+            .map(|binding| binding.id)
+            .collect();
+        let live_functions: HashSet<_> = self
+            .graph
+            .functions
+            .iter()
+            .map(|function| function.id)
+            .collect();
+
+        self.call_sites_mut()
+            .retain(|call| live_owners.contains(&call.owner()));
+        let live_calls: HashSet<AnyCallSiteId> =
+            self.call_sites().iter().map(CallNode::id).collect();
+        self.call_site_relations_mut()
+            .retain(|relation| match relation {
+                CallSiteRelation::BodyContainsCall { source, target }
+                | CallSiteRelation::CallResultAwaited { source, target } => {
+                    live_owners.contains(source) && live_calls.contains(target)
+                }
+            });
+        self.local_binding_relations_mut()
+            .retain(|relation| match relation {
+                LocalBindingRelation::OwnerContainsBinding { source, target } => {
+                    live_owners.contains(source) && live_bindings.contains(target)
+                }
+                LocalBindingRelation::BindingSourceClosure { source, target } => {
+                    live_bindings.contains(source)
+                        && live_owners.contains(&CallBodyOwnerId::Executable(*target))
+                }
+                LocalBindingRelation::BindingSourceCallResult { source, target } => {
+                    live_bindings.contains(source) && live_calls.contains(target)
+                }
+                LocalBindingRelation::BindingSourceFunction { source, target } => {
+                    live_bindings.contains(source) && live_functions.contains(target)
+                }
+                LocalBindingRelation::BindingSourceLocalItem { source, target } => {
+                    live_bindings.contains(source)
+                        && live_owners.contains(&CallBodyOwnerId::Executable((*target).into()))
+                }
+                LocalBindingRelation::BindingProjectsField { source, target } => {
+                    live_bindings.contains(source) && live_bindings.contains(target)
+                }
+                LocalBindingRelation::BindingSourceParameter { source, target } => {
+                    live_bindings.contains(source) && live_bindings.contains(target)
+                }
+                LocalBindingRelation::BindingAliasesBinding { source, target } => {
+                    live_bindings.contains(source) && live_bindings.contains(target)
+                }
+                LocalBindingRelation::ArgumentSuppliesParameter { source, target } => {
+                    live_calls.contains(source) && live_bindings.contains(target)
+                }
+            });
+    }
+
     pub fn new(file_path: PathBuf, crate_namespace: Uuid, graph: CodeGraph) -> Self {
         Self {
             file_path,
@@ -309,6 +425,19 @@ impl ParsedCodeGraph {
         self.graph.impls.append(&mut other.graph.impls);
         self.graph.traits.append(&mut other.graph.traits);
         self.graph.relations.append(&mut other.graph.relations);
+        self.graph.call_sites.append(&mut other.graph.call_sites);
+        self.graph
+            .call_site_relations
+            .append(&mut other.graph.call_site_relations);
+        self.graph
+            .local_binding_relations
+            .append(&mut other.graph.local_binding_relations);
+        self.graph
+            .executable_bodies
+            .append(&mut other.graph.executable_bodies);
+        self.graph
+            .local_bindings
+            .append(&mut other.graph.local_bindings);
         self.graph.modules.append(&mut other.graph.modules);
         self.graph.consts.append(&mut other.graph.consts); // Use consts
         self.graph.statics.append(&mut other.graph.statics); // Use statics
@@ -666,6 +795,8 @@ impl ParsedCodeGraph {
             .chain(self.traits().iter().flat_map(|tr| tr.methods.iter()))
             .count();
         prune_counts.methods = methods_count_pre - methods_count_post;
+
+        self.retain_live_calls();
         // ANCHOR_END: prune_methods_and_retain
 
         // -- handle pruning module ids
@@ -1016,7 +1147,10 @@ impl ParsedCodeGraph {
         self.graph.functions.retain(|n| set.contains(&n.any_id()));
         self.graph.consts.retain(|n| set.contains(&n.any_id()));
         self.graph.modules.retain(|n| set.contains(&n.any_id()));
+        self.graph.macros.retain(|n| set.contains(&n.any_id()));
         self.graph.statics.retain(|n| set.contains(&n.any_id()));
+
+        self.retain_live_calls();
     }
 }
 
@@ -1044,6 +1178,22 @@ impl GraphAccess for ParsedCodeGraph {
     fn relations(&self) -> &[SyntacticRelation] {
         // Updated type
         &self.graph.relations
+    }
+
+    fn call_sites(&self) -> &[CallNode] {
+        &self.graph.call_sites
+    }
+
+    fn call_site_relations(&self) -> &[CallSiteRelation] {
+        &self.graph.call_site_relations
+    }
+
+    fn local_binding_relations(&self) -> &[LocalBindingRelation] {
+        &self.graph.local_binding_relations
+    }
+
+    fn executable_bodies(&self) -> &[ExecutableBodyNode] {
+        &self.graph.executable_bodies
     }
 
     fn modules(&self) -> &[ModuleNode] {
@@ -1094,6 +1244,22 @@ impl GraphAccess for ParsedCodeGraph {
         &mut self.graph.relations
     }
 
+    fn call_sites_mut(&mut self) -> &mut Vec<CallNode> {
+        &mut self.graph.call_sites
+    }
+
+    fn call_site_relations_mut(&mut self) -> &mut Vec<CallSiteRelation> {
+        &mut self.graph.call_site_relations
+    }
+
+    fn local_binding_relations_mut(&mut self) -> &mut Vec<LocalBindingRelation> {
+        &mut self.graph.local_binding_relations
+    }
+
+    fn executable_bodies_mut(&mut self) -> &mut Vec<ExecutableBodyNode> {
+        &mut self.graph.executable_bodies
+    }
+
     fn modules_mut(&mut self) -> &mut Vec<ModuleNode> {
         &mut self.graph.modules
     }
@@ -1141,12 +1307,151 @@ fn log_build_tree_processing_module(module: &ModuleNode) {
 #[cfg(test)]
 mod tests {
     use anyhow::{Ok, Result};
+    use ploke_core::NodeId;
     use tempfile::tempdir;
 
+    use crate::parser::nodes::test_ids::TestIds;
     use crate::utils::test_setup::run_phases_and_collect;
     use crate::{discovery::run_discovery_phase, parser::analyze_files_parallel};
 
     use super::*;
+
+    fn empty_graph() -> CodeGraph {
+        CodeGraph {
+            functions: Vec::new(),
+            defined_types: Vec::new(),
+            type_graph: Vec::new(),
+            impls: Vec::new(),
+            traits: Vec::new(),
+            relations: Vec::new(),
+            call_sites: Vec::new(),
+            call_site_relations: Vec::new(),
+            local_binding_relations: Vec::new(),
+            executable_bodies: Vec::new(),
+            local_bindings: Vec::new(),
+            modules: Vec::new(),
+            consts: Vec::new(),
+            statics: Vec::new(),
+            macros: Vec::new(),
+            use_statements: Vec::new(),
+            unresolved_nodes: Vec::new(),
+        }
+    }
+
+    fn test_function(id: FunctionNodeId) -> FunctionNode {
+        FunctionNode {
+            id,
+            name: "root".to_string(),
+            span: (0, 1),
+            visibility: VisibilityKind::Inherited,
+            is_unsafe: false,
+            is_async: false,
+            parameters: Vec::new(),
+            return_type: None,
+            generic_params: Vec::new(),
+            where_predicates: Vec::new(),
+            attributes: Vec::new(),
+            docstring: None,
+            body: None,
+            tracking_hash: None,
+            cfgs: Vec::new(),
+        }
+    }
+
+    fn path_call(owner: CallBodyOwnerId, path: &[&str], span: (usize, usize)) -> CallNode {
+        let path = path.iter().map(|segment| segment.to_string()).collect_vec();
+        let id = generate_path_call_site_id(owner, &path, span, &[]);
+        CallNode::PathCall(PathCallNode {
+            id,
+            owner,
+            span,
+            cfgs: Vec::new(),
+            unsafe_block: false,
+            path,
+            callee: PathCallCallee::ItemPath,
+            arg_count: 0,
+            generic_arg_count: 0,
+            arguments: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn retain_live_calls_drops_broken_executable_parent_chain() {
+        let root_id = FunctionNodeId::new_test(NodeId::Synthetic(Uuid::from_u128(1)));
+        let root = CallBodyOwnerId::Function(root_id);
+        let parent_id = generate_closure_body_id(root, (10, 40), &[]);
+        let parent = CallBodyOwnerId::Executable(parent_id.into());
+        let child_id = generate_closure_body_id(parent, (20, 30), &[]);
+        let child = CallBodyOwnerId::Executable(child_id.into());
+        let call = path_call(child, &["callee"], (24, 30));
+        let call_id = call.id();
+
+        let mut graph = empty_graph();
+        graph.executable_bodies.push(ExecutableBodyNode::new(
+            child_id.into(),
+            parent,
+            (20, 30),
+            Vec::new(),
+            Some("closure".to_string()),
+        ));
+        graph
+            .call_site_relations
+            .push(CallSiteRelation::BodyContainsCall {
+                source: child,
+                target: call_id,
+            });
+        graph.call_sites.push(call);
+
+        let mut parsed = ParsedCodeGraph::new(PathBuf::from("src/lib.rs"), Uuid::nil(), graph);
+        parsed.retain_live_calls();
+
+        assert!(parsed.executable_bodies().is_empty());
+        assert!(parsed.call_sites().is_empty());
+        assert!(parsed.call_site_relations().is_empty());
+    }
+
+    #[test]
+    fn retain_live_calls_keeps_complete_executable_parent_chain() {
+        let root_id = FunctionNodeId::new_test(NodeId::Synthetic(Uuid::from_u128(2)));
+        let root = CallBodyOwnerId::Function(root_id);
+        let parent_id = generate_closure_body_id(root, (10, 40), &[]);
+        let parent = CallBodyOwnerId::Executable(parent_id.into());
+        let child_id = generate_closure_body_id(parent, (20, 30), &[]);
+        let child = CallBodyOwnerId::Executable(child_id.into());
+        let call = path_call(child, &["callee"], (24, 30));
+        let call_id = call.id();
+
+        let mut graph = empty_graph();
+        graph.functions.push(test_function(root_id));
+        graph.executable_bodies.push(ExecutableBodyNode::new(
+            parent_id.into(),
+            root,
+            (10, 40),
+            Vec::new(),
+            Some("closure".to_string()),
+        ));
+        graph.executable_bodies.push(ExecutableBodyNode::new(
+            child_id.into(),
+            parent,
+            (20, 30),
+            Vec::new(),
+            Some("closure".to_string()),
+        ));
+        graph
+            .call_site_relations
+            .push(CallSiteRelation::BodyContainsCall {
+                source: child,
+                target: call_id,
+            });
+        graph.call_sites.push(call);
+
+        let mut parsed = ParsedCodeGraph::new(PathBuf::from("src/lib.rs"), Uuid::nil(), graph);
+        parsed.retain_live_calls();
+
+        assert_eq!(parsed.executable_bodies().len(), 2);
+        assert_eq!(parsed.call_sites().len(), 1);
+        assert_eq!(parsed.call_site_relations().len(), 1);
+    }
 
     #[test]
     fn test_build_mod_tree() -> Result<()> {

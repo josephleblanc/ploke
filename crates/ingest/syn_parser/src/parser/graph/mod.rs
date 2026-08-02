@@ -28,10 +28,10 @@ use uuid::Uuid;
 
 use crate::parser::{
     nodes::{
-        ConstNode, FunctionNode, ImplNode, ImportNode, MacroNode, MethodNode, ModuleNode,
-        StaticNode, TraitNode, TypeDefNode,
+        CallNode, ConstNode, ExecutableBodyNode, FunctionNode, ImplNode, ImportNode, MacroNode,
+        MethodNode, ModuleNode, StaticNode, TraitNode, TypeDefNode,
     }, // Updated node types
-    relations::SyntacticRelation, // Use new relation enum
+    relations::{CallSiteRelation, LocalBindingRelation, SyntacticRelation}, // Use new relation enum
     types::TypeNode,
 };
 
@@ -44,6 +44,10 @@ pub trait GraphAccess {
     fn impls(&self) -> &[ImplNode];
     fn traits(&self) -> &[TraitNode];
     fn relations(&self) -> &[SyntacticRelation]; // Updated type
+    fn call_sites(&self) -> &[CallNode];
+    fn call_site_relations(&self) -> &[CallSiteRelation];
+    fn local_binding_relations(&self) -> &[LocalBindingRelation];
+    fn executable_bodies(&self) -> &[ExecutableBodyNode];
     fn modules(&self) -> &[ModuleNode];
     fn consts(&self) -> &[ConstNode]; // Added
     fn statics(&self) -> &[StaticNode]; // Added
@@ -57,6 +61,10 @@ pub trait GraphAccess {
     fn impls_mut(&mut self) -> &mut Vec<ImplNode>;
     fn traits_mut(&mut self) -> &mut Vec<TraitNode>;
     fn relations_mut(&mut self) -> &mut Vec<SyntacticRelation>; // Updated type
+    fn call_sites_mut(&mut self) -> &mut Vec<CallNode>;
+    fn call_site_relations_mut(&mut self) -> &mut Vec<CallSiteRelation>;
+    fn local_binding_relations_mut(&mut self) -> &mut Vec<LocalBindingRelation>;
+    fn executable_bodies_mut(&mut self) -> &mut Vec<ExecutableBodyNode>;
     fn modules_mut(&mut self) -> &mut Vec<ModuleNode>;
     fn consts_mut(&mut self) -> &mut Vec<ConstNode>; // Added
     fn statics_mut(&mut self) -> &mut Vec<StaticNode>; // Added

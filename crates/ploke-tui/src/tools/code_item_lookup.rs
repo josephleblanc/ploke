@@ -5,7 +5,6 @@ use ploke_core::{
     tool_descriptions::ToolDescription,
     tool_types::ToolName,
 };
-use ploke_db::helpers::graph_resolve_exact;
 use ploke_error::DomainError;
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +32,27 @@ lazy_static::lazy_static! {
             "file_path": { "type": "string", "description": FILE_DESC },
             "node_kind": NodeKind::schema_property(),
             "module_path": { "type": "string", "description": lookup_support::MODULE_PATH_DESC },
+            "owner_trait": {
+                "type": "string",
+                "description": lookup_support::OWNER_TRAIT_DESC
+            },
+            "owner_type": {
+                "type": "string",
+                "description": lookup_support::OWNER_TYPE_DESC
+            },
+            "parent_name": {
+                "type": "string",
+                "description": lookup_support::PARENT_NAME_DESC
+            },
+            "body_contains": {
+                "type": "string",
+                "description": lookup_support::BODY_CONTAINS_DESC
+            },
+            "allowed_effects": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Optional exact effect allowlist. When supplied, the result includes call_effect_policy_violations for reachable effect_seed rows whose effect_class is not in this list."
+            },
         },
         "required": ["item_name", "file_path", "node_kind", "module_path"],
         "additionalProperties": false
@@ -49,6 +69,16 @@ pub struct LookupParams<'a> {
     pub node_kind: std::borrow::Cow<'a, str>, // "error" | "overwrite"
     #[serde(default)]
     pub module_path: std::borrow::Cow<'a, str>,
+    #[serde(default, borrow)]
+    pub owner_trait: Option<std::borrow::Cow<'a, str>>,
+    #[serde(default, borrow)]
+    pub owner_type: Option<std::borrow::Cow<'a, str>>,
+    #[serde(default, borrow)]
+    pub parent_name: Option<std::borrow::Cow<'a, str>>,
+    #[serde(default, borrow)]
+    pub body_contains: Option<std::borrow::Cow<'a, str>>,
+    #[serde(default)]
+    pub allowed_effects: Vec<std::borrow::Cow<'a, str>>,
 }
 
 impl<'a> ValidatesAbolutePath for LookupParams<'a> {
@@ -64,6 +94,11 @@ pub struct LookupParamsOwned {
     pub file_path: String,
     pub node_kind: String,
     pub module_path: String,
+    pub owner_trait: Option<String>,
+    pub owner_type: Option<String>,
+    pub parent_name: Option<String>,
+    pub body_contains: Option<String>,
+    pub allowed_effects: Vec<String>,
 }
 
 pub struct CodeItemLookup;
@@ -121,6 +156,15 @@ impl Tool for CodeItemLookup {
             item_name: params.item_name.clone().into_owned(),
             node_kind: params.node_kind.clone().into_owned(),
             module_path: params.module_path.clone().into_owned(),
+            owner_trait: params.owner_trait.as_ref().map(|value| value.to_string()),
+            owner_type: params.owner_type.as_ref().map(|value| value.to_string()),
+            parent_name: params.parent_name.as_ref().map(|value| value.to_string()),
+            body_contains: params.body_contains.as_ref().map(|value| value.to_string()),
+            allowed_effects: params
+                .allowed_effects
+                .iter()
+                .map(|effect| effect.to_string())
+                .collect(),
         }
     }
 
@@ -165,6 +209,15 @@ impl Tool for CodeItemLookup {
                 ),
             })
         })?;
+        let owner = lookup_support::normalize_owner_qualifier(
+            params.owner_trait.as_deref(),
+            params.owner_type.as_deref(),
+            node_kind,
+        )?;
+        let parent =
+            lookup_support::normalize_parent_name(params.parent_name.as_deref(), node_kind)?;
+        let marker =
+            lookup_support::normalize_body_contains(params.body_contains.as_deref(), node_kind)?;
 
         let (primary_root, policy) = ctx
             .state
@@ -211,12 +264,15 @@ for a more fuzzy search."#
             }));
         }
 
-        let resolved_item = match graph_resolve_exact(
+        let resolved_item = match lookup_support::resolve_exact_item(
             &ctx.state.db,
-            node_kind.as_relation(),
+            node_kind,
             &abs_path,
             &mod_path,
             params.item_name.as_ref(),
+            owner.as_ref(),
+            parent.as_deref(),
+            marker.as_deref(),
         ) {
             Ok(t) if t.len() == 1 => t,
             Ok(t) if t.is_empty() => {
@@ -226,11 +282,14 @@ for a more fuzzy search."#
                     .unwrap_or_default();
                 return Err(ploke_error::Error::Domain(DomainError::Ui {
                     message: format!(
-                        "No code item named `{}` found in {} with module_path {} and node_kind {}.{}",
+                        "No code item named `{}` found in {} with module_path {} and node_kind {}{}{}{}.{}",
                         params.item_name,
                         rel_path.display(),
                         params.module_path,
                         node_kind.as_str(),
+                        lookup_support::owner_message(owner.as_ref()),
+                        lookup_support::parent_message(parent.as_deref()),
+                        lookup_support::body_message(marker.as_deref()),
                         hint
                     ),
                 }));
@@ -241,11 +300,14 @@ for a more fuzzy search."#
                 ));
                 return Err(ploke_error::Error::Domain(DomainError::Ui {
                     message: format!(
-                        "Multiple items matched `{}` in {} with module_path {} and node_kind {}; expected a single match. This is an internal error: {}",
+                        "Multiple items matched `{}` in {} with module_path {} and node_kind {}{}{}{}; expected a single match. This is an internal error: {}",
                         params.item_name,
                         rel_path.display(),
                         params.module_path,
                         node_kind.as_str(),
+                        lookup_support::owner_message(owner.as_ref()),
+                        lookup_support::parent_message(parent.as_deref()),
+                        lookup_support::body_message(marker.as_deref()),
                         err
                     ),
                 }));
@@ -259,6 +321,64 @@ for a more fuzzy search."#
             }
         };
         let resolved_item_id = resolved_item[0].id;
+        let carriers = lookup_support::context_carriers_for_node(&ctx, resolved_item_id)?;
+        let call_paths = lookup_support::call_path_carriers_for_node(&ctx, resolved_item_id)?;
+        let call_impact = lookup_support::call_impact_for_node(&ctx, resolved_item_id)?;
+        let call_reach = lookup_support::call_reach_for_node(&ctx, resolved_item_id)?;
+        let call_reach_effects =
+            lookup_support::call_reach_effects_for_node(&ctx, resolved_item_id)?;
+        let unsafe_block_calls =
+            lookup_support::unsafe_block_calls_for_node(&ctx, resolved_item_id)?;
+        let allowed_effects = params
+            .allowed_effects
+            .iter()
+            .map(|effect| effect.to_string())
+            .collect::<Vec<_>>();
+        let call_effect_policy_violations = lookup_support::call_effect_policy_violations_for_node(
+            &ctx,
+            resolved_item_id,
+            &allowed_effects,
+        )?;
+        let call_proof_invariant_findings =
+            lookup_support::call_proof_invariant_findings_for_node(&ctx, resolved_item_id)?;
+        let external_summary_needs =
+            lookup_support::external_summary_needs_for_node(&ctx, resolved_item_id)?;
+        let runtime_dispatch_needs =
+            lookup_support::runtime_dispatch_needs_for_node(&ctx, resolved_item_id)?;
+        let local_bindings = lookup_support::local_bindings_for_node(&ctx, resolved_item_id)?;
+        let local_binding_edges =
+            lookup_support::local_binding_edges_for_node(&ctx, resolved_item_id)?;
+        let call_callee_evidence = lookup_support::call_callee_evidence_for_node(
+            &ctx,
+            resolved_item_id,
+            &carriers.call_context,
+        )?;
+        let self_field_parameter_flows =
+            lookup_support::self_field_parameter_flows_for_node(&ctx, resolved_item_id)?;
+        let self_field_assignment_flows =
+            lookup_support::self_field_assignment_flows_for_node(&ctx, resolved_item_id)?;
+        let self_field_assignment_argument_flows =
+            lookup_support::self_field_assignment_argument_flows_for_node(&ctx, resolved_item_id)?;
+        let future_poll_field_producer_flows =
+            lookup_support::future_poll_field_producer_flows_for_node(&ctx, resolved_item_id)?;
+        let awaited_call_sites =
+            lookup_support::awaited_call_sites_for_node(&ctx, resolved_item_id)?;
+        let returned_call_binding_flows =
+            lookup_support::returned_call_binding_flows_for_node(&ctx, resolved_item_id)?;
+        let returned_future_flows =
+            lookup_support::returned_future_flows_for_node(&ctx, resolved_item_id)?;
+        let returned_future_execution_flows =
+            lookup_support::returned_future_execution_flows_for_node(&ctx, resolved_item_id)?;
+        let module_boundary_edges =
+            lookup_support::module_boundary_edges_for_node(&ctx, resolved_item_id)?;
+        let crate_boundary_edges =
+            lookup_support::crate_boundary_edges_for_node(&ctx, resolved_item_id)?;
+        let call_build_domains =
+            lookup_support::call_build_domains_for_node(&ctx, resolved_item_id)?;
+        let call_test_entrypoints =
+            lookup_support::call_test_entrypoints_for_node(&ctx, resolved_item_id)?;
+        let call_test_selection =
+            lookup_support::call_test_selection_for_node(&ctx, resolved_item_id)?;
         let tool_results = ctx
             .state
             .io_handle
@@ -289,12 +409,90 @@ for a more fuzzy search."#
             )),
             snippet,
             type_context: None,
+            call_expansion: None,
+            call_context: carriers.call_context,
+            call_paths_from_owner: call_paths.from_owner,
+            call_paths_to_target: call_paths.to_target,
+            call_cycles_from_owner: call_paths.cycles_from_owner,
+            call_impact,
+            call_reach,
+            call_reach_effects,
+            unsafe_block_calls,
+            call_effect_policy_violations,
+            call_proof_invariant_findings,
+            external_summary_needs,
+            runtime_dispatch_needs,
+            local_bindings,
+            local_binding_edges,
+            call_callee_evidence,
+            self_field_parameter_flows,
+            self_field_assignment_flows,
+            self_field_assignment_argument_flows,
+            future_poll_field_producer_flows,
+            awaited_call_sites,
+            returned_call_binding_flows,
+            returned_future_flows,
+            returned_future_execution_flows,
+            module_boundary_edges,
+            crate_boundary_edges,
+            call_build_domains,
+            call_test_entrypoints,
+            call_test_selection,
+            proof_context: carriers.proof_context,
         };
+        let call_counts =
+            lookup_support::call_context_counts(resolved_item_id, &concise_context.call_context);
 
         let summary = format!("Resolved item in {}", concise_context.file_path.as_ref());
         let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("file_path", concise_context.file_path.as_ref())
-            .with_field("canon_path", concise_context.canon_path.as_ref());
+            .with_field("canon_path", concise_context.canon_path.as_ref())
+            .with_field("call_context", call_counts.total.to_string())
+            .with_field("call_context_outgoing", call_counts.outgoing.to_string())
+            .with_field("call_context_incoming", call_counts.incoming.to_string())
+            .with_field(
+                "call_paths_from_owner",
+                concise_context.call_paths_from_owner.len().to_string(),
+            )
+            .with_field(
+                "call_paths_to_target",
+                concise_context.call_paths_to_target.len().to_string(),
+            )
+            .with_field(
+                "call_cycles_from_owner",
+                concise_context.call_cycles_from_owner.len().to_string(),
+            );
+        let ui_payload = lookup_support::with_call_usage_fields(
+            ui_payload,
+            concise_context.call_impact.as_ref(),
+            concise_context.call_reach.as_ref(),
+            &concise_context.call_reach_effects,
+            &concise_context.unsafe_block_calls,
+            &concise_context.call_effect_policy_violations,
+            &concise_context.call_proof_invariant_findings,
+            &concise_context.external_summary_needs,
+            &concise_context.runtime_dispatch_needs,
+            &concise_context.local_bindings,
+            &concise_context.local_binding_edges,
+            &concise_context.call_callee_evidence,
+            &concise_context.self_field_parameter_flows,
+            &concise_context.self_field_assignment_flows,
+            &concise_context.self_field_assignment_argument_flows,
+            &concise_context.future_poll_field_producer_flows,
+            &concise_context.awaited_call_sites,
+            &concise_context.returned_call_binding_flows,
+            &concise_context.returned_future_flows,
+            &concise_context.returned_future_execution_flows,
+            &concise_context.module_boundary_edges,
+            &concise_context.crate_boundary_edges,
+            &concise_context.call_build_domains,
+            &concise_context.call_test_entrypoints,
+            concise_context.call_test_selection.as_ref(),
+        )
+        .with_field(
+            "proof_context",
+            concise_context.proof_context.len().to_string(),
+        );
         let content = serde_json::to_string(&concise_context).map_err(|err| {
             ploke_error::Error::Internal(InternalError::CompilerError(format!(
                 "failed to serialize ConciseContext: {err}. This indicates an error in the ploke application itself, not due to incorrect search terms. Please consider filing an issue on the ploke github."

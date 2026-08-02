@@ -1,17 +1,18 @@
-use std::{ops::Deref, path::Path};
+use std::{collections::BTreeMap, ops::Deref, path::Path};
 
 use itertools::Itertools;
 use ploke_core::{
-    rag_types::{CanonPath, ConciseContext, NodeFilepath},
+    rag_types::{CallPathInfo, CallPathNodeInfo, CanonPath, ConciseContext, NodeFilepath},
     tool_descriptions::ToolDescription,
     tool_types::ToolName,
 };
 use ploke_db::{
-    helpers::{graph_resolve_edges, graph_resolve_exact},
+    helpers::{graph_resolve_edges_for_call_body_owner_id, graph_resolve_edges_for_id},
     typed_rows::ResolvedEdgeData,
 };
 use ploke_error::DomainError;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::rag::utils::NodeKind;
 use crate::tools::{
@@ -37,6 +38,27 @@ lazy_static::lazy_static! {
             "file_path": { "type": "string", "description": FILE_DESC },
             "node_kind": NodeKind::schema_property(),
             "module_path": { "type": "string", "description": lookup_support::MODULE_PATH_DESC },
+            "owner_trait": {
+                "type": "string",
+                "description": lookup_support::OWNER_TRAIT_DESC
+            },
+            "owner_type": {
+                "type": "string",
+                "description": lookup_support::OWNER_TYPE_DESC
+            },
+            "parent_name": {
+                "type": "string",
+                "description": lookup_support::PARENT_NAME_DESC
+            },
+            "body_contains": {
+                "type": "string",
+                "description": lookup_support::BODY_CONTAINS_DESC
+            },
+            "allowed_effects": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Optional exact effect allowlist. When supplied, node_info includes call_effect_policy_violations for reachable effect_seed rows whose effect_class is not in this list."
+            },
         },
         "required": ["item_name", "file_path", "node_kind", "module_path"],
         "additionalProperties": false
@@ -53,6 +75,16 @@ pub struct EdgesParams<'a> {
     pub node_kind: std::borrow::Cow<'a, str>, // "error" | "overwrite"
     #[serde(default)]
     pub module_path: std::borrow::Cow<'a, str>,
+    #[serde(default, borrow)]
+    pub owner_trait: Option<std::borrow::Cow<'a, str>>,
+    #[serde(default, borrow)]
+    pub owner_type: Option<std::borrow::Cow<'a, str>>,
+    #[serde(default, borrow)]
+    pub parent_name: Option<std::borrow::Cow<'a, str>>,
+    #[serde(default, borrow)]
+    pub body_contains: Option<std::borrow::Cow<'a, str>>,
+    #[serde(default)]
+    pub allowed_effects: Vec<std::borrow::Cow<'a, str>>,
 }
 
 impl<'a> ValidatesAbolutePath for EdgesParams<'a> {
@@ -68,6 +100,11 @@ pub struct EdgesParamsOwned {
     pub file_path: String,
     pub node_kind: String,
     pub module_path: String,
+    pub owner_trait: Option<String>,
+    pub owner_type: Option<String>,
+    pub parent_name: Option<String>,
+    pub body_contains: Option<String>,
+    pub allowed_effects: Vec<String>,
 }
 
 pub struct CodeItemEdges;
@@ -125,6 +162,15 @@ impl Tool for CodeItemEdges {
             item_name: params.item_name.clone().into_owned(),
             node_kind: params.node_kind.clone().into_owned(),
             module_path: params.module_path.clone().into_owned(),
+            owner_trait: params.owner_trait.as_ref().map(|value| value.to_string()),
+            owner_type: params.owner_type.as_ref().map(|value| value.to_string()),
+            parent_name: params.parent_name.as_ref().map(|value| value.to_string()),
+            body_contains: params.body_contains.as_ref().map(|value| value.to_string()),
+            allowed_effects: params
+                .allowed_effects
+                .iter()
+                .map(|effect| effect.to_string())
+                .collect(),
         }
     }
 
@@ -169,6 +215,15 @@ impl Tool for CodeItemEdges {
                 ),
             })
         })?;
+        let owner = lookup_support::normalize_owner_qualifier(
+            params.owner_trait.as_deref(),
+            params.owner_type.as_deref(),
+            node_kind,
+        )?;
+        let parent =
+            lookup_support::normalize_parent_name(params.parent_name.as_deref(), node_kind)?;
+        let marker =
+            lookup_support::normalize_body_contains(params.body_contains.as_deref(), node_kind)?;
 
         let (primary_root, policy) = ctx
             .state
@@ -212,12 +267,15 @@ for a more fuzzy search."#
             }));
         }
 
-        let resolved_item = match graph_resolve_exact(
+        let resolved_item = match lookup_support::resolve_exact_item(
             &ctx.state.db,
-            node_kind.as_relation(),
+            node_kind,
             &abs_path,
             &mod_path,
             params.item_name.as_ref(),
+            owner.as_ref(),
+            parent.as_deref(),
+            marker.as_deref(),
         ) {
             Ok(t) if t.len() == 1 => t,
             Ok(t) if t.is_empty() => {
@@ -227,11 +285,14 @@ for a more fuzzy search."#
                     .unwrap_or_default();
                 return Err(ploke_error::Error::Domain(DomainError::Ui {
                     message: format!(
-                        "No code item named `{}` found in {} with module_path {} and node_kind {}.{}",
+                        "No code item named `{}` found in {} with module_path {} and node_kind {}{}{}{}.{}",
                         params.item_name,
                         rel_path.display(),
                         params.module_path,
                         node_kind.as_str(),
+                        lookup_support::owner_message(owner.as_ref()),
+                        lookup_support::parent_message(parent.as_deref()),
+                        lookup_support::body_message(marker.as_deref()),
                         hint
                     ),
                 }));
@@ -242,11 +303,14 @@ for a more fuzzy search."#
                 ));
                 return Err(ploke_error::Error::Domain(DomainError::Ui {
                     message: format!(
-                        "Multiple items matched `{}` in {} with module_path {} and node_kind {}; expected a single match. This is an internal error: {}",
+                        "Multiple items matched `{}` in {} with module_path {} and node_kind {}{}{}{}; expected a single match. This is an internal error: {}",
                         params.item_name,
                         rel_path.display(),
                         params.module_path,
                         node_kind.as_str(),
+                        lookup_support::owner_message(owner.as_ref()),
+                        lookup_support::parent_message(parent.as_deref()),
+                        lookup_support::body_message(marker.as_deref()),
                         err
                     ),
                 }));
@@ -260,20 +324,72 @@ for a more fuzzy search."#
             }
         };
         let resolved_item_id = resolved_item[0].id;
-
-        let mod_path_vec = params
-            .module_path
-            .split("::")
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .collect_vec();
-        let resolved_edges = graph_resolve_edges(
-            &ctx.state.db,
-            node_kind.as_relation(),
-            &abs_path,
-            &mod_path_vec,
-            &params.item_name,
+        let carriers = lookup_support::context_carriers_for_node(&ctx, resolved_item_id)?;
+        let call_paths = lookup_support::call_path_carriers_for_node(&ctx, resolved_item_id)?;
+        let call_impact = lookup_support::call_impact_for_node(&ctx, resolved_item_id)?;
+        let call_reach = lookup_support::call_reach_for_node(&ctx, resolved_item_id)?;
+        let call_reach_effects =
+            lookup_support::call_reach_effects_for_node(&ctx, resolved_item_id)?;
+        let unsafe_block_calls =
+            lookup_support::unsafe_block_calls_for_node(&ctx, resolved_item_id)?;
+        let allowed_effects = params
+            .allowed_effects
+            .iter()
+            .map(|effect| effect.to_string())
+            .collect::<Vec<_>>();
+        let call_effect_policy_violations = lookup_support::call_effect_policy_violations_for_node(
+            &ctx,
+            resolved_item_id,
+            &allowed_effects,
         )?;
+        let call_proof_invariant_findings =
+            lookup_support::call_proof_invariant_findings_for_node(&ctx, resolved_item_id)?;
+        let external_summary_needs =
+            lookup_support::external_summary_needs_for_node(&ctx, resolved_item_id)?;
+        let runtime_dispatch_needs =
+            lookup_support::runtime_dispatch_needs_for_node(&ctx, resolved_item_id)?;
+        let local_bindings = lookup_support::local_bindings_for_node(&ctx, resolved_item_id)?;
+        let local_binding_edges =
+            lookup_support::local_binding_edges_for_node(&ctx, resolved_item_id)?;
+        let call_callee_evidence = lookup_support::call_callee_evidence_for_node(
+            &ctx,
+            resolved_item_id,
+            &carriers.call_context,
+        )?;
+        let self_field_parameter_flows =
+            lookup_support::self_field_parameter_flows_for_node(&ctx, resolved_item_id)?;
+        let self_field_assignment_flows =
+            lookup_support::self_field_assignment_flows_for_node(&ctx, resolved_item_id)?;
+        let self_field_assignment_argument_flows =
+            lookup_support::self_field_assignment_argument_flows_for_node(&ctx, resolved_item_id)?;
+        let future_poll_field_producer_flows =
+            lookup_support::future_poll_field_producer_flows_for_node(&ctx, resolved_item_id)?;
+        let awaited_call_sites =
+            lookup_support::awaited_call_sites_for_node(&ctx, resolved_item_id)?;
+        let returned_call_binding_flows =
+            lookup_support::returned_call_binding_flows_for_node(&ctx, resolved_item_id)?;
+        let returned_future_flows =
+            lookup_support::returned_future_flows_for_node(&ctx, resolved_item_id)?;
+        let returned_future_execution_flows =
+            lookup_support::returned_future_execution_flows_for_node(&ctx, resolved_item_id)?;
+        let module_boundary_edges =
+            lookup_support::module_boundary_edges_for_node(&ctx, resolved_item_id)?;
+        let crate_boundary_edges =
+            lookup_support::crate_boundary_edges_for_node(&ctx, resolved_item_id)?;
+        let call_build_domains =
+            lookup_support::call_build_domains_for_node(&ctx, resolved_item_id)?;
+        let call_test_entrypoints =
+            lookup_support::call_test_entrypoints_for_node(&ctx, resolved_item_id)?;
+        let call_test_selection =
+            lookup_support::call_test_selection_for_node(&ctx, resolved_item_id)?;
+        let call_path_nodes =
+            call_path_nodes_for_paths(&call_paths.from_owner, &call_paths.to_target);
+
+        let resolved_edges = if node_kind.call_body_owner_kind().is_some() {
+            graph_resolve_edges_for_call_body_owner_id(&ctx.state.db, resolved_item_id)?
+        } else {
+            graph_resolve_edges_for_id(&ctx.state.db, node_kind.as_relation(), resolved_item_id)?
+        };
         let tool_results = ctx
             .state
             .io_handle
@@ -295,6 +411,12 @@ for a more fuzzy search."#
                 "failed to read snippet: {e}"
             )))
         })?;
+        let call_graph_summary = call_graph_summary(
+            resolved_item_id,
+            &call_paths.from_owner,
+            &call_paths.to_target,
+            &carriers.call_context,
+        );
         let concise_context = ConciseContext {
             id: resolved_item_id,
             file_path: NodeFilepath::new(rel_path.display().to_string()),
@@ -304,19 +426,118 @@ for a more fuzzy search."#
             )),
             snippet,
             type_context: None,
+            call_expansion: None,
+            call_context: carriers.call_context,
+            call_paths_from_owner: Vec::new(),
+            call_paths_to_target: Vec::new(),
+            call_cycles_from_owner: Vec::new(),
+            call_impact,
+            call_reach,
+            call_reach_effects,
+            unsafe_block_calls,
+            call_effect_policy_violations,
+            call_proof_invariant_findings,
+            external_summary_needs,
+            runtime_dispatch_needs,
+            local_bindings,
+            local_binding_edges,
+            call_callee_evidence,
+            self_field_parameter_flows,
+            self_field_assignment_flows,
+            self_field_assignment_argument_flows,
+            future_poll_field_producer_flows,
+            awaited_call_sites,
+            returned_call_binding_flows,
+            returned_future_flows,
+            returned_future_execution_flows,
+            module_boundary_edges,
+            crate_boundary_edges,
+            call_build_domains,
+            call_test_entrypoints,
+            call_test_selection,
+            proof_context: carriers.proof_context,
         };
 
         let node_edge_info = NodeEdgeInfo {
             node_info: concise_context,
             edge_info: resolved_edges,
+            call_paths_from_owner: call_paths.from_owner,
+            call_paths_to_target: call_paths.to_target,
+            call_cycles_from_owner: call_paths.cycles_from_owner,
+            call_path_nodes,
+            call_graph_summary,
         };
+        let call_counts = lookup_support::call_context_counts(
+            resolved_item_id,
+            &node_edge_info.node_info.call_context,
+        );
 
         let summary = format!("Resolved {} edges", node_edge_info.edge_info.len());
         let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("file_path", node_edge_info.node_info.file_path.as_ref())
             .with_field("canon_path", node_edge_info.node_info.canon_path.as_ref())
-            .with_field("edges", node_edge_info.edge_info.len().to_string());
-        let content= serde_json::to_string(&node_edge_info).map_err(|err| {
+            .with_field("edges", node_edge_info.edge_info.len().to_string())
+            .with_field("call_context", call_counts.total.to_string())
+            .with_field("call_context_outgoing", call_counts.outgoing.to_string())
+            .with_field("call_context_incoming", call_counts.incoming.to_string())
+            .with_field(
+                "callers",
+                node_edge_info.call_graph_summary.callers.to_string(),
+            )
+            .with_field(
+                "callees",
+                node_edge_info.call_graph_summary.callees.to_string(),
+            )
+            .with_field(
+                "blocked_calls",
+                node_edge_info.call_graph_summary.blocked.to_string(),
+            )
+            .with_field(
+                "call_paths_from_owner",
+                node_edge_info.call_paths_from_owner.len().to_string(),
+            )
+            .with_field(
+                "call_paths_to_target",
+                node_edge_info.call_paths_to_target.len().to_string(),
+            )
+            .with_field(
+                "call_cycles_from_owner",
+                node_edge_info.call_cycles_from_owner.len().to_string(),
+            );
+        let ui_payload = lookup_support::with_call_usage_fields(
+            ui_payload,
+            node_edge_info.node_info.call_impact.as_ref(),
+            node_edge_info.node_info.call_reach.as_ref(),
+            &node_edge_info.node_info.call_reach_effects,
+            &node_edge_info.node_info.unsafe_block_calls,
+            &node_edge_info.node_info.call_effect_policy_violations,
+            &node_edge_info.node_info.call_proof_invariant_findings,
+            &node_edge_info.node_info.external_summary_needs,
+            &node_edge_info.node_info.runtime_dispatch_needs,
+            &node_edge_info.node_info.local_bindings,
+            &node_edge_info.node_info.local_binding_edges,
+            &node_edge_info.node_info.call_callee_evidence,
+            &node_edge_info.node_info.self_field_parameter_flows,
+            &node_edge_info.node_info.self_field_assignment_flows,
+            &node_edge_info
+                .node_info
+                .self_field_assignment_argument_flows,
+            &node_edge_info.node_info.future_poll_field_producer_flows,
+            &node_edge_info.node_info.awaited_call_sites,
+            &node_edge_info.node_info.returned_call_binding_flows,
+            &node_edge_info.node_info.returned_future_flows,
+            &node_edge_info.node_info.returned_future_execution_flows,
+            &node_edge_info.node_info.module_boundary_edges,
+            &node_edge_info.node_info.crate_boundary_edges,
+            &node_edge_info.node_info.call_build_domains,
+            &node_edge_info.node_info.call_test_entrypoints,
+            node_edge_info.node_info.call_test_selection.as_ref(),
+        )
+        .with_field(
+            "proof_context",
+            node_edge_info.node_info.proof_context.len().to_string(),
+        );
+        let content = serde_json::to_string(&node_edge_info).map_err(|err| {
             ploke_error::Error::Internal(InternalError::CompilerError(format!(
                 "failed to serialize NodeEdgeInfo: {err}. This indicates an error in the ploke application itself, not due to incorrect search terms. Please consider filing an issue on the ploke github."
             )))
@@ -333,6 +554,72 @@ for a more fuzzy search."#
 pub struct NodeEdgeInfo {
     node_info: ConciseContext,
     edge_info: Vec<ResolvedEdgeData>,
+    call_paths_from_owner: Vec<CallPathInfo>,
+    call_paths_to_target: Vec<CallPathInfo>,
+    call_cycles_from_owner: Vec<CallPathInfo>,
+    call_path_nodes: Vec<CallPathNodeInfo>,
+    call_graph_summary: CallGraphSummary,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CallGraphSummary {
+    calls: usize,
+    callers: usize,
+    callees: usize,
+    blocked: usize,
+    outgoing_paths: usize,
+    incoming_paths: usize,
+    outgoing_depth: u32,
+    incoming_depth: u32,
+    path_nodes: usize,
+}
+
+fn call_graph_summary(
+    node_id: Uuid,
+    from_owner: &[CallPathInfo],
+    to_target: &[CallPathInfo],
+    call_context: &[ploke_core::rag_types::CallContextInfo],
+) -> CallGraphSummary {
+    let counts = lookup_support::call_context_counts(node_id, call_context);
+    let calls = counts.outgoing;
+    let callers = counts.incoming;
+    let callees = call_context
+        .iter()
+        .filter(|call| call.owner_id == node_id)
+        .map(|call| call.targets.len())
+        .sum();
+    let blocked = call_context
+        .iter()
+        .filter(|call| call.owner_id == node_id && call.targets.is_empty())
+        .count();
+    let outgoing_depth = from_owner.iter().map(|path| path.depth).max().unwrap_or(0);
+    let incoming_depth = to_target.iter().map(|path| path.depth).max().unwrap_or(0);
+    let path_nodes = call_path_nodes_for_paths(from_owner, to_target).len();
+
+    CallGraphSummary {
+        calls,
+        callers,
+        callees,
+        blocked,
+        outgoing_paths: from_owner.len(),
+        incoming_paths: to_target.len(),
+        outgoing_depth,
+        incoming_depth,
+        path_nodes,
+    }
+}
+
+fn call_path_nodes_for_paths(
+    from_owner: &[CallPathInfo],
+    to_target: &[CallPathInfo],
+) -> Vec<CallPathNodeInfo> {
+    let mut nodes = BTreeMap::new();
+    for path in from_owner.iter().chain(to_target) {
+        for node in &path.nodes {
+            nodes.entry(node.id).or_insert_with(|| node.clone());
+        }
+    }
+    nodes.into_values().collect()
 }
 
 fn check_empty(

@@ -14,6 +14,24 @@ define_schema!(CrateContextSchema {
     files: "[String]",
 });
 
+define_schema!(CrateDependencySchema {
+    "crate_dependency",
+    id: "Uuid",
+    namespace: "Uuid",
+    crate_name: "String",
+    dep_name: "String",
+    dep_kind: "String",
+    version: "String?",
+    path: "String?",
+    git: "String?",
+    branch: "String?",
+    tag: "String?",
+    rev: "String?",
+    features: "[String]?",
+    optional: "Bool?",
+    default_features: "Bool?",
+});
+
 define_schema!(WorkspaceMetadataSchema {
     "workspace_metadata",
     id: "Uuid",

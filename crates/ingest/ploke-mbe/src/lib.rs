@@ -7,7 +7,10 @@ pub use error::MbeError;
 pub use ir::{
     DeclarativeMacro, MacroInvocation, MetaTemplate, MetaVarKind, Op, RepeatKind, Rule, Separator,
 };
-pub use parse::{parse_invocation, parse_macro_rules_item, parse_macro_rules_tokens};
+pub use parse::{
+    parse_invocation, parse_macro_rules_item, parse_macro_rules_tokens,
+    parse_no_arg_macro_rule_items, parse_no_arg_macro_rule_stmts,
+};
 pub use structural::{StructuralItem, collect_structural_items, parse_expanded_items};
 
 #[cfg(test)]
@@ -16,7 +19,7 @@ mod tests {
 
     use crate::{
         MbeError, Op, RepeatKind, StructuralItem, collect_structural_items, parse_expanded_items,
-        parse_macro_rules_item,
+        parse_macro_rules_item, parse_no_arg_macro_rule_items, parse_no_arg_macro_rule_stmts,
     };
 
     #[test]
@@ -72,6 +75,56 @@ mod tests {
 
         let err = parse_macro_rules_item(&item).expect_err("non-macro_rules item should fail");
         assert!(matches!(err, MbeError::NotMacroRules { .. }));
+    }
+
+    #[test]
+    fn parses_no_arg_rule_items() {
+        let item: syn::ItemMacro = syn::parse2(quote! {
+            macro_rules! make_fn {
+                () => {
+                    fn generated() -> i32 {
+                        1
+                    }
+                };
+            }
+        })
+        .expect("macro_rules item should parse");
+
+        let items = parse_no_arg_macro_rule_items(item.mac.tokens.clone())
+            .expect("no-arg macro rule should parse")
+            .expect("no-arg macro rule should be present");
+
+        let [syn::Item::Fn(item_fn)] = items.as_slice() else {
+            panic!(
+                "expected one generated function item, found {}",
+                items.len()
+            );
+        };
+        assert_eq!(item_fn.sig.ident, "generated");
+    }
+
+    #[test]
+    fn parses_no_arg_rule_stmts() {
+        let item: syn::ItemMacro = syn::parse2(quote! {
+            macro_rules! call_target {
+                () => {
+                    local_target();
+                };
+            }
+        })
+        .expect("macro_rules item should parse");
+
+        let stmts = parse_no_arg_macro_rule_stmts(item.mac.tokens.clone())
+            .expect("no-arg macro rule should parse")
+            .expect("no-arg macro rule should be present");
+
+        let [syn::Stmt::Expr(syn::Expr::Call(call), Some(_))] = stmts.as_slice() else {
+            panic!(
+                "expected one generated call statement, found {}",
+                stmts.len()
+            );
+        };
+        assert!(matches!(call.func.as_ref(), syn::Expr::Path(_)));
     }
 
     #[test]

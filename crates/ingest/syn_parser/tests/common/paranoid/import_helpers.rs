@@ -112,6 +112,9 @@ pub fn find_import_node_paranoid<'a>(
     //    not the visible binding name alone.
     let id_gen_name: String = match import_node.kind {
         syn_parser::parser::nodes::ImportKind::ExternCrate => import_node.visible_name.clone(),
+        syn_parser::parser::nodes::ImportKind::ExternFunction { .. } => {
+            import_node.source_path.join("::")
+        }
         syn_parser::parser::nodes::ImportKind::UseStatement(_) => {
             if import_node.is_glob {
                 import_node.visible_name.clone()
@@ -130,6 +133,7 @@ pub fn find_import_node_paranoid<'a>(
     };
     let item_kind = match import_node.kind {
         syn_parser::parser::nodes::ImportKind::UseStatement(_) => ItemKind::Import,
+        syn_parser::parser::nodes::ImportKind::ExternFunction { .. } => ItemKind::Import,
         syn_parser::parser::nodes::ImportKind::ExternCrate => ItemKind::ExternCrate,
     };
 

@@ -1,3 +1,4 @@
+mod cfg_gates_duplicate_test_mods;
 mod cfg_gates_quantized_metal;
 mod edition_2015_async_keyword_fallback;
 mod edition_2015_bare_trait_object_fallback;

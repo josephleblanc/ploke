@@ -1,5 +1,6 @@
 use ploke_core::rag_types::{
-    AssembledContext, AssembledMeta, ConciseContext, ContextStats, RequestCodeContextResult,
+    AssembledContext, AssembledMeta, CallStatusKind, ConciseContext, ContextStats,
+    RequestCodeContextResult,
 };
 use ploke_db::get_by_id::{GetNodeInfo, NodePaths};
 
@@ -78,10 +79,34 @@ fn type_context_degraded_note() -> String {
     "Type-context expansion is unavailable for this workspace index; results reflect BM25/dense retrieval only (no typed-graph neighbors)."
         .to_string()
 }
+fn call_context_degraded_note() -> String {
+    "Call-context expansion is unavailable for this workspace index; results omit call graph payloads and incoming caller expansion."
+        .to_string()
+}
+fn proof_context_degraded_note() -> String {
+    "Proof-context expansion is unavailable for this workspace index; results omit proof graph payloads and proof blockers."
+        .to_string()
+}
 
 fn type_context_degraded_next_steps() -> Vec<String> {
     vec![
         "Re-index the workspace with a typed type-graph build if typed neighbors are required."
+            .to_string(),
+        "Use code_item_lookup or read_file when you need exact definitions rather than broad retrieval."
+            .to_string(),
+    ]
+}
+fn call_context_degraded_next_steps() -> Vec<String> {
+    vec![
+        "Re-index the workspace with call-graph projection enabled if call payloads or caller expansion are required."
+            .to_string(),
+        "Use code_item_lookup or read_file when you need exact definitions rather than broad retrieval."
+            .to_string(),
+    ]
+}
+fn proof_context_degraded_next_steps() -> Vec<String> {
+    vec![
+        "Project proof facts for the active workspace if proof blockers or proof context are required."
             .to_string(),
         "Use code_item_lookup or read_file when you need exact definitions rather than broad retrieval."
             .to_string(),
@@ -98,6 +123,30 @@ fn apply_type_context_degraded_note(result: &mut RequestCodeContextResult) {
         None => result.note = Some(note),
     }
     result.next_steps.extend(type_context_degraded_next_steps());
+}
+fn apply_call_context_degraded_note(result: &mut RequestCodeContextResult) {
+    let note = call_context_degraded_note();
+    match result.note.as_mut() {
+        Some(existing) => {
+            existing.push_str("\n\n");
+            existing.push_str(&note);
+        }
+        None => result.note = Some(note),
+    }
+    result.next_steps.extend(call_context_degraded_next_steps());
+}
+fn apply_proof_context_degraded_note(result: &mut RequestCodeContextResult) {
+    let note = proof_context_degraded_note();
+    match result.note.as_mut() {
+        Some(existing) => {
+            existing.push_str("\n\n");
+            existing.push_str(&note);
+        }
+        None => result.note = Some(note),
+    }
+    result
+        .next_steps
+        .extend(proof_context_degraded_next_steps());
 }
 
 fn summarize_request_code_context_result(
@@ -135,6 +184,100 @@ fn summarize_request_code_context_result(
     } else {
         format!("Context assembled: {} snippets", result.context.len())
     }
+}
+
+struct ContextCarrierCounts {
+    type_context: usize,
+    call_context: usize,
+    call_blockers: usize,
+    call_expansion: usize,
+    call_paths_from_owner: usize,
+    call_paths_to_target: usize,
+    proof_context: usize,
+    proof_blockers: usize,
+}
+
+fn context_carrier_counts(result: &RequestCodeContextResult) -> ContextCarrierCounts {
+    let type_context = result
+        .context
+        .iter()
+        .filter(|part| part.type_context.is_some())
+        .count();
+    let call_context = result
+        .context
+        .iter()
+        .map(|part| part.call_context.len())
+        .sum();
+    let call_blockers = result
+        .context
+        .iter()
+        .flat_map(|part| part.call_context.iter())
+        .filter(|call| call.status != CallStatusKind::Resolved)
+        .count();
+    let call_expansion = result
+        .context
+        .iter()
+        .filter(|part| part.call_expansion.is_some())
+        .count();
+    let call_paths_from_owner = result
+        .context
+        .iter()
+        .map(|part| part.call_paths_from_owner.len())
+        .sum();
+    let call_paths_to_target = result
+        .context
+        .iter()
+        .map(|part| part.call_paths_to_target.len())
+        .sum();
+    let proof_context = result
+        .context
+        .iter()
+        .map(|part| part.proof_context.len())
+        .sum();
+    let proof_blockers = result
+        .context
+        .iter()
+        .flat_map(|part| part.proof_context.iter())
+        .filter(|proof| proof.blocker_reason.is_some())
+        .count();
+    ContextCarrierCounts {
+        type_context,
+        call_context,
+        call_blockers,
+        call_expansion,
+        call_paths_from_owner,
+        call_paths_to_target,
+        proof_context,
+        proof_blockers,
+    }
+}
+
+fn summarize_context_carriers(summary: String, counts: &ContextCarrierCounts) -> String {
+    let mut blockers = Vec::new();
+    if counts.call_blockers > 0 {
+        blockers.push(format!(
+            "{} call {}",
+            counts.call_blockers,
+            pluralize(counts.call_blockers, "blocker", "blockers")
+        ));
+    }
+    if counts.proof_blockers > 0 {
+        blockers.push(format!(
+            "{} proof {}",
+            counts.proof_blockers,
+            pluralize(counts.proof_blockers, "blocker", "blockers")
+        ));
+    }
+
+    if blockers.is_empty() {
+        summary
+    } else {
+        format!("{summary}; {}", blockers.join(", "))
+    }
+}
+
+fn pluralize(count: usize, singular: &'static str, plural: &'static str) -> &'static str {
+    if count == 1 { singular } else { plural }
 }
 
 // --- GAT-based tool impl ---
@@ -287,6 +430,14 @@ impl super::Tool for RequestCodeContextGat {
         if rag.type_context_degraded() {
             apply_type_context_degraded_note(&mut result);
         }
+        if rag.call_context_degraded() {
+            apply_call_context_degraded_note(&mut result);
+        }
+        if rag.proof_context_degraded() {
+            apply_proof_context_degraded_note(&mut result);
+        }
+        let counts = context_carrier_counts(&result);
+        let summary = summarize_context_carriers(summary, &counts);
         let mut ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("search_term", result.search_term.as_str())
             .with_field(
@@ -295,7 +446,21 @@ impl super::Tool for RequestCodeContextGat {
             )
             .with_field("token_budget_total", token_budget_total.to_string())
             .with_field("top_k", result.top_k.to_string())
-            .with_field("returned", result.context.len().to_string());
+            .with_field("returned", result.context.len().to_string())
+            .with_field("type_context", counts.type_context.to_string())
+            .with_field("call_context", counts.call_context.to_string())
+            .with_field("call_blockers", counts.call_blockers.to_string())
+            .with_field("call_expansion", counts.call_expansion.to_string())
+            .with_field(
+                "call_paths_from_owner",
+                counts.call_paths_from_owner.to_string(),
+            )
+            .with_field(
+                "call_paths_to_target",
+                counts.call_paths_to_target.to_string(),
+            )
+            .with_field("proof_context", counts.proof_context.to_string())
+            .with_field("proof_blockers", counts.proof_blockers.to_string());
         if let Some(note) = result.note.as_ref() {
             let details = std::iter::once(note.as_str().to_string())
                 .chain(
@@ -364,32 +529,26 @@ mod gat_tests {
         assert!(params.search_term.is_none());
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     #[tokio::test]
     async fn request_code_context_degrades_on_non_typed_db() -> color_eyre::Result<()> {
         use crate::app::commands::harness::TestRuntime;
         use crate::user_config::RetrievalStrategyUser;
         use ploke_core::ArcStr;
         use ploke_core::rag_types::RequestCodeContextResult;
-        use ploke_db::Database;
         use ploke_db::bm25_index::bm25_service::Bm25Status;
         use ploke_embed::indexer::EmbeddingProcessor;
-        use ploke_test_utils::fixture_dbs::backup_fixture_path_or_seed;
+        use ploke_test_utils::fixture_dbs::fresh_backup_fixture_db;
         use ploke_test_utils::{FIXTURE_NODES_CANONICAL, workspace_root};
         use std::borrow::Cow;
         use std::sync::Arc;
         use tokio::time::{Duration, sleep};
         use uuid::Uuid;
 
-        let snapshot = backup_fixture_path_or_seed(&FIXTURE_NODES_CANONICAL)?;
-        let db = Arc::new(
-            Database::create_new_backup_default(&snapshot)
-                .await
-                .map_err(color_eyre::eyre::Report::from)?,
-        );
+        let db = Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL)?);
         assert!(
             !db.has_typed_type_graph_relations()?,
-            "stale plain starting-db restore must lack typed-graph relations for this regression"
+            "plain fixture import must not expose populated typed-graph relations for this regression"
         );
         let rt = TestRuntime::new_with_embedding_processor(&db, EmbeddingProcessor::new_mock());
         rt.setup_loaded_standalone_crate(workspace_root()).await;
@@ -458,6 +617,13 @@ mod gat_tests {
         Ok(())
     }
 
+    #[cfg(feature = "test_harness")]
+    mod call_context_tests;
+    #[cfg(feature = "test_harness")]
+    mod helpers;
+    #[cfg(feature = "test_harness")]
+    mod proof_context_tests;
+
     #[test]
     fn stale_snippet_skips_are_model_visible_degraded_context() {
         let mut result = RequestCodeContextResult::from_assembled(
@@ -491,6 +657,66 @@ mod gat_tests {
                 .next_steps
                 .iter()
                 .any(|step| step.contains("Refresh or re-resolve"))
+        );
+    }
+    #[test]
+    fn call_context_degradation_is_model_visible() {
+        let mut result = RequestCodeContextResult::from_assembled(
+            Vec::new(),
+            AssembledMeta {
+                search_term: "callers".to_string(),
+                top_k: 3,
+                kind: ContextPartKind::Code,
+            },
+        );
+
+        apply_call_context_degraded_note(&mut result);
+
+        let note = result
+            .note
+            .as_deref()
+            .expect("call-context degradation should surface a note for the model");
+        assert!(
+            note.contains("Call-context expansion is unavailable"),
+            "unexpected note: {note}"
+        );
+        assert!(
+            result
+                .next_steps
+                .iter()
+                .any(|step| step.contains("call-graph projection enabled")),
+            "call-context degradation should include recovery next steps: {:#?}",
+            result.next_steps
+        );
+    }
+    #[test]
+    fn proof_context_degradation_is_model_visible() {
+        let mut result = RequestCodeContextResult::from_assembled(
+            Vec::new(),
+            AssembledMeta {
+                search_term: "proofs".to_string(),
+                top_k: 3,
+                kind: ContextPartKind::Code,
+            },
+        );
+
+        apply_proof_context_degraded_note(&mut result);
+
+        let note = result
+            .note
+            .as_deref()
+            .expect("proof-context degradation should surface a note for the model");
+        assert!(
+            note.contains("Proof-context expansion is unavailable"),
+            "unexpected note: {note}"
+        );
+        assert!(
+            result
+                .next_steps
+                .iter()
+                .any(|step| step.contains("Project proof facts")),
+            "proof-context degradation should include recovery next steps: {:#?}",
+            result.next_steps
         );
     }
 
@@ -544,7 +770,7 @@ mod gat_tests {
         Ok(())
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     #[tokio::test]
     #[ignore = "quarantined: do not force BM25/top_k behavior to satisfy matrix payload assertions"]
     async fn request_code_context_tool_emits_matrix_type_context() -> color_eyre::Result<()> {
@@ -682,7 +908,7 @@ mod gat_tests {
         Ok(())
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "live OpenRouter model/tool matrix test; requires OPENROUTER_API_KEY"]
     async fn live_request_code_context_matrix_uses_production_tool_payload()
@@ -871,7 +1097,7 @@ mod gat_tests {
         Ok(())
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn assert_matrix_payload_has_type_context(
         case: &ploke_test_utils::TypeShapeCase,
         expected_target_id: uuid::Uuid,
@@ -899,7 +1125,7 @@ mod gat_tests {
         );
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn covers(
         case: &ploke_test_utils::TypeShapeCase,
         coverage: ploke_test_utils::ShapePipelineCoverage,
@@ -907,7 +1133,7 @@ mod gat_tests {
         case.coverage.iter().any(|candidate| *candidate == coverage)
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn resolve_matrix_target(
         db: &ploke_db::Database,
         selector: ploke_test_utils::TargetSelector,
@@ -944,7 +1170,7 @@ mod gat_tests {
         }
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn type_context_kind(
         relation: ploke_db::TypeContextRelation,
     ) -> ploke_core::rag_types::TypeContextKind {
@@ -979,7 +1205,7 @@ mod gat_tests {
         }
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn resolve_matrix_expected_type_context_seed_ids(
         db: &ploke_db::Database,
         case: &ploke_test_utils::TypeShapeCase,
@@ -1015,7 +1241,7 @@ mod gat_tests {
         Ok(seeds)
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn resolve_matrix_owner(
         db: &ploke_db::Database,
         selector: ploke_test_utils::OwnerSelector,
@@ -1081,7 +1307,7 @@ mod gat_tests {
         }
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn one_uuid(db: &ploke_db::Database, script: &str) -> color_eyre::Result<uuid::Uuid> {
         let rows = db.raw_query(script)?;
         assert_eq!(
@@ -1093,7 +1319,70 @@ mod gat_tests {
         Ok(ploke_db::to_uuid(&rows.rows[0][0])?)
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
+    fn closure_owner_for_parent(
+        db: &ploke_db::Database,
+        parent: uuid::Uuid,
+    ) -> color_eyre::Result<uuid::Uuid> {
+        executable_owner_for_parent(db, parent, "Closure", "closure")
+    }
+
+    #[cfg(feature = "test_harness")]
+    fn async_block_owner_for_parent(
+        db: &ploke_db::Database,
+        parent: uuid::Uuid,
+    ) -> color_eyre::Result<uuid::Uuid> {
+        executable_owner_for_parent(db, parent, "AsyncBlock", "async_block")
+    }
+
+    #[cfg(feature = "test_harness")]
+    fn async_closure_owner_for_parent(
+        db: &ploke_db::Database,
+        parent: uuid::Uuid,
+    ) -> color_eyre::Result<uuid::Uuid> {
+        executable_owner_for_parent(db, parent, "Closure", "async_closure")
+    }
+
+    #[cfg(feature = "test_harness")]
+    fn local_item_owner_for_parent(
+        db: &ploke_db::Database,
+        parent: uuid::Uuid,
+    ) -> color_eyre::Result<uuid::Uuid> {
+        local_item_owner_for_parent_with_label(db, parent, "local_const")
+    }
+
+    fn local_item_owner_for_parent_with_label(
+        db: &ploke_db::Database,
+        parent: uuid::Uuid,
+        label: &str,
+    ) -> color_eyre::Result<uuid::Uuid> {
+        executable_owner_for_parent(db, parent, "LocalItem", label)
+    }
+
+    #[cfg(feature = "test_harness")]
+    fn executable_owner_for_parent(
+        db: &ploke_db::Database,
+        parent: uuid::Uuid,
+        owner_kind: &str,
+        label: &str,
+    ) -> color_eyre::Result<uuid::Uuid> {
+        one_uuid(
+            db,
+            &format!(
+                r#"?[id] :=
+                    parent = to_uuid("{parent}"),
+                    *call_body_owner {{
+                        id,
+                        owner_kind: "{owner_kind}",
+                        parent_id: parent,
+                        parent_kind: "Function",
+                        label: "{label}" @ 'NOW'
+                    }}"#
+            ),
+        )
+    }
+
+    #[cfg(feature = "test_harness")]
     fn one_uuid_by_file_suffix(
         db: &ploke_db::Database,
         script: &str,
@@ -1120,7 +1409,7 @@ mod gat_tests {
         Ok(ploke_db::to_uuid(&matching[0])?)
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn module_path(items: &[&str]) -> String {
         format!(
             "[{}]",
@@ -1132,7 +1421,7 @@ mod gat_tests {
         )
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn function_in_module_query(module_path_items: &[&str], name: &str) -> String {
         let module_path = module_path(module_path_items);
         format!(
@@ -1142,17 +1431,17 @@ mod gat_tests {
         )
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn function_in_file_query(name: &str) -> String {
         item_in_file_query("function", name)
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn struct_in_file_query(name: &str) -> String {
         item_in_file_query("struct", name)
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn item_in_file_query(relation: &str, name: &str) -> String {
         format!(
             r#"?[id, file_path] :=
@@ -1166,7 +1455,7 @@ mod gat_tests {
         )
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn struct_in_module_query(module_path_items: &[&str], name: &str) -> String {
         let module_path = module_path(module_path_items);
         format!(
@@ -1181,12 +1470,26 @@ mod gat_tests {
         )
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
+    fn variant_by_enum_query(enum_name: &str, variant_name: &str) -> String {
+        format!(
+            r#"?[id] :=
+                *enum {{ id: enum_id, name: "{enum_name}" @ 'NOW' }},
+                *syntax_edge {{
+                    source_id: enum_id,
+                    target_id: id,
+                    relation_kind: "EnumVariant" @ 'NOW'
+                }},
+                *variant {{ id, name: "{variant_name}" @ 'NOW' }}"#
+        )
+    }
+
+    #[cfg(feature = "test_harness")]
     fn trait_in_file_query(name: &str) -> String {
         item_in_file_query("trait", name)
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn trait_in_module_query(module_path_items: &[&str], name: &str) -> String {
         let module_path = module_path(module_path_items);
         format!(
@@ -1201,7 +1504,7 @@ mod gat_tests {
         )
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn method_by_impl_self_query(self_type: &str, method: &str) -> String {
         format!(
             r#"?[method_id] :=
@@ -1221,7 +1524,7 @@ mod gat_tests {
         )
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn method_by_impl_trait_self_query(trait_name: &str, self_type: &str, method: &str) -> String {
         format!(
             r#"?[method_id] :=

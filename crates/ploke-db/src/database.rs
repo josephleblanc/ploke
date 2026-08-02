@@ -7,7 +7,9 @@ use crate::QueryResult;
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
 use crate::error::DbError;
 use crate::get_by_id::NodePaths;
-use crate::multi_embedding::db_ext::{EmbeddingExt, METHOD_NODE_ANCESTOR_RULE};
+use crate::multi_embedding::db_ext::{
+    EmbeddingExt, METHOD_NODE_ANCESTOR_RULE, VARIANT_ANCESTOR_RULE,
+};
 use crate::multi_embedding::hnsw_ext::HnswExt;
 use crate::multi_embedding::schema::{EmbeddingSetExt as _, EmbeddingVector};
 use crate::result::{get_byte_offsets, get_pos};
@@ -17,6 +19,7 @@ use lazy_static::lazy_static;
 use ploke_core::{EmbeddingData, FileData, TrackingHash};
 use ploke_error::Error as PlokeError;
 use ploke_transform::schema::assoc_nodes::MethodNodeSchema;
+use ploke_transform::schema::crate_node::CrateDependencySchema;
 use ploke_transform::schema::meta::Bm25MetaSchema;
 use serde::{Deserialize, Serialize};
 use syn_parser::parser::nodes::{AnyNodeId, ToCozoUuid};
@@ -66,6 +69,20 @@ fn is_typed_type_graph_relation(relation: &str) -> bool {
             | "type_use_where_bound_slot"
             | "type_use_where_generic_param_bound_slot"
             | "type_use_associated_type_bound_slot"
+    )
+}
+
+fn is_call_graph_relation(relation: &str) -> bool {
+    matches!(
+        relation,
+        "call_body_owner"
+            | "call_site"
+            | "call_callee_evidence"
+            | "local_binding"
+            | "local_binding_edge"
+            | "call_site_edge"
+            | "call_relation"
+            | "call_resolution_status"
     )
 }
 
@@ -553,6 +570,55 @@ target[node_id] := input[id_str], node_id = to_uuid(id_str)
                 "namespace".to_string(),
                 "root_path".to_string(),
                 "files".to_string(),
+            ],
+            rows: self.raw_query(&script)?.rows,
+        })
+    }
+
+    fn collect_crate_dependency_rows_for_namespace(
+        &self,
+        namespace: Uuid,
+    ) -> Result<RelationExportRows, DbError> {
+        let namespace_lit = namespace.to_string();
+        let script = format!(
+            r#"
+?[id, namespace, crate_name, dep_name, dep_kind, version, path, git, branch, tag, rev, features, optional, default_features] :=
+    *crate_dependency {{
+        id,
+        namespace,
+        crate_name,
+        dep_name,
+        dep_kind,
+        version,
+        path,
+        git,
+        branch,
+        tag,
+        rev,
+        features,
+        optional,
+        default_features @ 'NOW'
+    }},
+    namespace = to_uuid("{namespace_lit}")
+"#
+        );
+        Ok(RelationExportRows {
+            relation: "crate_dependency".to_string(),
+            key_fields: vec!["id".to_string()],
+            val_fields: vec![
+                "namespace".to_string(),
+                "crate_name".to_string(),
+                "dep_name".to_string(),
+                "dep_kind".to_string(),
+                "version".to_string(),
+                "path".to_string(),
+                "git".to_string(),
+                "branch".to_string(),
+                "tag".to_string(),
+                "rev".to_string(),
+                "features".to_string(),
+                "optional".to_string(),
+                "default_features".to_string(),
             ],
             rows: self.raw_query(&script)?.rows,
         })
@@ -1539,39 +1605,21 @@ desc[id] := parent_of[id, parent], desc[parent], not file_root[id]
             .collect())
     }
 
-    /// Relation names for active plain fixtures that are shared between the legacy and typed
-    /// type-resolution build profiles.
-    ///
-    /// In the normal profile this includes `resolved_type_use`. In the `typed_type_graph`
-    /// profile, active non-typed fixtures intentionally do not claim typed type graph coverage, so
-    /// typed type graph relations remain empty after import. Typed graph corpus fixtures must use
-    /// [`Self::prior_rels_for_typed_type_graph_backup_import`] instead.
+    /// Relation names for active plain fixtures that intentionally do not claim typed graph or
+    /// call graph projection coverage. Source-pinned graph corpus fixtures must opt into the
+    /// corresponding full relation family at the fixture-registry boundary instead.
     pub fn prior_rels_for_plain_backup_import(&self) -> Result<Vec<String>, PlokeError> {
-        #[cfg(not(feature = "typed_type_graph"))]
-        {
-            self.prior_rels_for_current_schema_backup_import()
-        }
-
-        #[cfg(feature = "typed_type_graph")]
-        {
-            let mut relations = self.prior_rels_for_current_schema_backup_import()?;
-            relations.retain(|r| !is_typed_type_graph_relation(r));
-            Ok(relations)
-        }
+        let mut relations = self.prior_rels_for_current_schema_backup_import()?;
+        relations.retain(|r| !is_typed_type_graph_relation(r));
+        relations.retain(|r| !is_call_graph_relation(r));
+        Ok(relations)
     }
 
     /// Relation names for source-pinned typed type graph backup fixtures.
     pub fn prior_rels_for_typed_type_graph_backup_import(&self) -> Result<Vec<String>, PlokeError> {
-        #[cfg(feature = "typed_type_graph")]
-        {
-            self.prior_rels_for_current_schema_backup_import()
-        }
-        #[cfg(not(feature = "typed_type_graph"))]
-        {
-            Err(PlokeError::from(DbError::Cozo(
-                "typed type graph backup import requires the typed_type_graph feature".to_string(),
-            )))
-        }
+        let mut relations = self.prior_rels_for_current_schema_backup_import()?;
+        relations.retain(|r| !is_call_graph_relation(r));
+        Ok(relations)
     }
 
     // Gets all the file data in the same namespace as the crate name given as argument.
@@ -2824,6 +2872,40 @@ desc[id] := parent_of[id, parent], desc[parent]
         )
         .map_err(DbError::from)?;
 
+        let schema = &CrateDependencySchema::SCHEMA;
+        let dep_script = format!(
+            r#"
+?[id, namespace, crate_name, dep_name, dep_kind, version, path, git, branch, tag, rev, features, optional, default_features, at] :=
+    *crate_dependency {{
+        id,
+        namespace,
+        crate_name,
+        dep_name,
+        dep_kind,
+        version,
+        path,
+        git,
+        branch,
+        tag,
+        rev,
+        features,
+        optional,
+        default_features
+    }},
+    namespace = to_uuid("{namespace_lit}"),
+    at = 'RETRACT'
+
+:put {}
+"#,
+            schema.script_identity()
+        );
+        self.run_script(
+            &dep_script,
+            BTreeMap::new(),
+            cozo::ScriptMutability::Mutable,
+        )
+        .map_err(DbError::from)?;
+
         self.retract_active_embedding_set_meta_for_crate_name(&removed_crate_name)?;
         let removed_workspace_member =
             self.update_workspace_metadata_after_namespace_removal(&removed_root_path)?;
@@ -2846,6 +2928,7 @@ desc[id] := parent_of[id, parent], desc[parent]
         let inventory = self.collect_namespace_inventory(namespace)?;
         let mut relation_exports = vec![
             self.collect_crate_context_rows_for_namespace(namespace)?,
+            self.collect_crate_dependency_rows_for_namespace(namespace)?,
             self.collect_file_mod_rows_for_namespace(namespace)?,
             self.collect_syntax_edge_rows_for_ids(&inventory.descendant_ids)?,
             self.collect_bm25_doc_meta_for_ids(&inventory.descendant_ids)?,
@@ -2962,6 +3045,7 @@ desc[id] := parent_of[id, parent], desc[parent]
 
         for relation in [
             "crate_context",
+            "crate_dependency",
             "file_mod",
             "workspace_metadata",
             "syntax_edge",
@@ -3262,19 +3346,52 @@ snippet_node[id, name, hash, span] :=
                 )
             })
             .join("\n");
+        let variant_node_rule = r#"
+snippet_node[id, name, hash, span] :=
+    *variant{id, name, owner_id @ 'NOW'},
+    *enum{id: owner_id, tracking_hash: hash, span @ 'NOW'}
+"#;
+        let call_body_owner_node_rule = r#"
+body_owner_hash[id, hash] :=
+    *call_body_owner{id, parent_id @ 'NOW'},
+    *function{id: parent_id, tracking_hash: hash @ 'NOW'}
+body_owner_hash[id, hash] :=
+    *call_body_owner{id, parent_id @ 'NOW'},
+    *macro{id: parent_id, tracking_hash: hash @ 'NOW'}
+body_owner_hash[id, hash] :=
+    *call_body_owner{id, parent_id @ 'NOW'},
+    *method{id: parent_id, tracking_hash: hash @ 'NOW'}
+body_owner_hash[id, hash] :=
+    *call_body_owner{id, parent_id @ 'NOW'},
+    *const{id: parent_id, tracking_hash: hash @ 'NOW'}
+body_owner_hash[id, hash] :=
+    *call_body_owner{id, parent_id @ 'NOW'},
+    *static{id: parent_id, tracking_hash: hash @ 'NOW'}
+body_owner_hash[id, hash] :=
+    *call_body_owner{id, parent_id @ 'NOW'},
+    body_owner_hash[parent_id, hash]
+
+snippet_node[id, name, hash, span] :=
+    *call_body_owner{id, label: name, span @ 'NOW'},
+    body_owner_hash[id, hash]
+"#;
 
         let script = format!(
             r#"
 target_ids[id, ordering] <- $data
 
 parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}}
+parent_of[child, parent] := *call_body_owner{{id: child, parent_id: parent @ 'NOW'}}
 
 {method_ancestor_rule}
+{variant_ancestor_rule}
 
 ancestor[desc, asc] := parent_of[desc, asc]
 ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
 
 {has_node_rule}
+{variant_node_rule}
+{call_body_owner_node_rule}
 
 batch[id, name, file_path, file_hash, hash, span, namespace, canon_path, ordering] :=
     snippet_node[id, name, hash, span],
@@ -3288,6 +3405,9 @@ batch[id, name, file_path, file_hash, hash, span, namespace, canon_path, orderin
 :sort ordering
 "#,
             method_ancestor_rule = METHOD_NODE_ANCESTOR_RULE,
+            variant_ancestor_rule = VARIANT_ANCESTOR_RULE,
+            variant_node_rule = variant_node_rule,
+            call_body_owner_node_rule = call_body_owner_node_rule,
             has_node_rule = has_node_rule
         );
 
@@ -3725,6 +3845,50 @@ mod tests {
         Database::new(db)
     }
 
+    fn context_named<'a>(rows: &'a [CrateContextRow], name: &str) -> &'a CrateContextRow {
+        rows.iter()
+            .find(|row| row.name == name)
+            .unwrap_or_else(|| panic!("missing crate context for {name}"))
+    }
+
+    fn dep_rows(db: &Database, namespace: Uuid) -> Result<Vec<Vec<DataValue>>, DbError> {
+        db.raw_query(&format!(
+            r#"
+?[crate_name, dep_name, dep_kind, version, path, features] :=
+    *crate_dependency {{
+        crate_name,
+        dep_name,
+        dep_kind,
+        version,
+        path,
+        features,
+        namespace @ 'NOW'
+    }},
+    namespace = to_uuid("{namespace}")
+"#
+        ))
+        .map(|rows| rows.rows)
+    }
+
+    fn assert_workspace_dep(rows: &[Vec<DataValue>]) {
+        assert_eq!(rows.len(), 1, "expected one projected workspace dependency");
+        let row = &rows[0];
+        assert_eq!(row[0], DataValue::from("ws_fixture_nested"));
+        assert_eq!(row[1], DataValue::from("ws_fixture_root"));
+        assert_eq!(row[2], DataValue::from("normal"));
+        assert_eq!(row[3], DataValue::Null);
+        assert_eq!(
+            row[4],
+            DataValue::from(
+                workspace_root()
+                    .join("tests/fixture_workspace/ws_fixture_01/member_root")
+                    .display()
+                    .to_string()
+            )
+        );
+        assert_eq!(row[5], DataValue::Null);
+    }
+
     #[test]
     fn update_embeddings_batch_empty() -> Result<(), DbError> {
         let db = setup_db();
@@ -3745,6 +3909,34 @@ mod tests {
             !has_typed_graph,
             "fresh schema may register typed graph relations, but empty relations should not enable type-context expansion"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn typed_type_graph_backup_import_excludes_call_graph_relations() -> Result<(), PlokeError> {
+        let db = Database::init_with_schema()?;
+
+        let relations = db.prior_rels_for_typed_type_graph_backup_import()?;
+
+        assert!(
+            relations.contains(&"type_relation".to_string()),
+            "typed type graph fixtures should keep typed graph relations in their import set"
+        );
+        for relation in [
+            "call_body_owner",
+            "call_site",
+            "call_callee_evidence",
+            "local_binding",
+            "local_binding_edge",
+            "call_site_edge",
+            "call_relation",
+            "call_resolution_status",
+        ] {
+            assert!(
+                !relations.contains(&relation.to_string()),
+                "typed type graph fixture import set should not request call graph relation {relation}"
+            );
+        }
         Ok(())
     }
 
@@ -4869,13 +5061,14 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
     #[tokio::test]
     async fn remove_namespace_removes_only_target_namespace_and_invalidates_search_state()
     -> Result<(), PlokeError> {
-        let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
+        let db = fresh_local_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
         let crate_contexts = db
             .list_crate_context_rows()
             .expect("workspace fixture should expose crate_context rows");
-        let [removed, remaining] = crate_contexts.as_slice() else {
-            panic!("expected exactly two crate contexts for ws_fixture_01");
-        };
+        let removed = context_named(&crate_contexts, "ws_fixture_nested");
+        let remaining = context_named(&crate_contexts, "ws_fixture_root");
+        let before_rows = dep_rows(&db, removed.namespace)?;
+        assert_workspace_dep(&before_rows);
 
         let removed_inventory = db
             .collect_namespace_inventory(removed.namespace)
@@ -4994,6 +5187,14 @@ id = to_uuid("{seeded_node}")"#
             removed_file_mods_after.rows.is_empty(),
             "removed namespace should not leave file_mod roots behind"
         );
+        assert!(
+            dep_rows(&db, removed.namespace)?.is_empty(),
+            "removed namespace should not leave crate_dependency rows behind"
+        );
+        assert!(
+            dep_rows(&db, remaining.namespace)?.is_empty(),
+            "sibling namespace should not receive dependency rows from the removed namespace"
+        );
 
         let workspace_rows = db.raw_query(
             r#"?[members] := *workspace_metadata { id, namespace, root_path, resolver, members, exclude, package_version @ 'NOW' }"#,
@@ -5093,13 +5294,13 @@ id = to_uuid("{seeded_node}")"#
     #[tokio::test]
     async fn export_namespace_artifact_contains_only_target_namespace_rows()
     -> Result<(), PlokeError> {
-        let db = fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
+        let db = fresh_local_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
         let crate_contexts = db
             .list_crate_context_rows()
             .expect("workspace fixture should expose crate_context rows");
-        let [exported, sibling] = crate_contexts.as_slice() else {
-            panic!("expected exactly two crate contexts for ws_fixture_01");
-        };
+        let exported = context_named(&crate_contexts, "ws_fixture_nested");
+        let sibling = context_named(&crate_contexts, "ws_fixture_root");
+        assert_workspace_dep(&dep_rows(&db, exported.namespace)?);
 
         let exported_inventory = db
             .collect_namespace_inventory(exported.namespace)
@@ -5180,6 +5381,17 @@ id = to_uuid("{seeded_node}")"#
             "crate_context export should only contain the target namespace"
         );
 
+        let dep_export = relation_export("crate_dependency");
+        assert_eq!(dep_export.rows.len(), 1);
+        assert_eq!(
+            to_uuid(&dep_export.rows[0][1])?,
+            exported.namespace,
+            "crate_dependency export should only contain the target namespace"
+        );
+        assert_eq!(to_string(&dep_export.rows[0][2])?, exported.name);
+        assert_eq!(to_string(&dep_export.rows[0][3])?, "ws_fixture_root");
+        assert_eq!(to_string(&dep_export.rows[0][4])?, "normal");
+
         let file_mod_export = relation_export("file_mod");
         assert_eq!(
             file_mod_export.rows.len(),
@@ -5259,10 +5471,11 @@ id = to_uuid("{seeded_node}")"#
     -> Result<(), PlokeError> {
         let source_db = fresh_local_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
         let source_contexts = source_db.list_crate_context_rows()?;
-        let [exported, sibling] = source_contexts.as_slice() else {
-            panic!("expected exactly two crate contexts for ws_fixture_01");
-        };
+        let exported = context_named(&source_contexts, "ws_fixture_nested");
+        let sibling = context_named(&source_contexts, "ws_fixture_root");
         let exported_inventory = source_db.collect_namespace_inventory(exported.namespace)?;
+        let source_deps = dep_rows(&source_db, exported.namespace)?;
+        assert_workspace_dep(&source_deps);
 
         source_db.setup_multi_embedding()?;
         let active_set = source_db.with_active_set(|set| set.clone())?;
@@ -5311,9 +5524,7 @@ id = to_uuid("{seeded_node}")"#
 
         let dest_db = fresh_local_backup_fixture_db(&WS_FIXTURE_01_CANONICAL)?;
         let dest_contexts = dest_db.list_crate_context_rows()?;
-        let [_, remaining] = dest_contexts.as_slice() else {
-            panic!("expected exactly two crate contexts for ws_fixture_01");
-        };
+        let remaining = context_named(&dest_contexts, "ws_fixture_root");
         let remaining_inventory = dest_db.collect_namespace_inventory(remaining.namespace)?;
         dest_db.setup_multi_embedding()?;
         let dest_active_set = dest_db.with_active_set(|set| set.clone())?;
@@ -5333,6 +5544,10 @@ id = to_uuid("{seeded_node}")"#
         assert!(
             dest_db.is_hnsw_index_registered(&dest_active_set)?,
             "test setup should recreate hnsw on the surviving namespace before import"
+        );
+        assert!(
+            dep_rows(&dest_db, exported.namespace)?.is_empty(),
+            "test setup should remove exported dependency rows before import"
         );
 
         let result = dest_db
@@ -5374,6 +5589,7 @@ id = to_uuid("{seeded_node}")"#
             restored_inventory.descendant_ids,
             exported_inventory.descendant_ids
         );
+        assert_eq!(dep_rows(&dest_db, exported.namespace)?, source_deps);
 
         let workspace_rows = dest_db.raw_query(
             r#"?[members] := *workspace_metadata { id, namespace, root_path, resolver, members, exclude, package_version @ 'NOW' }"#,

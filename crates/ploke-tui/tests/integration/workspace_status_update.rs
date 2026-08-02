@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::{Mutex as StdMutex, OnceLock};
 
 use cozo::DataValue;
 use ploke_db::Database;
@@ -22,11 +21,6 @@ use tui::app_state::{
 };
 use tui::chat_history::ChatHistory;
 use tui::event_bus::{EventBus, EventBusCaps};
-
-fn fixture_lock() -> &'static StdMutex<()> {
-    static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| StdMutex::new(()))
-}
 
 struct FileRestoreGuard {
     path: PathBuf,
@@ -121,7 +115,9 @@ fn function_exists(db: &Database, function_name: &str) -> bool {
 /// refreshes stale members without dropping embeddings from untouched members.
 #[tokio::test]
 async fn workspace_status_and_update_operate_per_loaded_crate() {
-    let _lock = fixture_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _lock = crate::fixture_workspace_lock()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let repo_root = workspace_root();
     let workspace_root = repo_root.join("tests/fixture_workspace/ws_fixture_01");
     let changed_member = workspace_root.join("member_root/src/lib.rs");
@@ -212,7 +208,9 @@ async fn workspace_status_and_update_operate_per_loaded_crate() {
 /// changed file instead of scanning whichever crate is currently focused.
 #[tokio::test]
 async fn targeted_scan_refreshes_changed_member_independent_of_focus() {
-    let _lock = fixture_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _lock = crate::fixture_workspace_lock()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let repo_root = workspace_root();
     let workspace_root = repo_root.join("tests/fixture_workspace/ws_fixture_01");
     let focused_member = workspace_root.join("member_root");
@@ -277,7 +275,9 @@ async fn targeted_scan_refreshes_changed_member_independent_of_focus() {
 /// silently absorbing added or removed members.
 #[tokio::test]
 async fn workspace_status_reports_workspace_member_drift() {
-    let _lock = fixture_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _lock = crate::fixture_workspace_lock()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let repo_root = workspace_root();
     let workspace_root = repo_root.join("tests/fixture_workspace/ws_fixture_01");
     let manifest_path = workspace_root.join("Cargo.toml");

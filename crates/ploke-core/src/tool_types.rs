@@ -23,6 +23,14 @@ pub enum ToolName {
     CodeItemLookup,
     #[serde(rename = "code_item_edges")]
     CodeItemEdges,
+    #[serde(rename = "code_item_call_path")]
+    CodeItemCallPath,
+    #[serde(rename = "code_item_effect_guard")]
+    CodeItemEffectGuard,
+    #[serde(rename = "code_item_boundary_policy")]
+    CodeItemBoundaryPolicy,
+    #[serde(rename = "code_private_uncalled")]
+    CodePrivateUncalled,
     #[serde(rename = "cargo")]
     Cargo,
     #[serde(rename = "list_dir")]
@@ -30,7 +38,7 @@ pub enum ToolName {
 }
 
 impl ToolName {
-    pub const ALL: [ToolName; 10] = [
+    pub const ALL: [ToolName; 14] = [
         ToolName::RequestCodeContext,
         ToolName::ApplyCodeEdit,
         ToolName::InsertRustItem,
@@ -39,6 +47,10 @@ impl ToolName {
         ToolName::NsRead,
         ToolName::CodeItemLookup,
         ToolName::CodeItemEdges,
+        ToolName::CodeItemCallPath,
+        ToolName::CodeItemEffectGuard,
+        ToolName::CodeItemBoundaryPolicy,
+        ToolName::CodePrivateUncalled,
         ToolName::Cargo,
         ToolName::ListDir,
     ];
@@ -54,6 +66,10 @@ impl ToolName {
             NsRead => "read_file",
             CodeItemLookup => "code_item_lookup",
             CodeItemEdges => "code_item_edges",
+            CodeItemCallPath => "code_item_call_path",
+            CodeItemEffectGuard => "code_item_effect_guard",
+            CodeItemBoundaryPolicy => "code_item_boundary_policy",
+            CodePrivateUncalled => "code_private_uncalled",
             Cargo => "cargo",
             ListDir => "list_dir",
         }
@@ -184,9 +200,75 @@ mod tests {
     }
 
     #[test]
+    fn code_item_lookup_description_mentions_call_summaries() {
+        let description = tool_description(ToolName::CodeItemLookup).to_lowercase();
+        assert!(description.contains("call_impact"));
+        assert!(description.contains("call_reach"));
+        assert!(description.contains("call_reach_effects"));
+        assert!(description.contains("external_summary_needs"));
+        assert!(description.contains("runtime_dispatch_needs"));
+        assert!(description.contains("local_bindings"));
+        assert!(description.contains("local_binding_edges"));
+        assert!(description.contains("returned_call_binding_flows"));
+        assert!(description.contains("returned_future_flows"));
+        assert!(description.contains("returned_future_execution_flows"));
+        assert!(description.contains("direct_call_sites"));
+        assert!(description.contains("callsite_buckets"));
+        assert!(description.contains("module_path"));
+        assert!(description.contains("arg_count"));
+        assert!(description.contains("generic_arg_count"));
+        assert!(description.contains("boundary_call_sites"));
+        assert!(description.contains("boundary_edges"));
+        assert!(description.contains("test_callers"));
+        assert!(description.contains("non_test_callers"));
+        assert!(description.contains("external_frontier_calls"));
+        assert!(description.contains("unsupported_frontier_calls"));
+        assert!(description.contains("unresolved_frontier_calls"));
+        assert!(description.contains("ambiguous_frontier_calls"));
+        assert!(description.contains("source_files"));
+        assert!(description.contains("source_modules"));
+    }
+
+    #[test]
+    fn code_item_edges_description_mentions_binding_payloads() {
+        let description = tool_description(ToolName::CodeItemEdges).to_lowercase();
+        assert!(description.contains("local_bindings"));
+        assert!(description.contains("local_binding_edges"));
+        assert!(description.contains("returned_call_binding_flows"));
+        assert!(description.contains("returned_future_flows"));
+        assert!(description.contains("returned_future_execution_flows"));
+        assert!(description.contains("runtime_dispatch_needs"));
+    }
+
+    #[test]
     fn insert_rust_item_tool_name_serializes() {
         let name = serde_json::to_string(&ToolName::InsertRustItem).expect("serialize");
         assert_eq!(name, "\"insert_rust_item\"");
+    }
+
+    #[test]
+    fn code_private_uncalled_tool_name_serializes() {
+        let name = serde_json::to_string(&ToolName::CodePrivateUncalled).expect("serialize");
+        assert_eq!(name, "\"code_private_uncalled\"");
+    }
+
+    #[test]
+    fn code_private_uncalled_description_mentions_dead_code_query() {
+        let description = tool_description(ToolName::CodePrivateUncalled).to_lowercase();
+        assert!(description.contains("private"));
+        assert!(description.contains("no incoming persisted local call edges"));
+        assert!(description.contains("dead-code"));
+        assert!(description.contains("code_item_lookup"));
+    }
+
+    #[test]
+    fn code_item_boundary_policy_description_mentions_resolved_boundaries() {
+        let description = tool_description(ToolName::CodeItemBoundaryPolicy).to_lowercase();
+        assert!(description.contains("module-boundary"));
+        assert!(description.contains("crate-boundary"));
+        assert!(description.contains("policy"));
+        assert!(description.contains("resolved call graph"));
+        assert!(description.contains("targetless frontier"));
     }
 
     #[test]

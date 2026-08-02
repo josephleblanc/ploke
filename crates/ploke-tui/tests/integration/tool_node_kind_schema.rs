@@ -2,8 +2,9 @@ use ploke_db::NodeType;
 use ploke_tui::{
     rag::utils::NodeKind,
     tools::{
-        Tool, code_edit::GatCodeEdit, code_item_lookup::CodeItemLookup,
-        get_code_edges::CodeItemEdges,
+        Tool, code_edit::GatCodeEdit, code_item_boundary_policy::CodeItemBoundaryPolicy,
+        code_item_call_path::CodeItemCallPath, code_item_effect_guard::CodeItemEffectGuard,
+        code_item_lookup::CodeItemLookup, get_code_edges::CodeItemEdges,
     },
 };
 
@@ -43,6 +44,48 @@ fn lookup_tool_node_kind_schema_matches_shared_vocabulary() {
 
     for schema in [CodeItemLookup::schema(), CodeItemEdges::schema()] {
         let values = enum_values(schema, &["properties", "node_kind"]);
+        assert_eq!(values, expected);
+        assert!(values.contains(&"method"));
+    }
+}
+
+#[test]
+fn exact_lookup_tool_schemas_accept_owner_type_disambiguator() {
+    for schema in [CodeItemLookup::schema(), CodeItemEdges::schema()] {
+        let properties = schema
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+            .expect("tool schema properties");
+        assert!(properties.contains_key("owner_trait"));
+        assert!(properties.contains_key("owner_type"));
+        assert_eq!(
+            properties
+                .get("owner_type")
+                .and_then(|value| value.get("description"))
+                .and_then(serde_json::Value::as_str),
+            Some(
+                r#"Optional self type name that owns an inherent method item.
+Use only with node_kind=method. Use alone for inherent methods, or combine with owner_trait for trait impl methods.
+Examples: owner_type="HandleError" for HandleError::new; owner_type="HandlerService" with owner_trait="Service<Request>" for impl Service<Request<B>> for HandlerService::call."#
+            ),
+            "owner_type should be documented from the shared lookup support constant"
+        );
+    }
+}
+
+#[test]
+fn exact_endpoint_tool_schemas_share_node_kind_vocabulary() {
+    let expected: Vec<&str> = NodeKind::allowed_values().to_vec();
+
+    for schema in [
+        CodeItemCallPath::schema(),
+        CodeItemEffectGuard::schema(),
+        CodeItemBoundaryPolicy::schema(),
+    ] {
+        let values = enum_values(
+            schema,
+            &["$defs", "code_item_endpoint", "properties", "node_kind"],
+        );
         assert_eq!(values, expected);
         assert!(values.contains(&"method"));
     }

@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
-Last reviewed: 2026-06-22
-Last updated: 2026-06-22
+Last reviewed: 2026-08-02
+Last updated: 2026-08-02
 
 This document is the current inventory for backup database fixtures under
 the shared DB snapshot fixture directory. It records which source targets
@@ -56,8 +56,7 @@ recreation guidance:
 - `cargo xtask fixtures ensure --snapshots`
   - ensures current active and typed graph fixtures are available without
     sharing checkout-local DB rows
-  - runs active fixture validation in the normal profile, then invokes a
-    typed-only xtask pass for typed graph fixtures
+  - runs active fixture validation, then validates typed graph fixtures in the same baseline profile
   - creates or repairs checkout-local active fixtures under
     `tests/backup_dbs/local/`
   - stages committed seed artifacts from `tests/backup_dbs/` only when a
@@ -76,8 +75,7 @@ recreation guidance:
   - writes shared-snapshot fixtures under the shared DB snapshot fixture
     directory using the registered filenames
   - skips manual legacy/orphaned snapshots
-  - runs active fixtures in the normal profile, then invokes a typed-only xtask
-    pass for typed graph fixtures
+  - runs active fixtures, then regenerates typed graph fixtures in the same baseline profile
   - use `--active` or `--typed` instead of `--all` for narrower regeneration
 - `cargo xtask repair-backup-db-schema --fixture <id>`
   - repairs a stale legacy backup in place when it is missing the current
@@ -129,10 +127,9 @@ Registry status note:
   `cargo xtask recreate-backup-db --fixture <id>`, but they are not part of the
   default verification set until promoted to `Active`.
 - `TypedTypeGraph` fixtures are current-schema typed type graph backups. They
-  are intentionally excluded from default backup verification because the
-  default import path still exercises the legacy type-resolution schema. Verify
-  them with `cargo run -p xtask --features typed_type_graph --
-  verify-backup-dbs --fixture <id>`.
+  are intentionally excluded from default backup verification because plain
+  fixture imports intentionally exclude typed graph relations. Verify them with
+  `cargo xtask verify-backup-dbs --fixture <id>`.
 - `Legacy` and `Orphaned` fixtures remain outside the default active validation
   set unless explicitly selected.
 
@@ -207,14 +204,44 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_semver_type_graph_2026-05-17.sqlite` | `github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90` | typed graphRAG type traversal corpus backup | 2026-05-17 |
 | `corpus_semver_openrouter_embeddings_2026-05-17.sqlite` | `github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_memchr_type_graph_2026-05-17.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | typed graphRAG type traversal corpus backup | 2026-05-17 |
+| `corpus_memchr_call_graph_2026-07-15.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | plain corpus backup for real-target call graph query contracts | 2026-07-15 |
 | `corpus_memchr_openrouter_embeddings_2026-05-17.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_generic_array_type_graph_2026-05-17.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | typed graphRAG type traversal corpus backup | 2026-05-17 |
+| `corpus_generic_array_call_graph_2026-07-15.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | plain corpus backup for real-target call graph query contracts | 2026-07-15 |
 | `corpus_generic_array_openrouter_embeddings_2026-05-17.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_chrono_type_graph_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | typed graphRAG type traversal corpus backup | 2026-05-17 |
+| `corpus_chrono_call_graph_2026-07-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | plain corpus backup for real-target call graph query contracts | 2026-07-17 |
 | `corpus_chrono_openrouter_embeddings_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_axum_type_graph_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | typed graphRAG workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
+| `corpus_axum_call_graph_2026-07-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-17 |
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
+
+## 2026-08-02 Superseded Call-Graph Seed Cleanup
+
+The call-graph fixture registry and its consumers were reviewed before this
+change. The four registered active seeds listed above remain committed. Eighteen
+older, unregistered call-graph snapshots were excluded as superseded artifacts;
+no live code, test, or registry entry consumes them. The per-fixture entries
+below identify the retained current snapshots. Each retained seed passed its scoped
+`cargo xtask verify-backup-dbs --fixture <id>` strict import and round-trip
+check; the importer does not filter out missing current-schema relations.
+
+Current active call-graph seed SHA-256 checksums:
+
+- `corpus_memchr_call_graph_2026-07-15.sqlite`: `e779aac3f09f4bc26eb658d4592c5864be7a41057e32c584111b846ef84ea3a6`
+- `corpus_generic_array_call_graph_2026-07-15.sqlite`: `cc564b76547d5584e61740b444a5b7754773a1257e352d9583223aa83555de7a`
+- `corpus_chrono_call_graph_2026-07-17.sqlite`: `a432e9baab1738437c5b41cc65b0ef60254509604ad7b35cdca52e7ae13d84a8`
+- `corpus_axum_call_graph_2026-07-17.sqlite`: `462fd2c877aafff9b6e038368aca3c618eec5e692665ef79c73fb11e9cc5615c`
+
+## Call-Graph Fixture Refresh History
+
+The fixture summary and per-fixture entries below describe the current committed
+state. Historical regeneration notes, focused command transcripts, and superseded
+checksums remain available in Git history; they are intentionally not duplicated
+here. For a new refresh, use the lifecycle commands above and record only the
+current fixture identifier, source revision, checksum, and strict verification
+result.
 
 ## `fixture_nodes_canonical_2026-05-17.sqlite`
 
@@ -222,7 +249,7 @@ impl Drop for FixtureRestoreGuard {
 - Parsed target(s): `tests/fixture_crates/fixture_nodes`
 - Expected DB config:
   - plain backup import
-  - normal type-resolution profile fixture; under `typed_type_graph` workspace
+  - normal type-resolution profile fixture; under current typed graph baseline workspace
     builds, active fixture loaders import the same code graph while leaving
     typed graph relations empty rather than treating this as typed graph corpus
     coverage
@@ -348,7 +375,7 @@ contracts. The checkout identity, backup stem, and test intent live in one
 registry-backed place instead of in local symlinks under
 `tests/fixture_github_clones/corpus`.
 
-Run `cargo run -p xtask --features typed_type_graph -- recreate-backup-db
+Run `cargo xtask recreate-backup-db
 --fixture <id>` to clone or reuse the pinned checkout, check out the recorded
 commit, parse and transform the crate with typed type graph relations enabled,
 write the dated backup under the fixture's configured shared-snapshot path, and
@@ -426,6 +453,29 @@ Expected searchable corpus embedding config:
   - later traversal from iterator self types to `Iterator` and
     `DoubleEndedIterator` impl surfaces
 
+### `corpus_memchr_call_graph_2026-07-15.sqlite`
+
+- Status: active
+- File: `tests/backup_dbs/corpus_memchr_call_graph_2026-07-15.sqlite`
+- Parsed target: `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905`
+- Checkout slug: `tests/fixture_github_clones/corpus/BurntSushi__memchr`
+- Expected DB config:
+  - plain backup import
+  - no embedding model contract
+  - no primary vector index required by call graph query contracts
+  - call graph relations projected from the current parser/transform baseline
+- Tests using this fixture:
+  - real-target call graph matrix rows for arbitrary-expression dynamic
+    callees, function-pointer fields, and callable trait object fields
+  - generated `unsafe_ifunc!` transmute path and returned-path dynamic frontier
+    rows in [fallback.rs](../../crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix/fallback.rs)
+  - memchr `Searcher.call` and `Prefilter.call` rows preserve finite ambiguous
+    `DynamicFunction` candidates from cfg-visible shorthand field initializers
+  - memchr `Runner::new().fwd(...)` and `Runner::new().rev(...)` method-call
+    rows resolve through associated-constructor path-call receiver handling
+  - memchr `Runner::run` callable trait-object field path rows are still
+    preserved as targetless unsupported rows
+
 ### `corpus_memchr_openrouter_embeddings_2026-05-17.sqlite`
 
 - Status: typed type graph
@@ -458,6 +508,21 @@ Expected searchable corpus embedding config:
   - `ArrayBuilder::extend(..., source: impl Iterator<Item = T>)` reaches the
     local generic parameter `T`
   - later traversal through const-generic bounds and associated impls
+
+### `corpus_generic_array_call_graph_2026-07-15.sqlite`
+
+- Status: active
+- File: `tests/backup_dbs/corpus_generic_array_call_graph_2026-07-15.sqlite`
+- Parsed target: `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23`
+- Checkout slug: `tests/fixture_github_clones/corpus/fizyk20__generic-array`
+- Expected DB config:
+  - plain backup import
+  - no embedding model contract
+  - no primary vector index required by call graph query contracts
+  - call graph relations projected from the current parser/transform baseline
+- Tests using this fixture:
+  - real-target call graph matrix rows for guarded match-arm method-result
+    local receiver shapes in `GenericArray` construction paths
 
 ### `corpus_generic_array_openrouter_embeddings_2026-05-17.sqlite`
 
@@ -493,6 +558,53 @@ Expected searchable corpus embedding config:
   - shared `TypeShapeCase` matrix coverage in DB/RAG/TUI tests
   - traversal from `MappedLocalTime<T>` aliases to `LocalResult<T>`
   - later traversal from timezone API owners into their generic result model
+
+### `corpus_chrono_call_graph_2026-07-17.sqlite`
+
+- Status: active
+- File: `tests/backup_dbs/corpus_chrono_call_graph_2026-07-17.sqlite`
+- Parsed target: `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be`
+- Checkout slug: `tests/fixture_github_clones/corpus/chronotope__chrono`
+- Expected DB config:
+  - plain backup import
+  - no embedding model contract
+  - no primary vector index required by call graph query contracts
+  - call graph relations projected from the current parser/transform baseline
+- Tests using this fixture:
+  - real-target call graph matrix rows for resolved alias constructors, try
+    receivers, guarded match-arm external slice receiver frontier calls, and
+    ambiguous typed `Setter` match-tuple callable candidates in
+    `chrono/src/format/parse.rs`
+
+## 2026-07-17 Chrono Typed Setter Match-Tuple Candidate Refresh
+
+- Command: `cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_chrono_call_graph`
+- Shared snapshot: `~/.config/ploke/db_snapshot_fixtures/corpus_chrono_call_graph_2026-07-17.sqlite`
+- Seed artifact: `tests/backup_dbs/corpus_chrono_call_graph_2026-07-17.sqlite`
+- Change covered: `chrono/src/format/parse.rs:378-421` now preserves the
+  typed `Setter` tuple binding and the finite ambiguous candidate set from the
+  third tuple slot of the `match *spec` arms while keeping `set(parsed, v)?`
+  out of resolved-only traversal paths.
+
+## 2026-07-07 Chrono Option ok_or Try Receiver Refresh
+
+- Command: `cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_chrono_call_graph`
+- Shared snapshot: `~/.config/ploke/db_snapshot_fixtures/corpus_chrono_call_graph_2026-07-07.sqlite`
+- Seed artifact: `tests/backup_dbs/corpus_chrono_call_graph_2026-07-07.sqlite`
+- Change covered: `chrono/src/format/parsed.rs:836,953`
+  `DateTime::from_timestamp*(...).ok_or(OUT_OF_RANGE)?.naive_utc()` now
+  resolves the outer `naive_utc` try receiver through local associated
+  function proof for `DateTime::from_timestamp* -> Option<Self>`.
+
+## 2026-07-06 Chrono Slice Receiver Frontier Refresh
+
+- Command: `cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_chrono_call_graph`
+- Shared snapshot: `~/.config/ploke/db_snapshot_fixtures/corpus_chrono_call_graph_2026-07-06.sqlite`
+- Seed artifact: `tests/backup_dbs/corpus_chrono_call_graph_2026-07-06.sqlite`
+- Change covered: `chrono/src/format/strftime.rs:635`
+  `self.queue.is_empty()` now classifies as an external targetless slice
+  receiver frontier using the source-visible field type
+  `queue: &'static [Item<'static>]`.
 
 ### `corpus_chrono_openrouter_embeddings_2026-05-17.sqlite`
 
@@ -540,6 +652,96 @@ Expected searchable corpus embedding config:
     fabricating a terminal target for the paren wrapper
   - `Token![,]` under `Punctuated<syn::Variant, Token![,]>` retains a nested
     macro type without fabricating a terminal target
+
+### `corpus_axum_call_graph_2026-07-17.sqlite`
+
+- Status: active
+- File: `tests/backup_dbs/corpus_axum_call_graph_2026-07-17.sqlite`
+- Parsed target: `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1`
+- Checkout slug: `tests/fixture_github_clones/corpus/tokio-rs__axum`
+- Selected workspace members:
+  - `axum`
+  - `axum-core`
+  - `axum-macros`
+- Expected DB config:
+  - plain backup import
+  - no embedding model contract
+  - no primary vector index required by call graph query contracts
+  - call graph relations projected from the current parser/transform baseline
+- Tests using this fixture:
+  - `expand_with` and `expand_attr_with` reach root `expand` through
+    owner-centered and target-centered call context
+  - `RequestExt::extract` and `RequestPartsExt::extract` reach
+    `extract_with_state` through same-impl self-method call resolution
+  - `CountingCloneableState::new()` proves the initialized local receiver type
+    for `state.clone()` and `state.setup_done()` in axum routing clone tests
+  - axum-core `parts.extract_with_state(state)` reaches the local
+    `RequestPartsExt for Parts::extract_with_state` impl method through exact
+    imported external receiver type proof
+  - `Body` conversion impl `Self::empty()` rows reach the inherent
+    `Body::empty` associated function through local-exact call resolution
+  - `Position::First(item)` reaches the local `Position::First` enum variant
+    constructor through local-exact call resolution
+  - `Json<T>` trait impl `Self::from_bytes(&bytes)` rows reach the inherent
+    `Json::from_bytes` associated function through local-exact call resolution
+  - `Handler::call(handler, req, state)` reaches the `Handler::call` trait
+    method binding through path-style trait method resolution
+  - `ListenerExt::tap_io` records constructor-side `TapIo { tap_fn }`
+    parameter-to-field source frontier evidence while `TapIo::accept`
+    keeps `(self.tap_fn)(&mut io)` targetless
+  - `E::from_request`, `T::from_request`, `E::from_request_parts`, and
+    `T::from_request_parts` reach their `FromRequest` / `FromRequestParts`
+    trait method bindings through bounded type-parameter associated path
+    resolution
+  - same-crate axum-core `InnerState::from_ref` and `String::from_ref`
+    bounded associated paths reach the `FromRef::from_ref` trait method
+    binding; the top-level axum `State` extractor row whose bound imports
+    `FromRef` through the parsed workspace dependency root
+    `axum_core::extract::FromRef` and the nested middleware local-impl row
+    owned by `local_impl_method:from_request_parts` also reach that trait
+    method binding through executable where-bound scope resolution
+  - `Router` `Default::default` reaches `Router::new` through a local-exact
+    `Self::new()` associated-function edge
+  - `IntoServiceFuture::new(future)` reaches the generated inherent
+    constructor projected from the bounded `opaque_future!` item-position macro
+    invocation
+  - `routing::post(...)` callsites reach the generated top-level handler
+    function projected from the bounded
+    `top_level_handler_fn!(post, POST)` item-position macro invocation
+  - `*_service(...)` callsites reach generated top-level service functions
+    projected from the bounded `top_level_service_fn!` item-position macro
+    invocations
+  - `QueryRejection::into_response` reaches generated
+    `FailedToDeserializeQueryString::into_response` through the
+    `Self::FailedToDeserializeQueryString(inner)`
+    enum-variant binding projected from the bounded `composite_rejection!`
+    item-position macro invocation
+  - axum `TestClient::new` reaches the cfg-gated local test helper target for
+    168 projected structural rows through nested glob re-export rows,
+    inherited parent glob imports, direct `test_helpers::TestClient` imports,
+    `test_helpers::* -> pub use test_client::*`, and the axum-core
+    `axum::test_helpers::*` workspace dependency glob import at
+    `request_parts.rs:193`
+  - typed local `Router` receiver `.clone()` rows reach the local
+    `impl<S> Clone for Router<S>` method through exact local external-trait impl
+    receiver resolution
+  - targetless dynamic callees such as `(self.into_route)(...)` and
+    `(self.tap_fn)(...)` preserve their self-field callee path while remaining
+    unsupported and edge-free
+  - `(self.layer)(...)` in `axum/src/boxed.rs:159,163` preserves finite
+    ambiguous `DynamicClosure` candidates from the visible
+    `MethodRouter::{layer,route_layer}` closure bindings without admitting a
+    local traversal edge
+  - selected proc-macro entrypoint bodies reach local helper functions through
+    `CallBodyOwnerId::Macro` owner edges, including `expand_with` and active
+    `expand_attr_with` callers
+  - imported external type aliases stay targetless but classify as external,
+    including axum-core `Request::new` through `Request = http::Request`
+  - initialized local receivers whose initializer path is externally
+    classified stay targetless but classify external, including
+    axum-core `req.extensions_mut()` after `Request::new(())`
+  - selected closure body and dynamic callable field shapes are documented as
+    unsupported contracts until nested owner/callable proof improves
 
 ### `corpus_axum_openrouter_embeddings_2026-05-17.sqlite`
 

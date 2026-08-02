@@ -1,0 +1,462 @@
+use super::super::assertions::{assert_resolved_target, path};
+use super::super::*;
+
+struct ExpectedCall {
+    kind: CallSiteKind,
+    callee: CallCalleeInfo,
+    target: Uuid,
+    relation: CallTargetKind,
+}
+
+struct Case {
+    label: &'static str,
+    search_term: &'static str,
+    top_k: usize,
+    call_id: &'static str,
+    owner: Uuid,
+    calls: Vec<ExpectedCall>,
+}
+
+#[tokio::test]
+async fn request_code_context_returns_result_field_receiver_call_context() -> color_eyre::Result<()>
+{
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let method_target = one_uuid(
+        &db,
+        &method_by_impl_self_query("LocalAssoc", "instance_value"),
+    )?;
+    let clone_target = one_uuid(&db, &method_by_impl_self_query("LocalAssoc", "clone_assoc"))?;
+    let try_clone_target = one_uuid(
+        &db,
+        &method_by_impl_self_query("LocalAssoc", "try_clone_assoc"),
+    )?;
+    let try_instance_target = one_uuid(
+        &db,
+        &method_by_impl_self_query("LocalAssoc", "try_instance_value"),
+    )?;
+    let make_target = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "make_local_assoc"),
+    )?;
+    let ready_target = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "make_ready_local_assoc"),
+    )?;
+    let ready_method_target = one_uuid(
+        &db,
+        &method_by_impl_self_query("AwaitLocalAssocMethodResultSource", "ready_assoc"),
+    )?;
+    let tuple_target = one_uuid(
+        &db,
+        &struct_in_module_query(&["crate"], "TupleFieldMethodReceiver"),
+    )?;
+    let cases = vec![
+        Case {
+            label: "path-call result receiver",
+            search_term: "call_path_result_instance_method",
+            top_k: 1,
+            call_id: "path_result_receiver_call_context",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_path_result_instance_method"),
+            )?,
+            calls: vec![
+                ExpectedCall {
+                    kind: CallSiteKind::Path,
+                    callee: path_call(&["make_local_assoc"]),
+                    target: make_target,
+                    relation: CallTargetKind::Function,
+                },
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "instance_value",
+                        CallReceiverInfo::PathCallResult {
+                            path: path(&["make_local_assoc"]),
+                        },
+                    ),
+                    target: method_target,
+                    relation: CallTargetKind::Method,
+                },
+            ],
+        },
+        Case {
+            label: "method-call result receiver",
+            search_term: "call_method_result_instance_method",
+            top_k: 1,
+            call_id: "method_result_receiver_call_context",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_method_result_instance_method"),
+            )?,
+            calls: vec![
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "clone_assoc",
+                        CallReceiverInfo::TypedLocalBinding {
+                            name: "value".to_string(),
+                            type_path: path(&["LocalAssoc"]),
+                        },
+                    ),
+                    target: clone_target,
+                    relation: CallTargetKind::Method,
+                },
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "instance_value",
+                        CallReceiverInfo::MethodCallResult {
+                            method_name: "clone_assoc".to_string(),
+                        },
+                    ),
+                    target: method_target,
+                    relation: CallTargetKind::Method,
+                },
+            ],
+        },
+        Case {
+            label: "method-result local-binding receiver",
+            search_term: "call_method_result_binding_instance_method",
+            top_k: 1,
+            call_id: "method_result_binding_receiver_call_context",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_method_result_binding_instance_method"),
+            )?,
+            calls: vec![
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "clone_assoc",
+                        CallReceiverInfo::TypedLocalBinding {
+                            name: "value".to_string(),
+                            type_path: path(&["LocalAssoc"]),
+                        },
+                    ),
+                    target: clone_target,
+                    relation: CallTargetKind::Method,
+                },
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "instance_value",
+                        CallReceiverInfo::MethodResultLocalBinding {
+                            name: "cloned".to_string(),
+                            method_name: "clone_assoc".to_string(),
+                            method_span: (49462, 49481),
+                        },
+                    ),
+                    target: method_target,
+                    relation: CallTargetKind::Method,
+                },
+            ],
+        },
+        Case {
+            label: "self-field method-call result receiver",
+            search_term: "call_self_field_method_result_instance_method",
+            top_k: 1,
+            call_id: "self_field_method_result_receiver_call_context",
+            owner: one_uuid(
+                &db,
+                &method_by_impl_self_query(
+                    "SelfFieldAssocOwner",
+                    "call_self_field_method_result_instance_method",
+                ),
+            )?,
+            calls: vec![
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "clone_assoc",
+                        CallReceiverInfo::SelfField {
+                            path: path(&["value"]),
+                        },
+                    ),
+                    target: clone_target,
+                    relation: CallTargetKind::Method,
+                },
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "instance_value",
+                        CallReceiverInfo::MethodResultField {
+                            method_name: "clone_assoc".to_string(),
+                            method_span: (31263, 31287),
+                            field_path: path(&["value"]),
+                        },
+                    ),
+                    target: method_target,
+                    relation: CallTargetKind::Method,
+                },
+            ],
+        },
+        Case {
+            label: "await path-call result receiver",
+            search_term: "call_await_result_instance_method",
+            top_k: 1,
+            call_id: "await_result_receiver_call_context",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_await_result_instance_method"),
+            )?,
+            calls: vec![
+                ExpectedCall {
+                    kind: CallSiteKind::Path,
+                    callee: path_call(&["make_ready_local_assoc"]),
+                    target: ready_target,
+                    relation: CallTargetKind::Function,
+                },
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "instance_value",
+                        CallReceiverInfo::AwaitPathCallResult {
+                            path: path(&["make_ready_local_assoc"]),
+                        },
+                    ),
+                    target: method_target,
+                    relation: CallTargetKind::Method,
+                },
+            ],
+        },
+        Case {
+            label: "await method-call result receiver",
+            search_term: "call_await_method_result_instance_method",
+            top_k: 1,
+            call_id: "await_method_result_receiver_call_context",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_await_method_result_instance_method"),
+            )?,
+            calls: vec![
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "ready_assoc",
+                        CallReceiverInfo::InitializedLocalBinding {
+                            name: "source".to_string(),
+                            init_path: path(&["AwaitLocalAssocMethodResultSource"]),
+                        },
+                    ),
+                    target: ready_method_target,
+                    relation: CallTargetKind::Method,
+                },
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "instance_value",
+                        CallReceiverInfo::AwaitMethodCallResult {
+                            method_name: "ready_assoc".to_string(),
+                        },
+                    ),
+                    target: method_target,
+                    relation: CallTargetKind::Method,
+                },
+            ],
+        },
+        Case {
+            label: "try method-call result receiver",
+            search_term: "call_try_method_result_instance_method",
+            top_k: 5,
+            call_id: "try_method_result_receiver_call_context",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_try_method_result_instance_method"),
+            )?,
+            calls: vec![
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "try_clone_assoc",
+                        CallReceiverInfo::TypedLocalBinding {
+                            name: "value".to_string(),
+                            type_path: path(&["LocalAssoc"]),
+                        },
+                    ),
+                    target: try_clone_target,
+                    relation: CallTargetKind::Method,
+                },
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "try_instance_value",
+                        CallReceiverInfo::TryMethodCallResult {
+                            method_name: "try_clone_assoc".to_string(),
+                        },
+                    ),
+                    target: try_instance_target,
+                    relation: CallTargetKind::Method,
+                },
+            ],
+        },
+        Case {
+            label: "tuple-field method receiver",
+            search_term: "call_tuple_field_instance_method",
+            top_k: 1,
+            call_id: "tuple_field_receiver_call_context",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_tuple_field_instance_method"),
+            )?,
+            calls: vec![
+                ExpectedCall {
+                    kind: CallSiteKind::Path,
+                    callee: path_call(&["TupleFieldMethodReceiver"]),
+                    target: tuple_target,
+                    relation: CallTargetKind::TupleStructConstructor,
+                },
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "instance_value",
+                        CallReceiverInfo::FieldInitializedLocalBinding {
+                            name: "value".to_string(),
+                            init_path: path(&["TupleFieldMethodReceiver"]),
+                            field_path: path(&["0"]),
+                        },
+                    ),
+                    target: method_target,
+                    relation: CallTargetKind::Method,
+                },
+            ],
+        },
+        Case {
+            label: "parameter-field method receiver",
+            search_term: "call_param_field_instance_method",
+            top_k: 1,
+            call_id: "param_field_receiver_call_context",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_param_field_instance_method"),
+            )?,
+            calls: vec![ExpectedCall {
+                kind: CallSiteKind::Method,
+                callee: method_call(
+                    "instance_value",
+                    CallReceiverInfo::FieldLocalBinding {
+                        name: "holder".to_string(),
+                        field_path: path(&["value"]),
+                    },
+                ),
+                target: method_target,
+                relation: CallTargetKind::Method,
+            }],
+        },
+    ];
+
+    for case in cases {
+        let result =
+            execute_fixture_request(&db, case.search_term, case.top_k, case.call_id).await?;
+        assert_result_ok(&result, case.search_term, case.top_k, "fixture_call_graph");
+
+        let owner_part = result
+            .context
+            .iter()
+            .find(|part| part.id == case.owner)
+            .unwrap_or_else(|| {
+                panic!(
+                    "request_code_context should materialize the {} owner",
+                    case.label
+                )
+            });
+        assert_eq!(
+            owner_part.call_context.len(),
+            case.calls.len(),
+            "{} call context: {owner_part:#?}",
+            case.label
+        );
+        for expected in &case.calls {
+            let target_part = result
+                .context
+                .iter()
+                .find(|part| part.id == expected.target)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "request_code_context should materialize the {} target",
+                        case.label
+                    )
+                });
+            let call = owner_part
+                .call_context
+                .iter()
+                .find(|call| {
+                    call.kind == expected.kind
+                        && call.callee == expected.callee
+                        && call
+                            .targets
+                            .iter()
+                            .any(|target| target.target_id == expected.target)
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{} owner should retain expected result/field call context",
+                        case.label
+                    )
+                });
+            assert_resolved_target(call, expected.target, expected.relation.clone());
+            assert_canonical_expansion(
+                &result,
+                target_part,
+                case.owner,
+                call.site_id,
+                expected.target,
+                expected.relation.clone(),
+                case.label,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn path_call(segments: &[&str]) -> CallCalleeInfo {
+    CallCalleeInfo::Path {
+        path: path(segments),
+    }
+}
+
+fn method_call(name: &str, receiver: CallReceiverInfo) -> CallCalleeInfo {
+    CallCalleeInfo::Method {
+        name: name.to_string(),
+        receiver: Some(receiver),
+    }
+}
+
+fn assert_canonical_expansion(
+    result: &RequestCodeContextResult,
+    target_part: &ConciseContext,
+    seed_id: Uuid,
+    site_id: Uuid,
+    target: Uuid,
+    relation: CallTargetKind,
+    label: &str,
+) {
+    let expansion = target_part
+        .call_expansion
+        .expect("expanded target should carry provenance");
+    assert_eq!(target_part.id, target, "{label} expanded target id");
+    assert_eq!(expansion.relation, CallExpansionKind::OutgoingTarget);
+    assert_eq!(expansion.target_id, target);
+    assert_eq!(expansion.distance, 1);
+    assert_eq!(expansion.seed_id, seed_id, "{label} canonical seed id");
+    assert_eq!(
+        expansion.call_site_id, site_id,
+        "{label} canonical call-site id"
+    );
+
+    let seed = result
+        .context
+        .iter()
+        .find(|part| part.id == seed_id)
+        .unwrap_or_else(|| panic!("{label} should materialize the canonical expansion seed"));
+    let call = seed
+        .call_context
+        .iter()
+        .find(|call| call.site_id == site_id)
+        .unwrap_or_else(|| panic!("{label} canonical seed should retain its expansion callsite"));
+    assert_eq!(call.owner_id, seed_id);
+    assert_resolved_target(call, target, relation);
+}

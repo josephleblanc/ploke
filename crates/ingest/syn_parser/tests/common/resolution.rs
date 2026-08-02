@@ -1,6 +1,9 @@
 // #![cfg(not(feature = "type_bearing_ids"))]
 //! Helper functions specifically for testing resolution logic (Phase 3).
 
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+
 use itertools::Itertools;
 use ploke_core::ItemKind;
 use syn_parser::parser::ParsedCodeGraph;
@@ -14,6 +17,11 @@ use syn_parser::{
 
 use super::{run_phases_and_collect, try_run_phases_and_collect};
 
+type FixtureTree = (ParsedCodeGraph, ModuleTree);
+
+static TREE_CACHE: LazyLock<Mutex<HashMap<String, Arc<OnceLock<FixtureTree>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
 pub fn try_build_tree_for_tests(
     fixture_name: &str,
 ) -> Result<(ParsedCodeGraph, ModuleTree), ploke_error::Error> {
@@ -24,12 +32,23 @@ pub fn try_build_tree_for_tests(
 }
 
 pub fn build_tree_for_tests(fixture_name: &str) -> (ParsedCodeGraph, ModuleTree) {
-    let results = run_phases_and_collect(fixture_name);
-    let mut merged_graph = ParsedCodeGraph::merge_new(results).expect("Failed to merge graphs");
-    let tree = merged_graph
-        .build_tree_and_prune() // dirty, placeholder
-        .expect("Failed to build module tree for fixture");
-    (merged_graph, tree)
+    let slot = {
+        let mut cache = TREE_CACHE.lock().expect("fixture tree cache poisoned");
+        Arc::clone(
+            cache
+                .entry(fixture_name.to_string())
+                .or_insert_with(|| Arc::new(OnceLock::new())),
+        )
+    };
+    slot.get_or_init(|| {
+        let results = run_phases_and_collect(fixture_name);
+        let mut graph = ParsedCodeGraph::merge_new(results).expect("Failed to merge graphs");
+        let tree = graph
+            .build_tree_and_prune() // dirty, placeholder
+            .expect("Failed to build module tree for fixture");
+        (graph, tree)
+    })
+    .clone()
 }
 
 /// Finds the NodeId of an item (function, struct, enum, trait, macro, etc.)

@@ -1,0 +1,70 @@
+//! Real-target call graph contracts over the pinned axum corpus fixture.
+//!
+//! These tests use the immutable `corpus_axum_call_graph` backup, not parser
+//! fixture crates. Each row starts from source inspected in the pinned checkout:
+//!
+//! ```text
+//! github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1
+//! selected members: axum, axum-core, axum-macros
+//! ```
+//!
+//! Source-oracle references:
+//! - `docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-case-matrix.md`
+//! - `docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md`
+//!
+//! Coverage table for this consolidated batch:
+//!
+//! | Bucket | Source ground truth | DB contract |
+//! | --- | --- | --- |
+//! | Regular helper callers | `axum-macros/src/lib.rs:{724,739}` call root `expand(...)` | `callers_for_target`, `call_sites_for_target`, and owner traversal resolve both helper callers. |
+//! | UI test helper callers | `axum-macros/src/{debug_handler.rs,typed_path.rs,from_ref.rs,from_request/mod.rs}` call `crate::run_ui_tests(...)` | target-centered callers and context expansion traverse the five real helper edges. |
+//! | Import/path function call | `axum-macros/src/typed_path.rs:23` calls `crate::attr_parsing::parse_attrs(...)` | explicit file-module paths and imported `parse_attrs` rows traverse to the local helper. |
+//! | Routing helper paths | `axum/src/routing/mod.rs:{410,430}` call `take_route_or_internal_error` inside the `tap_inner!` source input block; `routing/tests/mod.rs:{56,59}` are debug-only `super::...` rows | the two normal-build closure-owned rows resolve through `callers_for_target`, `call_sites_for_target`, and target traversal; debug-only test rows remain absent. |
+//! | External roots | `axum/src/json.rs:184` and `axum/src/response/sse.rs:449` call dependency/std roots | external rows remain targetless and do not become traversal edges. |
+//! | Re-exported body constructor | `axum-core/src/body.rs:{110,116}` call `Self::empty()` plus axum-core, direct axum workspace-import, local re-exported workspace-import, inherited glob, closure, and local-item rows call `Body::empty()` | current resolved subset traverses twenty-three one-hop edges; stale external/unsupported `Body::empty` rows are rejected. |
+//! | Inherent associated function | `axum/src/json.rs:{112,128}` call `Self::from_bytes(...)` | both trait-impl `Self::from_bytes` rows traverse to the inherent `Json::from_bytes` method. |
+//! | Trait method path call | `axum/src/handler/service.rs:171` calls `Handler::call(...)` | path-style trait method dispatch resolves to the trait method binding in one call edge. |
+//! | Tuple-struct constructor | `axum/src/boxed.rs:{23,38,51}` calls `BoxedIntoRoute(...)` / `Self(...)` | explicit and `Self(...)` tuple-struct constructors resolve to the `BoxedIntoRoute` struct in one call edge each. |
+//! | Enum variant constructor | `axum-macros/src/with_position.rs:92` calls `Position::First(item)` | local enum-variant constructor resolves to the `Position::First` variant in one call edge. |
+//! | Inherent constructor | `axum/src/error_handling/mod.rs:65` calls `HandleError::new(...)` | extension methods resolve to the local inherent constructor in one call edge. |
+//! | Generated constructor | `axum/src/handler/service.rs:174` calls `IntoServiceFuture::new(...)` | bounded `opaque_future!` generated item modeling resolves the constructor to its generated inherent method target. |
+//! | Generated conversion impls | `axum-core/src/body.rs:{120-138}` defines and invokes `body_from_impl!` | bounded `body_from_impl!` generated item modeling creates seven `From<T> for Body::from` owners whose `Self::new(...)` rows traverse to `Body::new`. |
+//! | High-fanout test helper | `axum/src/test_helpers/test_client.rs:36` defines `TestClient::new`; the oracle lists selected-member callsites | 168 structural `TestClient::new` rows are projected and traverse through nested/direct re-export imports, direct imports, inherited parent glob imports, and the axum-core workspace dependency glob import. |
+//! | Same-impl self methods | `axum-core/src/ext_traits/{request.rs:268,request_parts.rs:122}` call `self.extract_with_state(&())` | owner traversal resolves both method calls to their same-impl `extract_with_state`. |
+//! | Exact local extension-trait receiver | `axum-core/src/ext_traits/request_parts.rs:186` calls `parts.extract_with_state(state)` where `parts: &mut Parts` | imported external receiver type proof resolves the local `RequestPartsExt for Parts` impl method. |
+//! | Trait associated extraction paths | `axum-core/src/ext_traits/{request.rs:279,305}`, `request_parts.rs:133`, `extract/mod.rs:{115,127}`, and `axum/src/middleware/from_extractor.rs:220` call `E::from_request*` / `T::from_request*` | bounded type-parameter associated paths traverse to the `FromRequest` / `FromRequestParts` trait method bindings in one call edge each. |
+//! | Bounded `FromRef` paths | `axum-core/src/ext_traits/mod.rs:{25,45}`, `axum/src/extract/state.rs:309`, and `middleware/from_extractor.rs:328` call `*::from_ref(...)` | same-crate axum-core bounds traverse to `FromRef::from_ref`; both axum dependency-root bounds also traverse through parsed workspace dependency proof, including the nested `local_impl_method:from_request_parts` local-impl owner. |
+//! | Listener `Self::accept` paths | `axum/src/serve/listener.rs:{41,61}` call `Self::accept(self).await` | both cfg-unix visible rows are external and targetless; they must not be modeled as recursive trait dispatch. |
+//! | `HeaderValue::from_static` external paths | response conversion bodies plus local const initializer examples | response-body rows are external and targetless; the route local const initializer row is an external targetless `LocalItem` owner and does not leak into its enclosing owner; websocket local const rows remain absent in this fixture. |
+//! | Generated handler/service functions | `routing::post` template/invocation plus JSON/multipart/routing tests; `top_level_service_fn!` invocation rows | bounded `top_level_handler_fn!(post, POST)` modeling resolves the grouped-import `post(echo_json)` row to the generated `routing::method_routing::post` function; bounded `top_level_service_fn!` modeling resolves generated `get_service`, `delete_service`, `patch_service`, and top-level `post_service` rows while broader generated source bodies remain fail-closed. |
+//! | Generated rejection impl methods | `axum-core/src/macros.rs:30-115` defines `__define_rejection!`; `axum/src/extract/rejection.rs:42-48` invokes it for `MissingExtension(Error)` | bounded `define_rejection!` modeling projects generated `IntoResponse::into_response` owners and resolves their `self.status()` / `self.body_text()` rows to generated inherent methods on the same rejection type. |
+//! | Generated composite rejection enum delegation | `axum-core/src/macros.rs:154-180` defines `__composite_rejection!`; `axum/src/extract/rejection.rs:92-100` invokes it for `QueryRejection { FailedToDeserializeQueryString }` | bounded `composite_rejection!` modeling projects the generated enum and `IntoResponse` impl; the generated `inner.into_response()` match arm traverses through enum-variant receiver proof to the generated `FailedToDeserializeQueryString::into_response` target. |
+//! | Handler macro extraction and async body paths | `axum/src/handler/mod.rs:{217,240,242,250}` has nested async-body calls plus `$ty::from_request_parts` / `$last::from_request` | concrete `Handler::call` async-block body rows at `:217` are projected on an `AsyncBlock` owner and remain targetless; generated `all_the_tuples!(impl_handler)` extraction paths now project as stable `Tn::from_request*` rows on generated async-block owners and resolve through generated impl where-clause proof. |
+//! | Error-handling service macro extraction paths | `axum/src/error_handling/mod.rs:{152-222}` defines and invokes local `impl_service!` | bounded module-specific generated-item modeling projects sixteen `HandleError<S, F, T>::call` owners and their `Tn::from_request_parts` extractor rows, resolving them through generated `FromRequestParts<()>` where-clause proof without treating other same-named middleware macros as the same template. |
+//! | Receiver forwarding gaps and exact receiver positives | `axum/src/extension.rs:180`, `routing/route.rs:51`, `boxed.rs:134`, `routing/mod.rs:673`, `serve/mod.rs` router clones, `ext_traits/request_parts.rs:186`, and `middleware/from_fn.rs:411` exercise field/result/typed receivers | unsupported receiver shapes remain visible and targetless; exact local `Router::clone` and `RequestPartsExt for Parts` local receiver rows traverse; `Router::new` currently has 309 caller rows and 203 incoming expansion candidates. |
+//! | Await and trait-object receivers | `test_helpers/test_client.rs:134`, `serve/listener.rs:143`, `error_handling/mod.rs:251`, and `try_downcast` helpers use await/dyn receiver calls | awaited/dyn Future receiver rows remain targetless; qualified `<dyn Any>::downcast_mut` rows project as external targetless path frontiers. |
+//! | Proc-macro body calls | `axum-macros/src/lib.rs:{377,426,665,715}` call `expand_with(...)` | proc-macro owners traverse to `expand_with` through one resolved edge each. |
+//! | Closure body call | `axum-macros/src/from_ref.rs:23` calls `expand_field(...)` inside a closure | nested closure-owner row traverses to `expand_field` without flattening into `from_ref::expand`. |
+//! | Dynamic callable fields | `axum/src/boxed.rs:{85,120,159}`, `serve/listener.rs:236`, and memchr `searcher.rs:{222,718}` call function-pointer / trait-object fields | exact source-visible initializers resolve or preserve finite candidates; remaining opaque callable fields stay targetless blockers. |
+//! | Macro callback/IIFE calls | `axum-macros/src/lib.rs:{581,637,655,715,724,734-738}` and `from_request/mod.rs:200-203` cover callback arguments, `and_then(f)`, and IIFEs | active proc-macro callback helper rows traverse; callback receiver and IIFE dynamic rows stay targetless; inner closure-body callback invocation remains absent. |
+//! | Shadowed local callable | `axum/src/routing/tests/mod.rs:{418,423-434}` shadows imported `get` with a closure | only the two setup `routing::get` rows are projected; closure calls inside assertion macros are not fabricated as routing edges. |
+//! | Fallback chrono corpus | `MappedLocalTime::Single`, try receiver `.naive_utc()`, and `self.queue.is_empty()` in chrono | registered `corpus_chrono_call_graph` fixture asserts resolved alias constructor rows, targetless try receiver rows, and the external targetless slice receiver frontier. |
+//! | Fallback memchr corpus | arbitrary-expression dynamic callee, function-pointer field calls, and boxed callable fields in memchr | registered `corpus_memchr_call_graph` fixture asserts generated transmute frontiers, finite function-pointer field candidates, and boxed callable trait-object blockers. |
+//! | Fallback generic-array corpus | guarded `iter.size_hint()` match-arm checks in generic-array | registered `corpus_generic_array_call_graph` fixture asserts the external targetless method-result local receiver frontier. |
+
+mod associated;
+mod common;
+mod external_summaries;
+mod fallback;
+mod generated;
+mod multi_hop;
+mod paths;
+mod proc_macros;
+mod receivers;
+mod shared_matrix;
+mod source_lines;
+mod trait_body;
+mod traversal;
+mod unsupported;
+mod usage_questions;
+mod workspace;

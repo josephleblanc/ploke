@@ -1,8 +1,11 @@
+pub mod call_graph_common;
+pub mod call_graph_fixture_common;
+pub mod call_graph_fixture_queries;
+pub mod call_graph_queries;
 pub mod database_tests;
 pub mod debug_cozo;
 pub mod index_test;
 pub mod method_embeddable;
 #[cfg(feature = "type_bearing_ids")]
 pub mod test_queries;
-#[cfg(feature = "typed_type_graph")]
 pub mod type_graph_queries;

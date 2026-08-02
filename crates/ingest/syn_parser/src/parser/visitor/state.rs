@@ -67,6 +67,11 @@ impl VisitorState {
                 impls: Vec::new(),
                 traits: Vec::new(),
                 relations: Vec::new(),
+                call_sites: Vec::new(),
+                call_site_relations: Vec::new(),
+                local_binding_relations: Vec::new(),
+                executable_bodies: Vec::new(),
+                local_bindings: Vec::new(),
                 modules: Vec::new(),
                 consts: Vec::new(),  // Initialize consts
                 statics: Vec::new(), // Initialize statics

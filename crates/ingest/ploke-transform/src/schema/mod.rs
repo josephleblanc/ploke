@@ -52,7 +52,7 @@ use compilation_unit::{
     CompilationUnitEnabledNodeSchema, CompilationUnitMetaSchema, CompilationUnitSchema,
 };
 use cozo::{Db, MemStorage, ScriptMutability};
-use crate_node::{CrateContextSchema, WorkspaceMetadataSchema};
+use crate_node::{CrateContextSchema, CrateDependencySchema, WorkspaceMetadataSchema};
 use edges::SyntacticRelationSchema;
 use edges::{TypeContainsSchema, TypeRelationSchema, TypeUseSchema};
 use itertools::Itertools;
@@ -123,9 +123,18 @@ pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::Transf
     TypeRelationSchema::create_and_insert_schema(db)?;
     TypeUseSchema::create_and_insert_schema(db)?;
     TypeContainsSchema::create_and_insert_schema(db)?;
+    edges::CallBodyOwnerSchema::create_and_insert_schema(db)?;
+    edges::CallSiteSchema::create_and_insert_schema(db)?;
+    edges::CallCalleeEvidenceSchema::create_and_insert_schema(db)?;
+    edges::LocalBindingSchema::create_and_insert_schema(db)?;
+    edges::LocalBindingRelationSchema::create_and_insert_schema(db)?;
+    edges::CallSiteRelationSchema::create_and_insert_schema(db)?;
+    edges::CallRelationSchema::create_and_insert_schema(db)?;
+    edges::CallResolutionStatusSchema::create_and_insert_schema(db)?;
 
     // -- crate_context --
     CrateContextSchema::create_and_insert_schema(db)?;
+    CrateDependencySchema::create_and_insert_schema(db)?;
     WorkspaceMetadataSchema::create_and_insert_schema(db)?;
 
     // -- compilation_unit (structural masks; cfg follow-up) --
@@ -265,18 +274,18 @@ macro_rules! define_schema {
             }
 
             pub fn script_put(&self, params: &BTreeMap<String, cozo::DataValue>) -> String {
-                let lhs_keys = params.keys()
-                        .filter(|k| ID_KEYWORDS.contains(&k.as_str()))
+                let lhs_keys = Self::SCHEMA_FIELDS.iter()
+                        .filter(|k| params.contains_key(**k) && ID_KEYWORDS.contains(k))
                         .join(", ");
-                let lhs_entries = params.keys()
-                        .filter(|k| !ID_KEYWORDS.contains(&k.as_str()))
+                let lhs_entries = Self::SCHEMA_FIELDS.iter()
+                        .filter(|k| params.contains_key(**k) && !ID_KEYWORDS.contains(k))
                         .join(", ");
-                let rhs_keys = params.keys()
-                        .filter(|k| ID_KEYWORDS.contains(&k.as_str()))
+                let rhs_keys = Self::SCHEMA_FIELDS.iter()
+                        .filter(|k| params.contains_key(**k) && ID_KEYWORDS.contains(k))
                         .map(|k| format!("${}", k))
                         .join(", ");
-                let rhs_entries = params.keys()
-                        .filter(|k| !ID_KEYWORDS.contains(&k.as_str()))
+                let rhs_entries = Self::SCHEMA_FIELDS.iter()
+                        .filter(|k| params.contains_key(**k) && !ID_KEYWORDS.contains(k))
                         .map(|k| format!("${}", k))
                         .join(", ");
                 let script = format!(

@@ -33,6 +33,7 @@ thiserror = { workspace = true }                                                
 ploke-common = { path = "../../common" }
 ploke-core = { path = "../../ploke-core", features = [] }
 ploke-error = { path = "../../ploke-error" }
+ploke-mbe = { workspace = true }
 syn_parser_macros = { path = "../../../proc_macros/syn_parser/syn_parser_macros" } # Add dependency on the
 
 # Added for Phase 1 Discovery (Optional)
@@ -93,7 +94,8 @@ verbose_debug = []
 temp_target = []
 not_wip_marker = []
 type_bearing_ids = []
-typed_type_graph = []
+# Compatibility alias; call graph facts are baseline.
+call_graph = []
 ghost_data_graphs = []
 validate = []
 public_path = []

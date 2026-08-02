@@ -107,13 +107,13 @@ use ploke_core::ItemKind;
 use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::resolve::module_tree::ModuleTree;
 use syn_parser::resolve::type_resolution::{
-    TypeResolutionReport, TypeUseRole, resolve_type_uses_after_tree,
+    resolve_type_uses_after_tree, TypeResolutionReport, TypeUseRole,
 };
 
 use crate::common::build_tree_for_tests;
 use crate::common::type_use_resolution::{
-    ExpectedTypeUseResolution, ExpectedTypeUseSlot, FieldSelector, TypeUseSourceSlot, impl_block,
-    impl_selector, item, method, slot_generic_param, slot_item, struct_field,
+    impl_block, impl_selector, item, method, slot_generic_param, slot_item, struct_field,
+    ExpectedTypeUseResolution, ExpectedTypeUseSlot, FieldSelector, TypeUseSourceSlot,
 };
 use crate::{type_use_resolution_case, type_use_slot_resolution_case};
 

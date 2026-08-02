@@ -149,6 +149,7 @@ pub use context::{
     assemble_context_with_type_context,
 };
 pub mod core;
+pub use core::{CallContextConfig, ProofContextConfig};
 pub use core::{
     NoopReranker, RagConfig, RagService, Reranker, RetrievalStrategy, TypeContextConfig,
 };

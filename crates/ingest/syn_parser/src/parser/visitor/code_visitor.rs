@@ -9,6 +9,10 @@
 // fn visit_impl_item_const(&mut self, i: &'ast syn::ImplItemConst)
 
 use super::attribute_processing::{extract_attributes, extract_cfg_strings, extract_docstring};
+use super::call_extraction::{
+    MacroExpansionContext, extract_body_call_sites, extract_expr_call_sites,
+    extract_parameter_bindings, parameter_names,
+};
 use super::state::VisitorState;
 use super::type_processing::{
     get_or_create_trait_bound_type, get_or_create_trait_type, get_or_create_type,
@@ -21,15 +25,19 @@ use crate::parser::nodes::{
     StaticNodeId, StructNodeId, TraitNodeId, TypeAliasNodeId, UnionNodeId, VariantNodeId,
 };
 // Wrapper enums for catogories of individual node id wrapper types.
-use crate::parser::nodes::{AnyNodeId, AssociatedItemNodeId, PrimaryNodeId, SecondaryNodeId};
+use crate::parser::nodes::{
+    AnyNodeId, AssociatedItemNodeId, CallBodyOwnerId, PrimaryNodeId, SecondaryNodeId,
+};
 // Nodes
 use crate::parser::nodes::{
-    ConstNode, EnumNode, FieldNode, FunctionNode, ImplNode, ImportNode, MacroNode, MethodNode,
-    ModuleNode, StaticNode, StructNode, TraitNode, TypeAliasNode, TypeDefNode, UnionNode,
-    VariantNode,
+    ConstNode, EnumNode, ExecutableBodyId, ExecutableBodyNode, ExecutableWherePredicate, FieldNode,
+    FunctionNode, ImplNode, ImportNode, MacroNode, MethodNode, ModuleNode, ParamData, StaticNode,
+    StructNode, TraitNode, TypeAliasNode, TypeDefNode, UnionNode, VariantNode,
 };
 // Kinds of nodes
-use crate::parser::nodes::{ImportKind, MacroKind, ModuleKind, ProcMacroKind};
+use crate::parser::nodes::{
+    ImportKind, MacroKind, ModuleKind, ProcMacroKind, generate_local_item_body_id,
+};
 // Imported Kinds from ploke-core
 use ploke_core::ItemKind;
 
@@ -54,6 +62,97 @@ use syn::{
 };
 use tracing::{error, instrument, trace}; // Import error macro
 
+mod generated_items;
+
+fn receiver_param_names(parameters: &[ParamData]) -> Vec<String> {
+    parameters
+        .iter()
+        .filter(|param| !param.is_self)
+        .filter_map(|param| param.name.clone())
+        .collect()
+}
+
+fn typed_fn_arg_names(
+    inputs: &syn::punctuated::Punctuated<syn::FnArg, syn::token::Comma>,
+) -> Vec<String> {
+    parameter_names(inputs)
+}
+
+fn executable_where_predicates(generics: &syn::Generics) -> Vec<ExecutableWherePredicate> {
+    let mut predicates = Vec::new();
+
+    for param in &generics.params {
+        let syn::GenericParam::Type(type_param) = param else {
+            continue;
+        };
+        let trait_bounds = executable_trait_bounds(&type_param.bounds);
+        if trait_bounds.is_empty() {
+            continue;
+        }
+        predicates.push(ExecutableWherePredicate {
+            subject_path: vec![type_param.ident.to_string()],
+            trait_bounds,
+        });
+    }
+
+    let Some(where_clause) = &generics.where_clause else {
+        return predicates;
+    };
+
+    predicates.extend(
+        where_clause
+            .predicates
+            .iter()
+            .filter_map(|predicate| match predicate {
+                syn::WherePredicate::Type(predicate) => {
+                    let subject_path = executable_type_path(&predicate.bounded_ty)?;
+                    let trait_bounds = executable_trait_bounds(&predicate.bounds);
+                    (!trait_bounds.is_empty()).then_some(ExecutableWherePredicate {
+                        subject_path,
+                        trait_bounds,
+                    })
+                }
+                syn::WherePredicate::Lifetime(_) => None,
+                _ => None,
+            }),
+    );
+
+    predicates
+}
+
+fn executable_trait_bounds(
+    bounds: &syn::punctuated::Punctuated<syn::TypeParamBound, syn::token::Plus>,
+) -> Vec<Vec<String>> {
+    bounds
+        .iter()
+        .filter_map(|bound| match bound {
+            syn::TypeParamBound::Trait(trait_bound) => {
+                Some(path_segments_for_executable_scope(&trait_bound.path))
+            }
+            syn::TypeParamBound::Lifetime(_) => None,
+            _ => None,
+        })
+        .collect()
+}
+
+fn executable_type_path(ty: &syn::Type) -> Option<Vec<String>> {
+    match ty {
+        syn::Type::Path(path) if path.qself.is_none() => {
+            Some(path_segments_for_executable_scope(&path.path))
+        }
+        syn::Type::Reference(reference) => executable_type_path(reference.elem.as_ref()),
+        syn::Type::Paren(paren) => executable_type_path(paren.elem.as_ref()),
+        _ => None,
+    }
+}
+
+fn path_segments_for_executable_scope(path: &syn::Path) -> Vec<String> {
+    path.segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect()
+}
+
 pub struct CodeVisitor<'a> {
     state: &'a mut VisitorState,
 }
@@ -66,6 +165,70 @@ impl<'a> CodeVisitor<'a> {
         Self { state }
     }
 
+    fn record_foreign_function_import(
+        &mut self,
+        fn_name: &str,
+        abi: Option<String>,
+        span: (usize, usize),
+        cfgs: Vec<String>,
+        cfg_bytes: Option<&[u8]>,
+    ) {
+        let mut source_path = vec!["extern".to_string()];
+        if let Some(abi_name) = &abi {
+            source_path.push(abi_name.clone());
+        }
+        source_path.push(fn_name.to_string());
+
+        let id_key = source_path.join("::");
+        let Some((import_any_id, parent_mod_id)) =
+            self.register_new_node_id(&id_key, ItemKind::Import, cfg_bytes)
+        else {
+            return;
+        };
+        self.debug_new_id(fn_name, import_any_id);
+
+        let typed_import_id: ImportNodeId = import_any_id
+            .try_into()
+            .expect("foreign function import should use ImportNodeId");
+        let import_node = ImportNode {
+            id: typed_import_id,
+            span,
+            source_path,
+            kind: ImportKind::ExternFunction { abi },
+            visible_name: fn_name.to_string(),
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            cfgs,
+        };
+
+        if let Some(module) = self
+            .state
+            .code_graph
+            .modules
+            .iter_mut()
+            .find(|m| m.id == parent_mod_id)
+        {
+            module.imports.push(import_node.clone());
+        }
+        self.state.code_graph.use_statements.push(import_node);
+
+        self.state
+            .code_graph
+            .relations
+            .push(SyntacticRelation::Contains {
+                source: parent_mod_id,
+                target: PrimaryNodeId::from(typed_import_id),
+            });
+        self.state
+            .code_graph
+            .relations
+            .push(SyntacticRelation::ModuleImports {
+                source: parent_mod_id,
+                target: typed_import_id,
+            });
+    }
+
     #[instrument(target = "validate_rels", skip(self))]
     pub(crate) fn validate_unique_rels(&self) -> bool {
         self.state.code_graph.validate_unique_rels()
@@ -74,6 +237,110 @@ impl<'a> CodeVisitor<'a> {
     // Update return type to use SyntacticRelation
     pub(crate) fn relations(&self) -> &[SyntacticRelation] {
         self.state.code_graph.relations()
+    }
+
+    fn record_body_call_sites(
+        &mut self,
+        owner: CallBodyOwnerId,
+        block: &syn::Block,
+        cfgs: &[String],
+        receiver_names: &[String],
+        inputs: &syn::punctuated::Punctuated<syn::FnArg, syn::token::Comma>,
+    ) {
+        let macro_expansions =
+            MacroExpansionContext::from_macro_nodes(&self.state.code_graph.macros);
+        let (
+            mut calls,
+            mut relations,
+            mut local_binding_relations,
+            mut executable_bodies,
+            mut local_bindings,
+        ) = extract_body_call_sites(owner, block, cfgs, receiver_names, &macro_expansions);
+        let (mut parameter_relations, mut parameter_bindings) =
+            extract_parameter_bindings(owner, inputs, cfgs);
+        local_binding_relations.append(&mut parameter_relations);
+        local_bindings.append(&mut parameter_bindings);
+        self.annotate_local_impl_method_scopes(owner, block, cfgs, &mut executable_bodies);
+        self.state.code_graph.call_sites.append(&mut calls);
+        self.state
+            .code_graph
+            .call_site_relations
+            .append(&mut relations);
+        self.state
+            .code_graph
+            .local_binding_relations
+            .append(&mut local_binding_relations);
+        self.state
+            .code_graph
+            .executable_bodies
+            .append(&mut executable_bodies);
+        self.state
+            .code_graph
+            .local_bindings
+            .append(&mut local_bindings);
+    }
+
+    fn annotate_local_impl_method_scopes(
+        &mut self,
+        owner: CallBodyOwnerId,
+        block: &syn::Block,
+        cfgs: &[String],
+        bodies: &mut [ExecutableBodyNode],
+    ) {
+        for stmt in &block.stmts {
+            let syn::Stmt::Item(syn::Item::Impl(item_impl)) = stmt else {
+                continue;
+            };
+            let impl_predicates = executable_where_predicates(&item_impl.generics);
+            for item in &item_impl.items {
+                let syn::ImplItem::Fn(method) = item else {
+                    continue;
+                };
+                let span = method.extract_span_bytes();
+                let body_id =
+                    ExecutableBodyId::LocalItem(generate_local_item_body_id(owner, span, cfgs));
+                let mut predicates = executable_where_predicates(&method.sig.generics);
+                predicates.extend(impl_predicates.iter().cloned());
+                if predicates.is_empty() {
+                    continue;
+                }
+                if let Some(body) = bodies.iter_mut().find(|body| body.id == body_id) {
+                    body.set_where_predicates(predicates);
+                }
+            }
+        }
+    }
+
+    fn record_expr_call_sites(
+        &mut self,
+        owner: CallBodyOwnerId,
+        expr: &syn::Expr,
+        cfgs: &[String],
+    ) {
+        let (
+            mut calls,
+            mut relations,
+            mut local_binding_relations,
+            mut executable_bodies,
+            mut local_bindings,
+        ) = extract_expr_call_sites(owner, expr, cfgs);
+        self.state.code_graph.call_sites.append(&mut calls);
+        self.state
+            .code_graph
+            .call_site_relations
+            .append(&mut relations);
+        self.state
+            .code_graph
+            .local_binding_relations
+            .append(&mut local_binding_relations);
+        self.state
+            .code_graph
+            .executable_bodies
+            .append(&mut executable_bodies);
+        self.state
+            .code_graph
+            .local_bindings
+            .append(&mut local_bindings);
     }
 
     fn trait_associated_const_node(
@@ -106,6 +373,10 @@ impl<'a> CodeVisitor<'a> {
         );
         let type_id = get_or_create_type(self.state, &item_const.ty);
         self.pop_assoc_scope(&const_name);
+
+        if let Some((_, expr)) = item_const.default.as_ref() {
+            self.record_expr_call_sites(CallBodyOwnerId::Const(const_id), expr, &effective_cfgs);
+        }
 
         ConstNode {
             id: const_id,
@@ -153,6 +424,12 @@ impl<'a> CodeVisitor<'a> {
         );
         let type_id = get_or_create_type(self.state, &item_const.ty);
         self.pop_assoc_scope(&const_name);
+
+        self.record_expr_call_sites(
+            CallBodyOwnerId::Const(const_id),
+            &item_const.expr,
+            &effective_cfgs,
+        );
 
         ConstNode {
             id: const_id,
@@ -837,7 +1114,16 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 target: PrimaryNodeId::from(typed_macro_id), // Use category enum
             };
             self.state.code_graph.relations.push(relation);
-            // Don't visit the body of the proc macro function itself with visit_item_fn
+            let parameter_names = typed_fn_arg_names(&func.sig.inputs);
+            self.record_body_call_sites(
+                CallBodyOwnerId::Macro(typed_macro_id),
+                &func.block,
+                &provisional_effective_cfgs,
+                &parameter_names,
+                &func.sig.inputs,
+            );
+            // Don't recursively visit the body of the proc macro function itself
+            // with visit_item_fn; call extraction above records the body calls.
         } else {
             // --- Handle Regular Functions ---
             let fn_name = func.sig.ident.to_string();
@@ -880,6 +1166,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     parameters.push(param);
                 }
             }
+            let receiver_names = receiver_param_names(&parameters);
 
             // Extract return type if it exists
             let return_type = match &func.sig.output {
@@ -912,6 +1199,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 name: fn_name.clone(),
                 span,
                 visibility: self.state.convert_visibility(&func.vis),
+                is_unsafe: func.sig.unsafety.is_some(),
+                is_async: func.sig.asyncness.is_some(),
                 parameters,
                 return_type,
                 generic_params,
@@ -930,6 +1219,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 target: PrimaryNodeId::from(fn_typed_id), // Use category enum
             };
             self.state.code_graph.relations.push(relation);
+            self.record_body_call_sites(
+                CallBodyOwnerId::Function(fn_typed_id),
+                &func.block,
+                &provisional_effective_cfgs,
+                &receiver_names,
+                &func.sig.inputs,
+            );
 
             // NOTE: We are already visiting all the items we are processing within this
             // visit_item_fn, but this is where we would put the `visit_item_fn` to call the method
@@ -1877,6 +2173,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             parameters.push(param);
                         }
                     }
+                    let receiver_names = receiver_param_names(&parameters);
 
                     // Extract return type if it exists
                     let return_type = match &method.sig.output {
@@ -1912,6 +2209,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         name: method_name.clone(),
                         span: method.extract_span_bytes(),
                         visibility: self.state.convert_visibility(&method.vis),
+                        is_unsafe: method.sig.unsafety.is_some(),
+                        is_async: method.sig.asyncness.is_some(),
                         parameters,
                         return_type,
                         generic_params,
@@ -1925,6 +2224,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         cfgs: method_item_cfgs,
                     };
                     methods.push(method_node);
+                    self.record_body_call_sites(
+                        CallBodyOwnerId::Method(method_node_id),
+                        &method.block,
+                        &method_provisional_effective_cfgs,
+                        &receiver_names,
+                        &method.sig.inputs,
+                    );
                     // ANCHOR_END: method_from_impl_node
                 }
                 syn::ImplItem::Const(item_const) => {
@@ -1939,6 +2245,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         .defined_types
                         .push(TypeDefNode::TypeAlias(type_node.clone()));
                     associated_types.push(type_node);
+                }
+                syn::ImplItem::Macro(item_macro) => {
+                    methods.extend(
+                        self.generated_impl_macro_methods(item_macro, &provisional_effective_cfgs),
+                    );
                 }
                 _ => {}
             }
@@ -2098,6 +2409,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             parameters.push(param);
                         }
                     }
+                    let receiver_names = receiver_param_names(&parameters);
 
                     // Extract return type if it exists
                     let return_type = match &method.sig.output {
@@ -2135,6 +2447,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         name: method_name,
                         span: method.extract_span_bytes(),
                         visibility: self.state.convert_visibility(&item_trait.vis), // Trait items inherit trait visibility
+                        is_unsafe: method.sig.unsafety.is_some(),
+                        is_async: method.sig.asyncness.is_some(),
                         parameters,
                         return_type,
                         generic_params,
@@ -2149,6 +2463,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         cfgs: method_item_cfgs,
                     };
                     methods.push(method_node);
+                    if let Some(block) = method.default.as_ref() {
+                        self.record_body_call_sites(
+                            CallBodyOwnerId::Method(method_node_id),
+                            block,
+                            &method_provisional_effective_cfgs,
+                            &receiver_names,
+                            &method.sig.inputs,
+                        );
+                    }
                     // ANCHOR_END: method_from_trait_node
                 }
                 syn::TraitItem::Const(item_const) => {
@@ -2676,6 +2999,63 @@ use statement ident: {:?}
         visit::visit_item_extern_crate(self, extern_crate);
     }
 
+    fn visit_item_foreign_mod(&mut self, foreign_mod: &'ast syn::ItemForeignMod) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&foreign_mod.attrs, active_cfg) {
+                return;
+            }
+        }
+
+        let scope_cfgs = self.state.current_scope_cfgs.clone();
+        let foreign_cfgs = super::attribute_processing::extract_cfg_strings(&foreign_mod.attrs);
+        let abi = foreign_mod.abi.name.as_ref().map(|name| name.value());
+
+        for item in &foreign_mod.items {
+            let syn::ForeignItem::Fn(foreign_fn) = item else {
+                continue;
+            };
+
+            #[cfg(feature = "cfg_eval")]
+            {
+                use crate::parser::visitor::attribute_processing::should_include_item;
+                let active_cfg = &self.state.active_cfg;
+
+                if !should_include_item(&foreign_fn.attrs, active_cfg) {
+                    continue;
+                }
+            }
+
+            let fn_cfgs = super::attribute_processing::extract_cfg_strings(&foreign_fn.attrs);
+            let item_cfgs = foreign_cfgs
+                .iter()
+                .cloned()
+                .chain(fn_cfgs.iter().cloned())
+                .collect::<Vec<_>>();
+            let effective_cfgs = scope_cfgs
+                .iter()
+                .cloned()
+                .chain(item_cfgs.iter().cloned())
+                .collect::<Vec<_>>();
+            let cfg_bytes = calculate_cfg_hash_bytes(&effective_cfgs);
+            let fn_name = foreign_fn.sig.ident.to_string();
+            let span = foreign_fn.span().byte_range();
+
+            self.record_foreign_function_import(
+                &fn_name,
+                abi.clone(),
+                (span.start, span.end),
+                item_cfgs,
+                cfg_bytes.as_deref(),
+            );
+        }
+
+        visit::visit_item_foreign_mod(self, foreign_mod);
+    }
+
     // Visit constant items
     fn visit_item_const(&mut self, item_const: &'ast syn::ItemConst) {
         #[cfg(feature = "cfg_eval")]
@@ -2759,6 +3139,11 @@ use statement ident: {:?}
             target: PrimaryNodeId::from(typed_const_id), // Use typed const ID
         };
         self.state.code_graph.relations.push(contains_relation);
+        self.record_expr_call_sites(
+            CallBodyOwnerId::Const(typed_const_id),
+            item_const.expr.as_ref(),
+            &provisional_effective_cfgs,
+        );
 
         // Nested items inside const blocks must hash against the const scope rather than the
         // surrounding module, otherwise identical local items in sibling consts collide.
@@ -2847,6 +3232,11 @@ use statement ident: {:?}
             target: PrimaryNodeId::from(typed_static_id), // Use typed static ID
         };
         self.state.code_graph.relations.push(contains_relation);
+        self.record_expr_call_sites(
+            CallBodyOwnerId::Static(typed_static_id),
+            item_static.expr.as_ref(),
+            &provisional_effective_cfgs,
+        );
 
         // Nested items inside static initializers must hash against the static scope for the same
         // reason as consts.
@@ -2861,9 +3251,6 @@ use statement ident: {:?}
 
     // Visit macro definitions (macro_rules!)
     fn visit_item_macro(&mut self, item_macro: &'ast syn::ItemMacro) {
-        if item_macro.ident.as_ref().is_none() {
-            return;
-        }
         #[cfg(feature = "cfg_eval")]
         {
             use crate::parser::visitor::attribute_processing::should_include_item;
@@ -2872,6 +3259,10 @@ use statement ident: {:?}
             if !should_include_item(&item_macro.attrs, active_cfg) {
                 return; // Skip this item due to cfg
             }
+        }
+        if item_macro.ident.as_ref().is_none() {
+            self.record_generated_macro(item_macro);
+            return;
         }
         let is_exported = item_macro
             .attrs

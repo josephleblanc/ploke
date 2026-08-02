@@ -1,5 +1,3 @@
-#![cfg(feature = "typed_type_graph")]
-
 //! Typed type-relation helpers for Phase 3 resolution tests.
 //!
 //! These helpers assert the v2 resolver surface directly:

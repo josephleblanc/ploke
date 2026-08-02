@@ -313,6 +313,10 @@ impl FixtureDb {
             .map(FixtureEmbeddingExpectation::embedding_set)
     }
 
+    pub fn includes_call_graph_relations(&self) -> bool {
+        self.output_stem().ends_with("_call_graph")
+    }
+
     pub fn output_stem(&self) -> &'static str {
         match self.creation {
             FixtureCreationStrategy::Automated(FixtureAutomation::FixtureCrateMultiEmbedding {
@@ -417,7 +421,7 @@ pub const FIXTURE_NODES_CANONICAL: FixtureDb = FixtureDb {
     bm25_index_expected: false,
     embedding: None,
     last_updated: "2026-05-17",
-    notes: "Canonical current-schema fixture_nodes backup for the normal type-resolution profile. It is imported as a plain active fixture; typed_type_graph workspace builds import the same code graph without claiming typed graph fixture coverage. Regeneration intentionally uses setup_db_full_multi_embedding so the saved snapshot includes the current multi-embedding schema relations expected by downstream tests without seeding local vectors.",
+    notes: "Canonical current-schema fixture_nodes backup. It is imported as a plain active fixture without claiming typed graph fixture coverage. Regeneration intentionally uses setup_db_full_multi_embedding so the saved snapshot includes the current multi-embedding schema relations expected by downstream tests without seeding local vectors.",
 };
 
 pub const FIXTURE_NODES_LOCAL_EMBEDDINGS: FixtureDb = FixtureDb {
@@ -549,7 +553,7 @@ pub const CORPUS_SEMVER_TYPE_GRAPH: FixtureDb = FixtureDb {
     bm25_index_expected: false,
     embedding: None,
     last_updated: "2026-05-17",
-    notes: "Corpus-backed type graph contract fixture for graphRAG traversal tests over semver's VersionReq/Version/Comparator type surface. Recreate with `cargo run -p xtask --features ploke-db/typed_type_graph,ploke-transform/typed_type_graph,syn_parser/typed_type_graph -- recreate-backup-db --fixture corpus_semver_type_graph`.",
+    notes: "Corpus-backed type graph contract fixture for graphRAG traversal tests over semver's VersionReq/Version/Comparator type surface. Recreate with `cargo run -p xtask -- recreate-backup-db --fixture corpus_semver_type_graph`.",
 };
 
 pub const CORPUS_SEMVER_OPENROUTER_EMBEDDINGS: FixtureDb = FixtureDb {
@@ -605,6 +609,28 @@ pub const CORPUS_MEMCHR_TYPE_GRAPH: FixtureDb = FixtureDb {
     notes: "Corpus-backed type graph contract fixture for iterator-return and trait-impl graphRAG traversal over memchr.",
 };
 
+pub const CORPUS_MEMCHR_CALL_GRAPH: FixtureDb = FixtureDb {
+    id: "corpus_memchr_call_graph",
+    rel_path: "tests/backup_dbs/corpus_memchr_call_graph_2026-07-15.sqlite",
+    parsed_targets: &["github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905"],
+    status: FixtureStatus::Active,
+    creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
+        normalized_repo: "BurntSushi/memchr",
+        checkout_slug: "BurntSushi__memchr",
+        clone_url: "https://github.com/BurntSushi/memchr.git",
+        rev: "24f5daa5257e00e87007c936761600e034827905",
+        output_stem: "corpus_memchr_call_graph",
+    }),
+    path_scope: FixturePathScope::SharedSnapshot,
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::PlainBackup,
+    requires_primary_index: false,
+    bm25_index_expected: false,
+    embedding: None,
+    last_updated: "2026-07-15",
+    notes: "Source-pinned memchr corpus backup for real-target call graph query contracts over arbitrary-expression dynamic callees, function-pointer fields, and callable trait object fields.",
+};
+
 pub const CORPUS_MEMCHR_OPENROUTER_EMBEDDINGS: FixtureDb = FixtureDb {
     id: "corpus_memchr_openrouter_embeddings",
     rel_path: "tests/backup_dbs/corpus_memchr_openrouter_embeddings_2026-05-17.sqlite",
@@ -656,6 +682,28 @@ pub const CORPUS_GENERIC_ARRAY_TYPE_GRAPH: FixtureDb = FixtureDb {
     embedding: None,
     last_updated: "2026-05-17",
     notes: "Corpus-backed type graph contract fixture for const-generic alias and GenericArray traversal.",
+};
+
+pub const CORPUS_GENERIC_ARRAY_CALL_GRAPH: FixtureDb = FixtureDb {
+    id: "corpus_generic_array_call_graph",
+    rel_path: "tests/backup_dbs/corpus_generic_array_call_graph_2026-07-15.sqlite",
+    parsed_targets: &["github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23"],
+    status: FixtureStatus::Active,
+    creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
+        normalized_repo: "fizyk20/generic-array",
+        checkout_slug: "fizyk20__generic-array",
+        clone_url: "https://github.com/fizyk20/generic-array.git",
+        rev: "80bab87431c2e29823dc551a3311324812838a23",
+        output_stem: "corpus_generic_array_call_graph",
+    }),
+    path_scope: FixturePathScope::SharedSnapshot,
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::PlainBackup,
+    requires_primary_index: false,
+    bm25_index_expected: false,
+    embedding: None,
+    last_updated: "2026-07-15",
+    notes: "Source-pinned generic-array corpus backup for real-target call graph query contracts over guarded match-arm method-result local receiver calls.",
 };
 
 pub const CORPUS_GENERIC_ARRAY_OPENROUTER_EMBEDDINGS: FixtureDb = FixtureDb {
@@ -711,6 +759,28 @@ pub const CORPUS_CHRONO_TYPE_GRAPH: FixtureDb = FixtureDb {
     notes: "Corpus-backed type graph contract fixture for LocalResult/MappedLocalTime and timezone generic traversal.",
 };
 
+pub const CORPUS_CHRONO_CALL_GRAPH: FixtureDb = FixtureDb {
+    id: "corpus_chrono_call_graph",
+    rel_path: "tests/backup_dbs/corpus_chrono_call_graph_2026-07-17.sqlite",
+    parsed_targets: &["github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be"],
+    status: FixtureStatus::Active,
+    creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
+        normalized_repo: "chronotope/chrono",
+        checkout_slug: "chronotope__chrono",
+        clone_url: "https://github.com/chronotope/chrono.git",
+        rev: "120686c82c5da90377e815edb82c9a80b6b4f2be",
+        output_stem: "corpus_chrono_call_graph",
+    }),
+    path_scope: FixturePathScope::SharedSnapshot,
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::PlainBackup,
+    requires_primary_index: false,
+    bm25_index_expected: false,
+    embedding: None,
+    last_updated: "2026-07-17",
+    notes: "Source-pinned chrono corpus backup for real-target call graph query contracts over resolved alias constructors, Option ok_or try receivers, guarded match-arm external slice receiver frontiers, and ambiguous typed Setter match-tuple callable candidates.",
+};
+
 pub const CORPUS_CHRONO_OPENROUTER_EMBEDDINGS: FixtureDb = FixtureDb {
     id: "corpus_chrono_openrouter_embeddings",
     rel_path: "tests/backup_dbs/corpus_chrono_openrouter_embeddings_2026-05-17.sqlite",
@@ -763,6 +833,29 @@ pub const CORPUS_AXUM_TYPE_GRAPH: FixtureDb = FixtureDb {
     embedding: None,
     last_updated: "2026-05-17",
     notes: "Source-pinned axum workspace backup for TypeNode matrix coverage over trait objects, impl Trait, and nested parenthesized no-target rows.",
+};
+
+pub const CORPUS_AXUM_CALL_GRAPH: FixtureDb = FixtureDb {
+    id: "corpus_axum_call_graph",
+    rel_path: "tests/backup_dbs/corpus_axum_call_graph_2026-07-17.sqlite",
+    parsed_targets: &["github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1"],
+    status: FixtureStatus::Active,
+    creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusWorkspaceTargets {
+        normalized_repo: "tokio-rs/axum",
+        checkout_slug: "tokio-rs__axum",
+        clone_url: "https://github.com/tokio-rs/axum.git",
+        rev: "a3446d68bc03d61fb8e7513052bad2825d0c0db1",
+        target_relative_paths: &["axum", "axum-core", "axum-macros"],
+        output_stem: "corpus_axum_call_graph",
+    }),
+    path_scope: FixturePathScope::SharedSnapshot,
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::PlainBackup,
+    requires_primary_index: false,
+    bm25_index_expected: false,
+    embedding: None,
+    last_updated: "2026-07-17",
+    notes: "Source-pinned axum workspace backup for real-target call graph query contracts over helper callers, proc-macro entrypoint body callers, call sites, self-method calls, associated-constructor initialized local receiver calls, exact local external-trait impl receiver calls including imported external receiver types, impl Trait parameter external frontiers, trait method path calls, same-crate and selected workspace dependency-root trait-bound associated paths, bounded generated composite rejection enum delegation, generated from_fn ResponseFuture producer proof, resolved function-pointer self-field closure dispatch, and documented unsupported local-impl owner, closure, and dynamic dispatch shapes.",
 };
 
 pub const CORPUS_AXUM_OPENROUTER_EMBEDDINGS: FixtureDb = FixtureDb {
@@ -829,12 +922,16 @@ pub const BACKUP_DB_FIXTURES: &[&FixtureDb] = &[
     &CORPUS_SEMVER_TYPE_GRAPH,
     &CORPUS_SEMVER_OPENROUTER_EMBEDDINGS,
     &CORPUS_MEMCHR_TYPE_GRAPH,
+    &CORPUS_MEMCHR_CALL_GRAPH,
     &CORPUS_MEMCHR_OPENROUTER_EMBEDDINGS,
     &CORPUS_GENERIC_ARRAY_TYPE_GRAPH,
+    &CORPUS_GENERIC_ARRAY_CALL_GRAPH,
     &CORPUS_GENERIC_ARRAY_OPENROUTER_EMBEDDINGS,
     &CORPUS_CHRONO_TYPE_GRAPH,
+    &CORPUS_CHRONO_CALL_GRAPH,
     &CORPUS_CHRONO_OPENROUTER_EMBEDDINGS,
     &CORPUS_AXUM_TYPE_GRAPH,
+    &CORPUS_AXUM_CALL_GRAPH,
     &CORPUS_AXUM_OPENROUTER_EMBEDDINGS,
     &PLOKE_DB_ORPHANED,
 ];
@@ -924,6 +1021,9 @@ pub fn plain_backup_import_relations(
     match fixture.status {
         FixtureStatus::TypedTypeGraph => db
             .prior_rels_for_typed_type_graph_backup_import()
+            .map_err(Error::from),
+        _ if fixture.includes_call_graph_relations() => db
+            .prior_rels_for_current_schema_backup_import()
             .map_err(Error::from),
         _ => db.prior_rels_for_plain_backup_import().map_err(Error::from),
     }
@@ -1217,6 +1317,82 @@ mod tests {
     }
 
     #[test]
+    fn call_graph_fixture_declares_call_graph_relations() {
+        let fixture = backup_db_fixture("corpus_axum_call_graph")
+            .expect("axum call graph fixture should be registered");
+
+        assert!(fixture.includes_call_graph_relations());
+        assert!(!FIXTURE_NODES_CANONICAL.includes_call_graph_relations());
+        assert!(!CORPUS_AXUM_TYPE_GRAPH.includes_call_graph_relations());
+    }
+
+    #[test]
+    fn fixture_import_relations_follow_fixture_kind() {
+        let db = Database::init_with_schema().expect("schema");
+
+        let call_rels =
+            plain_backup_import_relations(&CORPUS_AXUM_CALL_GRAPH, &db).expect("call graph rels");
+        assert!(
+            call_rels.contains(&"call_body_owner".to_string()),
+            "call graph fixtures should import call_body_owner"
+        );
+        assert!(
+            call_rels.contains(&"call_callee_evidence".to_string()),
+            "call graph fixtures should import call_callee_evidence"
+        );
+        assert!(
+            call_rels.contains(&"local_binding".to_string()),
+            "call graph fixtures should import local_binding"
+        );
+        assert!(
+            call_rels.contains(&"local_binding_edge".to_string()),
+            "call graph fixtures should import local_binding_edge"
+        );
+
+        let plain_rels =
+            plain_backup_import_relations(&FIXTURE_NODES_CANONICAL, &db).expect("plain rels");
+        assert!(
+            !plain_rels.contains(&"call_body_owner".to_string()),
+            "plain fixtures should keep call graph relations excluded"
+        );
+        assert!(
+            !plain_rels.contains(&"call_callee_evidence".to_string()),
+            "plain fixtures should keep call graph evidence excluded"
+        );
+        assert!(
+            !plain_rels.contains(&"local_binding".to_string()),
+            "plain fixtures should keep local binding call graph relations excluded"
+        );
+        assert!(
+            !plain_rels.contains(&"local_binding_edge".to_string()),
+            "plain fixtures should keep local binding edge call graph relations excluded"
+        );
+
+        let typed_rels =
+            plain_backup_import_relations(&CORPUS_AXUM_TYPE_GRAPH, &db).expect("typed rels");
+        assert!(
+            !typed_rels.contains(&"call_body_owner".to_string()),
+            "typed graph fixtures should keep call graph relations excluded"
+        );
+        assert!(
+            !typed_rels.contains(&"call_callee_evidence".to_string()),
+            "typed graph fixtures should keep call graph evidence excluded"
+        );
+        assert!(
+            !typed_rels.contains(&"local_binding".to_string()),
+            "typed graph fixtures should keep local binding call graph relations excluded"
+        );
+        assert!(
+            !typed_rels.contains(&"local_binding_edge".to_string()),
+            "typed graph fixtures should keep local binding edge call graph relations excluded"
+        );
+        assert!(
+            typed_rels.contains(&"type_relation".to_string()),
+            "typed graph fixtures should keep typed graph relations"
+        );
+    }
+
+    #[test]
     fn checkout_local_path_is_root_scoped_and_ignored_by_default() {
         let scoped = WS_FIXTURE_01_CANONICAL
             .checkout_local_path()
@@ -1235,11 +1411,12 @@ mod tests {
     #[test]
     fn default_fixture_path_or_matching_seed_prefers_seed_when_candidate_differs() {
         let temp_dir = unique_fixture_test_dir("fixture-path-differs");
-        let candidate_path = temp_dir.join(FIXTURE_NODES_CANONICAL.filename());
+        let candidate_path = temp_dir.join("candidate.sqlite");
+        let seed_path = temp_dir.join("seed.sqlite");
         std::fs::write(&candidate_path, b"not this worktree's fixture")
             .expect("write differing fixture candidate");
+        std::fs::write(&seed_path, b"this worktree's fixture").expect("write fixture seed");
 
-        let seed_path = FIXTURE_NODES_CANONICAL.repo_path();
         let resolved = default_fixture_path_or_matching_seed(candidate_path, &seed_path)
             .expect("resolve fixture candidate");
 
@@ -1250,8 +1427,9 @@ mod tests {
     #[test]
     fn default_fixture_path_or_matching_seed_keeps_candidate_when_seed_matches() {
         let temp_dir = unique_fixture_test_dir("fixture-path-matches");
-        let candidate_path = temp_dir.join(FIXTURE_NODES_CANONICAL.filename());
-        let seed_path = FIXTURE_NODES_CANONICAL.repo_path();
+        let candidate_path = temp_dir.join("candidate.sqlite");
+        let seed_path = temp_dir.join("seed.sqlite");
+        std::fs::write(&seed_path, b"this worktree's fixture").expect("write fixture seed");
         std::fs::copy(&seed_path, &candidate_path).expect("copy matching fixture candidate");
 
         let resolved = default_fixture_path_or_matching_seed(candidate_path.clone(), &seed_path)

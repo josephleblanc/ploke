@@ -25,6 +25,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 env_logger = "0.11"                                                         # Add env_logger for test logging
 ploke-db = { path = "../../ploke-db" }
 ploke-test-utils = { path = "../../test-utils", features = ["test_setup"] }
+tempfile = "3.10"
 
 [[bench]]
 name = "transform_pipeline"
@@ -34,6 +35,7 @@ harness = false
 default = ["type_bearing_ids"]
 debug = []
 type_bearing_ids = []
-typed_type_graph = ["syn_parser/typed_type_graph"]
+# Compatibility alias; call graph projection is baseline.
+call_graph = []
 # get relations to have a mapping to higher level abstractions.
 level_up_relations = []

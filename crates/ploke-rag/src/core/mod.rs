@@ -10,12 +10,56 @@
 mod unit_tests;
 use super::*;
 use ploke_core::rag_types::AssembledContext;
+use ploke_core::rag_types::{
+    AwaitedCallSiteInfo, CallBuildDomainInfo, CallCalleeEvidenceInfo, CallCalleeInfo,
+    CallContextInfo, CallEffectGuardInfo, CallEffectPolicyViolationInfo, CallEndpointKind,
+    CallExpansionInfo, CallExpansionKind, CallGuardInfo, CallImpactInfo, CallNodeInfo,
+    CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo, CallProofInvariantFindingInfo,
+    CallReachEffectInfo, CallReachInfo, CallReceiverInfo,
+    CallResolutionKind as RagCallResolutionKind, CallSiteBucketInfo,
+    CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
+    CallTargetKind, CallTestEntrypointInfo, CallTestSelectionInfo, CanonPath,
+    CrateBoundaryEdgeInfo, CrateBoundaryPolicyViolationInfo, ExternalSummaryNeedInfo,
+    FuturePollFieldProducerFlowInfo, LocalBindingEdgeInfo, LocalBindingInfo,
+    LocalBindingRelationKind as RagLocalBindingRelationKind, ModuleBoundaryEdgeInfo,
+    ModuleBoundaryPolicyViolationInfo, NodeFilepath, ProofContextInfo, ReturnedCallBindingFlowInfo,
+    ReturnedCallBindingInfo, ReturnedCallProducerInfo, ReturnedCallSiteInfo,
+    ReturnedCallSourceInfo, ReturnedCallSourceKind, ReturnedFutureExecutionFlowInfo,
+    ReturnedFutureFlowInfo, ReturnedFutureSiteInfo, RuntimeDispatchNeedInfo,
+    SelfFieldAssignmentArgumentFlowInfo, SelfFieldAssignmentFlowInfo, SelfFieldParameterFlowInfo,
+    UnsafeBlockCallInfo,
+};
+use ploke_db::{
+    CallBuildDomain as DbCallBuildDomain, CallCalleeEvidenceRow as DbCallCalleeEvidenceRow,
+    CallContextCandidate, CallContextOptions, CallContextRelation, CallContextRow, CallContextSeed,
+    CallEffectGuardReport as DbCallEffectGuardReport,
+    CallEffectPolicyViolation as DbCallEffectPolicyViolation, CallGuardReport as DbCallGuardReport,
+    CallImpactReport as DbCallImpactReport, CallNodeInfo as DbCallNodeInfo, CallPath as DbCallPath,
+    CallPathEdge as DbCallPathEdge, CallPathOptions,
+    CallProofInvariantFinding as DbCallProofInvariantFinding, CallReachEffect as DbCallReachEffect,
+    CallReachReport as DbCallReachReport, CallReceiver, CallRelationKind, CallResolutionKind,
+    CallSiteKind, CallSiteRow, CallStatusKind as DbCallStatusKind,
+    CallTargetKind as DbCallTargetKind, CallTestEntrypoint as DbCallTestEntrypoint,
+    CallTestSelectionReport as DbCallTestSelectionReport, CrateBoundaryEdge as DbCrateBoundaryEdge,
+    CrateBoundaryPolicyRule as DbCrateBoundaryPolicyRule,
+    CrateBoundaryPolicyViolation as DbCrateBoundaryPolicyViolation,
+    ExternalSummaryNeed as DbExternalSummaryNeed,
+    FuturePollFieldProducerFlow as DbFuturePollFieldProducerFlow,
+    LocalBindingEdgeRow as DbLocalBindingEdgeRow, LocalBindingRelationKind,
+    LocalBindingRow as DbLocalBindingRow, ModuleBoundaryEdge as DbModuleBoundaryEdge,
+    ModuleBoundaryPolicyRule as DbModuleBoundaryPolicyRule,
+    ModuleBoundaryPolicyViolation as DbModuleBoundaryPolicyViolation, ProofGraphContextRow,
+    ProofGraphStore, ReturnedCallBindingFlow as DbReturnedCallBindingFlow,
+    ReturnedFutureExecutionFlow as DbReturnedFutureExecutionFlow,
+    ReturnedFutureFlow as DbReturnedFutureFlow, RuntimeDispatchNeed as DbRuntimeDispatchNeed,
+    SelfFieldAssignmentArgumentFlow as DbSelfFieldAssignmentArgumentFlow,
+    SelfFieldAssignmentFlow as DbSelfFieldAssignmentFlow,
+    SelfFieldParameterFlow as DbSelfFieldParameterFlow, UnsafeBlockCall as DbUnsafeBlockCall,
+};
 use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::IoManagerHandle;
-use std::collections::HashMap;
-#[cfg(feature = "typed_type_graph")]
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -71,6 +115,8 @@ pub struct RagConfig {
     pub token_counter: Arc<dyn TokenCounter>,
     pub reranker: Option<Arc<dyn Reranker>>,
     pub type_context: TypeContextConfig,
+    pub call_context: CallContextConfig,
+    pub proof_context: ProofContextConfig,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -85,7 +131,7 @@ pub struct TypeContextConfig {
 impl Default for TypeContextConfig {
     fn default() -> Self {
         Self {
-            enabled: cfg!(feature = "typed_type_graph"),
+            enabled: true,
             max_seed_hits: 12,
             max_expanded_hits: 48,
             score_factor: 0.6,
@@ -93,6 +139,46 @@ impl Default for TypeContextConfig {
                 max_distance: 4,
                 ..TypeContextOptions::default()
             },
+        }
+    }
+}
+#[derive(Debug, Clone, Copy)]
+pub struct CallContextConfig {
+    pub enabled: bool,
+    pub max_owner_hits: usize,
+    pub max_sites_per_owner: usize,
+    pub max_targets_per_site: usize,
+    pub max_caller_hits: usize,
+    pub caller_factor: f32,
+    pub path_depth: u32,
+    pub path_limit: usize,
+}
+impl Default for CallContextConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_owner_hits: 12,
+            max_sites_per_owner: 16,
+            max_targets_per_site: 8,
+            max_caller_hits: 12,
+            caller_factor: 0.5,
+            path_depth: 3,
+            path_limit: 16,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy)]
+pub struct ProofContextConfig {
+    pub enabled: bool,
+    pub max_seed_hits: usize,
+    pub max_rows_per_part: usize,
+}
+impl Default for ProofContextConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_seed_hits: 12,
+            max_rows_per_part: 12,
         }
     }
 }
@@ -111,6 +197,8 @@ impl Default for RagConfig {
             token_counter: Arc::new(crate::context::ApproxCharTokenizer),
             reranker: None,
             type_context: TypeContextConfig::default(),
+            call_context: CallContextConfig::default(),
+            proof_context: ProofContextConfig::default(),
         }
     }
 }
@@ -144,7 +232,6 @@ impl Reranker for NoopReranker {
     }
 }
 
-#[cfg(feature = "typed_type_graph")]
 fn type_context_kind(relation: TypeContextRelation) -> TypeContextKind {
     match relation {
         TypeContextRelation::SameResolvedType => TypeContextKind::SameResolvedType,
@@ -156,6 +243,1189 @@ fn type_context_kind(relation: TypeContextRelation) -> TypeContextKind {
         TypeContextRelation::TraitBound => TypeContextKind::TraitBound,
         TypeContextRelation::IteratorSurface => TypeContextKind::IteratorSurface,
         TypeContextRelation::ConstGenericAlias => TypeContextKind::ConstGenericAlias,
+    }
+}
+fn call_expansion_kind(relation: CallContextRelation) -> CallExpansionKind {
+    match relation {
+        CallContextRelation::OutgoingTarget => CallExpansionKind::OutgoingTarget,
+        CallContextRelation::IncomingCaller => CallExpansionKind::IncomingCaller,
+    }
+}
+fn record_call_expansion_candidate(
+    expanded: &mut HashMap<Uuid, f32>,
+    expanded_context: &mut HashMap<Uuid, CallExpansionInfo>,
+    context_scores: &mut HashMap<Uuid, f32>,
+    scores: &HashMap<Uuid, f32>,
+    seed_id: Uuid,
+    seed_score: f32,
+    caller_factor: f32,
+    candidate: CallContextCandidate,
+) {
+    let candidate_id = candidate.node_id;
+    if candidate_id == seed_id || scores.contains_key(&candidate_id) {
+        return;
+    }
+
+    let distance = candidate.distance.max(1) as f32;
+    let derived = seed_score * caller_factor / distance;
+    expanded
+        .entry(candidate_id)
+        .and_modify(|existing| *existing = existing.max(derived))
+        .or_insert(derived);
+    let info = CallExpansionInfo {
+        seed_id,
+        relation: call_expansion_kind(candidate.relation),
+        call_site_id: candidate.call_site_id,
+        target_id: candidate.target_id,
+        distance: candidate.distance,
+    };
+    let replace = expanded_context.get(&candidate_id).is_none_or(|existing| {
+        let existing_score = context_scores
+            .get(&candidate_id)
+            .copied()
+            .unwrap_or(f32::NEG_INFINITY);
+        info.distance < existing.distance
+            || (info.distance == existing.distance
+                && (derived > existing_score
+                    || (derived == existing_score
+                        && (info.relation, info.seed_id.as_u128())
+                            < (existing.relation, existing.seed_id.as_u128()))))
+    });
+    if replace {
+        expanded_context.insert(candidate_id, info);
+        context_scores.insert(candidate_id, derived);
+    }
+}
+fn row_to_call_context(
+    row: CallContextRow,
+    max_targets: usize,
+) -> Result<CallContextInfo, RagError> {
+    let callee = call_site_callee_info(&row.site)?;
+
+    Ok(CallContextInfo {
+        site_id: row.site.id,
+        owner_id: row.site.owner_id,
+        kind: site_kind(row.site.kind),
+        span: row.site.span,
+        path: row.site.path,
+        arg_count: row.site.arg_count,
+        generic_arg_count: row.site.generic_arg_count,
+        callee,
+        status: status_kind(row.status.status),
+        resolution: row.status.resolution.map(resolution_kind),
+        targets: row
+            .targets
+            .into_iter()
+            .take(max_targets)
+            .map(|target| CallTargetInfo {
+                target_id: target.target_id,
+                relation: target_kind(target.relation),
+            })
+            .collect(),
+    })
+}
+fn call_site_callee_info(site: &CallSiteRow) -> Result<CallCalleeInfo, RagError> {
+    Ok(match site.kind {
+        CallSiteKind::Path => CallCalleeInfo::Path {
+            path: site.path.clone().ok_or_else(|| {
+                DbError::Cozo(format!("path call site {} missing path payload", site.id))
+            })?,
+        },
+        CallSiteKind::Method => CallCalleeInfo::Method {
+            name: site.method.clone().ok_or_else(|| {
+                DbError::Cozo(format!(
+                    "method call site {} missing method payload",
+                    site.id
+                ))
+            })?,
+            receiver: site.receiver.clone().map(receiver_info),
+        },
+        CallSiteKind::Dynamic => CallCalleeInfo::Dynamic,
+        CallSiteKind::Macro => CallCalleeInfo::Macro {
+            name: site.macro_name.clone().ok_or_else(|| {
+                DbError::Cozo(format!("macro call site {} missing macro payload", site.id))
+            })?,
+        },
+    })
+}
+fn path_info(db: &Database, path: DbCallPath) -> Result<CallPathInfo, RagError> {
+    let nodes = path_nodes(db, &path)?;
+    Ok(path_info_with_nodes(path, nodes))
+}
+
+fn path_info_with_nodes(path: DbCallPath, nodes: Vec<CallPathNodeInfo>) -> CallPathInfo {
+    CallPathInfo {
+        start_id: path.start_id,
+        end_id: path.end_id,
+        depth: path.depth,
+        edges: path.edges.into_iter().map(edge_info).collect(),
+        nodes,
+    }
+}
+
+fn impact_info(db: &Database, report: DbCallImpactReport) -> Result<CallImpactInfo, RagError> {
+    let target = call_node_info(report.target);
+    let paths = report
+        .paths
+        .into_iter()
+        .map(|path| path_info(db, path))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    let callers = report
+        .callers
+        .into_iter()
+        .map(call_node_info)
+        .collect::<Vec<_>>();
+    let direct_callers = report
+        .direct_callers
+        .into_iter()
+        .map(call_node_info)
+        .collect::<Vec<_>>();
+    let direct_call_sites = report
+        .direct_call_sites
+        .into_iter()
+        .map(|row| row_to_call_context(row, usize::MAX))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    let callsite_buckets = report
+        .callsite_buckets
+        .into_iter()
+        .map(|bucket| CallSiteBucketInfo {
+            kind: site_kind(bucket.kind),
+            relation: target_kind(bucket.relation),
+            count: bucket.count,
+        })
+        .collect::<Vec<_>>();
+    let public_callers = report
+        .public_callers
+        .into_iter()
+        .map(call_node_info)
+        .collect::<Vec<_>>();
+    let test_callers = report
+        .test_callers
+        .into_iter()
+        .map(call_node_info)
+        .collect::<Vec<_>>();
+    let non_test_callers = report
+        .non_test_callers
+        .into_iter()
+        .map(call_node_info)
+        .collect::<Vec<_>>();
+    let source_files = report
+        .source_files
+        .into_iter()
+        .map(NodeFilepath::new)
+        .collect();
+    let source_crates = report.source_crates;
+    let source_cfgs = report.source_cfgs;
+    let source_modules = report.source_modules;
+
+    Ok(CallImpactInfo {
+        target,
+        paths,
+        callers,
+        direct_callers,
+        direct_call_sites,
+        callsite_buckets,
+        public_callers,
+        test_callers,
+        non_test_callers,
+        source_files,
+        source_crates,
+        source_cfgs,
+        source_modules,
+    })
+}
+
+fn guard_info(db: &Database, report: DbCallGuardReport) -> Result<CallGuardInfo, RagError> {
+    let paths = report
+        .paths
+        .into_iter()
+        .map(|path| path_info(db, path))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    let violations = report
+        .violations
+        .into_iter()
+        .map(|path| path_info(db, path))
+        .collect::<Result<Vec<_>, RagError>>()?;
+
+    Ok(CallGuardInfo {
+        source: call_node_info(report.source),
+        target: call_node_info(report.target),
+        guard: call_node_info(report.guard),
+        guarded: report.guarded,
+        paths,
+        violations,
+    })
+}
+
+fn effect_guard_info(
+    db: &Database,
+    report: DbCallEffectGuardReport,
+) -> Result<CallEffectGuardInfo, RagError> {
+    let effects = report
+        .effects
+        .into_iter()
+        .map(|row| reach_effect_info(db, row))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    let violations = report
+        .violations
+        .into_iter()
+        .map(|row| reach_effect_info(db, row))
+        .collect::<Result<Vec<_>, RagError>>()?;
+
+    Ok(CallEffectGuardInfo {
+        owner: call_node_info(report.owner),
+        guard: call_node_info(report.guard),
+        effect_class: report.effect_class,
+        guarded: report.guarded,
+        effects,
+        violations,
+    })
+}
+
+fn reach_info(db: &Database, report: DbCallReachReport) -> Result<CallReachInfo, RagError> {
+    let owner = call_node_info(report.owner);
+    let node_cache = path_node_cache(db, &report.paths)?;
+    let paths = report
+        .paths
+        .into_iter()
+        .map(|path| {
+            let nodes = cached_path_nodes(&path, &node_cache);
+            path_info_with_nodes(path, nodes)
+        })
+        .collect::<Vec<_>>();
+    let callees = report
+        .callees
+        .into_iter()
+        .map(call_node_info)
+        .collect::<Vec<_>>();
+    let direct_callees = report
+        .direct_callees
+        .into_iter()
+        .map(call_node_info)
+        .collect::<Vec<_>>();
+    let direct_call_sites = report
+        .direct_call_sites
+        .into_iter()
+        .map(|row| row_to_call_context(row, usize::MAX))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    let boundary_call_sites = report
+        .boundary_call_sites
+        .into_iter()
+        .map(|row| row_to_call_context(row, usize::MAX))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    let boundary_edges = report
+        .boundary_edges
+        .into_iter()
+        .map(edge_info)
+        .collect::<Vec<_>>();
+    let public_callees = report
+        .public_callees
+        .into_iter()
+        .map(call_node_info)
+        .collect::<Vec<_>>();
+    let frontier_calls = report
+        .frontier_calls
+        .into_iter()
+        .map(|row| row_to_call_context(row, usize::MAX))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    let external_frontier_calls = report
+        .external_frontier_calls
+        .into_iter()
+        .map(|row| row_to_call_context(row, usize::MAX))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    let unsupported_frontier_calls = report
+        .unsupported_frontier_calls
+        .into_iter()
+        .map(|row| row_to_call_context(row, usize::MAX))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    let unresolved_frontier_calls = report
+        .unresolved_frontier_calls
+        .into_iter()
+        .map(|row| row_to_call_context(row, usize::MAX))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    let ambiguous_frontier_calls = report
+        .ambiguous_frontier_calls
+        .into_iter()
+        .map(|row| row_to_call_context(row, usize::MAX))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    let source_files = report
+        .source_files
+        .into_iter()
+        .map(NodeFilepath::new)
+        .collect();
+    let source_crates = report.source_crates;
+    let source_cfgs = report.source_cfgs;
+    let source_modules = report.source_modules;
+
+    Ok(CallReachInfo {
+        owner,
+        paths,
+        callees,
+        direct_callees,
+        direct_call_sites,
+        boundary_call_sites,
+        boundary_edges,
+        public_callees,
+        frontier_calls,
+        external_frontier_calls,
+        unsupported_frontier_calls,
+        unresolved_frontier_calls,
+        ambiguous_frontier_calls,
+        source_files,
+        source_crates,
+        source_cfgs,
+        source_modules,
+    })
+}
+
+fn reach_effect_info(
+    db: &Database,
+    row: DbCallReachEffect,
+) -> Result<CallReachEffectInfo, RagError> {
+    let paths_to_owner = row
+        .paths_to_owner
+        .into_iter()
+        .map(|path| path_info(db, path))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    Ok(CallReachEffectInfo {
+        effect_seed_id: row.effect_seed_id,
+        effect_class: row.effect_class,
+        confidence: row.confidence,
+        blocker_if_unresolved: row.blocker_if_unresolved,
+        paths_to_owner,
+        call_site: row_to_call_context(row.call_site, usize::MAX)?,
+        blocker_reasons: row.blocker_reasons,
+    })
+}
+
+fn unsafe_block_call_info(
+    db: &Database,
+    row: DbUnsafeBlockCall,
+) -> Result<UnsafeBlockCallInfo, RagError> {
+    let paths_to_owner = row
+        .paths_to_owner
+        .into_iter()
+        .map(|path| path_info(db, path))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    Ok(UnsafeBlockCallInfo {
+        paths_to_owner,
+        call_site: row_to_call_context(row.call_site, usize::MAX)?,
+    })
+}
+
+fn external_summary_need_info(
+    row: DbExternalSummaryNeed,
+    node_cache: &BTreeMap<Uuid, CallPathNodeInfo>,
+) -> Result<ExternalSummaryNeedInfo, RagError> {
+    let paths_to_owner = cached_path_infos(row.paths_to_owner, node_cache);
+    Ok(ExternalSummaryNeedInfo {
+        paths_to_owner,
+        call_site: row_to_call_context(row.call_site, usize::MAX)?,
+        blocker_reasons: row.blocker_reasons,
+    })
+}
+
+fn external_summary_need_infos(
+    db: &Database,
+    rows: Vec<DbExternalSummaryNeed>,
+) -> Result<Vec<ExternalSummaryNeedInfo>, RagError> {
+    let node_cache =
+        path_node_cache_for_paths(db, rows.iter().flat_map(|row| row.paths_to_owner.iter()))?;
+    rows.into_iter()
+        .map(|row| external_summary_need_info(row, &node_cache))
+        .collect()
+}
+
+fn runtime_dispatch_need_info(
+    db: &Database,
+    row: DbRuntimeDispatchNeed,
+) -> Result<RuntimeDispatchNeedInfo, RagError> {
+    let paths_to_owner = row
+        .paths_to_owner
+        .into_iter()
+        .map(|path| path_info(db, path))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    Ok(RuntimeDispatchNeedInfo {
+        paths_to_owner,
+        call_site: row_to_call_context(row.call_site, usize::MAX)?,
+        blocker_reasons: row.blocker_reasons,
+    })
+}
+
+fn local_binding_info(row: DbLocalBindingRow) -> LocalBindingInfo {
+    LocalBindingInfo {
+        id: row.id,
+        owner_id: row.owner_id,
+        owner_kind: row.owner_kind,
+        kind: row.kind,
+        name: row.name,
+        span: row.span,
+        cfgs: row.cfgs,
+        source_kind: row.source_kind,
+        source_id: row.source_id,
+        source_call_kind: row.source_call_kind,
+        source_path: row.source_path,
+        callee_kind: row.callee_kind,
+        callee_path: row.callee_path,
+    }
+}
+
+fn local_binding_edge_info(row: DbLocalBindingEdgeRow) -> LocalBindingEdgeInfo {
+    LocalBindingEdgeInfo {
+        source_id: row.source_id,
+        target_id: row.target_id,
+        relation: local_binding_relation_kind(row.relation),
+        source_kind: row.source_kind,
+        target_kind: row.target_kind,
+    }
+}
+
+fn call_callee_evidence_info(row: DbCallCalleeEvidenceRow) -> CallCalleeEvidenceInfo {
+    CallCalleeEvidenceInfo {
+        site_id: row.site_id,
+        site_kind: site_kind(row.site_kind),
+        callee_kind: row.callee_kind,
+        callee_path: row.callee_path,
+        closure_id: row.closure_id,
+    }
+}
+
+fn self_field_parameter_flow_info(
+    row: DbSelfFieldParameterFlow,
+) -> Result<SelfFieldParameterFlowInfo, RagError> {
+    Ok(SelfFieldParameterFlowInfo {
+        site: row_to_call_context(
+            CallContextRow {
+                site: row.site,
+                status: row.status,
+                targets: Vec::new(),
+            },
+            usize::MAX,
+        )?,
+        constructor_id: row.constructor_id,
+        return_binding: local_binding_info(row.return_binding),
+        field_binding: local_binding_info(row.field_binding),
+        parameter_binding: local_binding_info(row.parameter_binding),
+    })
+}
+
+fn self_field_assignment_flow_info(
+    row: DbSelfFieldAssignmentFlow,
+) -> Result<SelfFieldAssignmentFlowInfo, RagError> {
+    Ok(SelfFieldAssignmentFlowInfo {
+        site: row_to_call_context(
+            CallContextRow {
+                site: row.site,
+                status: row.status,
+                targets: Vec::new(),
+            },
+            usize::MAX,
+        )?,
+        owner_type: row.owner_type,
+        setter_id: row.setter_id,
+        assignment_binding: local_binding_info(row.assignment_binding),
+        parameter_binding: local_binding_info(row.parameter_binding),
+        source_edge: local_binding_edge_info(row.source_edge),
+    })
+}
+
+fn self_field_assignment_argument_flow_info(
+    row: DbSelfFieldAssignmentArgumentFlow,
+) -> Result<SelfFieldAssignmentArgumentFlowInfo, RagError> {
+    Ok(SelfFieldAssignmentArgumentFlowInfo {
+        field_flow: self_field_assignment_flow_info(row.field_flow)?,
+        setter_call: row_to_call_context(row.setter_call, usize::MAX)?,
+        argument_edge: local_binding_edge_info(row.argument_edge),
+    })
+}
+
+fn future_poll_field_producer_flow_info(
+    row: DbFuturePollFieldProducerFlow,
+) -> Result<FuturePollFieldProducerFlowInfo, RagError> {
+    Ok(FuturePollFieldProducerFlowInfo {
+        site: row_to_call_context(
+            CallContextRow {
+                site: row.site,
+                status: row.status,
+                targets: Vec::new(),
+            },
+            usize::MAX,
+        )?,
+        poll_owner_type: row.poll_owner_type,
+        producer_id: row.producer_id,
+        return_binding: local_binding_info(row.return_binding),
+        field_binding: local_binding_info(row.field_binding),
+        source_site: row_to_call_context(
+            CallContextRow {
+                site: row.source_site,
+                status: row.source_status,
+                targets: Vec::new(),
+            },
+            usize::MAX,
+        )?,
+        source_edge: local_binding_edge_info(row.source_edge),
+    })
+}
+
+fn awaited_call_site_info(site: CallSiteRow) -> Result<AwaitedCallSiteInfo, RagError> {
+    let callee = call_site_callee_info(&site)?;
+    Ok(AwaitedCallSiteInfo {
+        site_id: site.id,
+        owner_id: site.owner_id,
+        kind: site_kind(site.kind),
+        span: site.span,
+        path: site.path,
+        arg_count: site.arg_count,
+        generic_arg_count: site.generic_arg_count,
+        callee,
+    })
+}
+
+fn returned_call_binding_flow_info(
+    row: DbReturnedCallBindingFlow,
+) -> Result<ReturnedCallBindingFlowInfo, RagError> {
+    Ok(ReturnedCallBindingFlowInfo {
+        caller_id: row.caller_id,
+        dynamic: ReturnedCallSiteInfo {
+            id: row.dynamic.id,
+            span: row.dynamic.span,
+            path: row.dynamic.path,
+            target_id: row.dynamic.target_id,
+            relation: target_kind(row.dynamic.relation),
+            target_kind: call_target_kind(row.dynamic.target_kind),
+        },
+        producer: ReturnedCallProducerInfo {
+            id: row.producer.id,
+            site_id: row.producer.site_id,
+            span: row.producer.span,
+            path: row.producer.path,
+        },
+        binding: ReturnedCallBindingInfo {
+            id: row.binding.id,
+            source: ReturnedCallSourceInfo {
+                id: row.binding.source.id,
+                relation: returned_call_source_relation_kind(row.binding.source.relation)?,
+                kind: returned_call_source_kind(&row.binding.source.kind)?,
+            },
+        },
+    })
+}
+
+fn returned_future_flow_info(
+    row: DbReturnedFutureFlow,
+) -> Result<ReturnedFutureFlowInfo, RagError> {
+    Ok(ReturnedFutureFlowInfo {
+        caller_id: row.caller_id,
+        producer: ReturnedCallProducerInfo {
+            id: row.producer.id,
+            site_id: row.producer.site_id,
+            span: row.producer.span,
+            path: row.producer.path,
+        },
+        binding: ReturnedCallBindingInfo {
+            id: row.binding.id,
+            source: ReturnedCallSourceInfo {
+                id: row.binding.source.id,
+                relation: returned_call_source_relation_kind(row.binding.source.relation)?,
+                kind: returned_call_source_kind(&row.binding.source.kind)?,
+            },
+        },
+        future: ReturnedFutureSiteInfo {
+            id: row.future.id,
+            span: row.future.span,
+            path: row.future.path,
+            callee_kind: row.future.callee_kind,
+        },
+    })
+}
+
+fn returned_call_producer_info(row: ploke_db::ReturnedCallProducer) -> ReturnedCallProducerInfo {
+    ReturnedCallProducerInfo {
+        id: row.id,
+        site_id: row.site_id,
+        span: row.span,
+        path: row.path,
+    }
+}
+
+fn returned_call_binding_info(
+    row: ploke_db::ReturnedCallBinding,
+) -> Result<ReturnedCallBindingInfo, RagError> {
+    Ok(ReturnedCallBindingInfo {
+        id: row.id,
+        source: ReturnedCallSourceInfo {
+            id: row.source.id,
+            relation: returned_call_source_relation_kind(row.source.relation)?,
+            kind: returned_call_source_kind(&row.source.kind)?,
+        },
+    })
+}
+
+fn returned_future_site_info(row: ploke_db::ReturnedFutureSite) -> ReturnedFutureSiteInfo {
+    ReturnedFutureSiteInfo {
+        id: row.id,
+        span: row.span,
+        path: row.path,
+        callee_kind: row.callee_kind,
+    }
+}
+
+fn returned_future_execution_flow_info(
+    row: DbReturnedFutureExecutionFlow,
+) -> Result<ReturnedFutureExecutionFlowInfo, RagError> {
+    Ok(ReturnedFutureExecutionFlowInfo {
+        caller_id: row.caller_id,
+        producer: returned_call_producer_info(row.producer),
+        producer_binding: returned_call_binding_info(row.producer_binding)?,
+        future: returned_future_site_info(row.future),
+        maker: returned_call_producer_info(row.maker),
+        callable_binding: returned_call_binding_info(row.callable_binding)?,
+        body_edge: edge_info(row.body_edge),
+    })
+}
+
+fn boundary_site_info(
+    edge: DbCallPathEdge,
+    site: CallSiteRow,
+) -> Result<CallContextInfo, RagError> {
+    let callee = call_site_callee_info(&site)?;
+    Ok(CallContextInfo {
+        site_id: site.id,
+        owner_id: site.owner_id,
+        kind: site_kind(site.kind),
+        span: site.span,
+        path: site.path,
+        arg_count: site.arg_count,
+        generic_arg_count: site.generic_arg_count,
+        callee,
+        status: RagCallStatusKind::Resolved,
+        resolution: Some(RagCallResolutionKind::LocalExact),
+        targets: vec![CallTargetInfo {
+            target_id: edge.callee_id,
+            relation: target_kind(edge.relation),
+        }],
+    })
+}
+
+fn module_boundary_edge_info(
+    row: DbModuleBoundaryEdge,
+) -> Result<ModuleBoundaryEdgeInfo, RagError> {
+    Ok(ModuleBoundaryEdgeInfo {
+        edge: edge_info(row.edge),
+        caller: call_node_info(row.caller),
+        callee: call_node_info(row.callee),
+        site: boundary_site_info(row.edge, row.site)?,
+    })
+}
+
+fn crate_boundary_edge_info(row: DbCrateBoundaryEdge) -> Result<CrateBoundaryEdgeInfo, RagError> {
+    Ok(CrateBoundaryEdgeInfo {
+        edge: edge_info(row.edge),
+        caller: call_node_info(row.caller),
+        caller_crate: row.caller_crate,
+        callee: call_node_info(row.callee),
+        callee_crate: row.callee_crate,
+        site: boundary_site_info(row.edge, row.site)?,
+    })
+}
+
+fn module_boundary_policy_violation_info(
+    row: DbModuleBoundaryPolicyViolation,
+) -> Result<ModuleBoundaryPolicyViolationInfo, RagError> {
+    Ok(ModuleBoundaryPolicyViolationInfo {
+        rule_id: row.rule_id,
+        edge: module_boundary_edge_info(row.edge)?,
+    })
+}
+
+fn crate_boundary_policy_violation_info(
+    row: DbCrateBoundaryPolicyViolation,
+) -> Result<CrateBoundaryPolicyViolationInfo, RagError> {
+    Ok(CrateBoundaryPolicyViolationInfo {
+        rule_id: row.rule_id,
+        edge: crate_boundary_edge_info(row.edge)?,
+    })
+}
+
+fn effect_policy_violation_info(
+    db: &Database,
+    row: DbCallEffectPolicyViolation,
+) -> Result<CallEffectPolicyViolationInfo, RagError> {
+    Ok(CallEffectPolicyViolationInfo {
+        allowed_effects: row.allowed_effects,
+        effect: reach_effect_info(db, row.effect)?,
+    })
+}
+
+fn proof_invariant_finding_info(
+    row: DbCallProofInvariantFinding,
+) -> Result<CallProofInvariantFindingInfo, RagError> {
+    let call_site = row
+        .call_site
+        .map(|site| row_to_call_context(site, usize::MAX))
+        .transpose()?;
+    Ok(CallProofInvariantFindingInfo {
+        invariant: row.invariant,
+        status: row.status,
+        reason: row.reason,
+        call_site_id: row.call_site_id,
+        call_site,
+    })
+}
+
+fn build_domain_info(row: DbCallBuildDomain) -> CallBuildDomainInfo {
+    CallBuildDomainInfo {
+        build_domain_id: row.build_domain_id,
+        target_kind: row.target_kind,
+        target_name: row.target_name,
+        target_root: row.target_root,
+        profile: row.profile,
+        rustc_version: row.rustc_version,
+        proof_policy_version: row.proof_policy_version,
+        active_cfg_hash: row.active_cfg_hash,
+        evidence_use: row.evidence_use,
+        blocker_reasons: row.blocker_reasons,
+    }
+}
+
+fn test_entrypoint_info(row: DbCallTestEntrypoint) -> CallTestEntrypointInfo {
+    CallTestEntrypointInfo {
+        entrypoint_summary_id: row.entrypoint_summary_id,
+        build_domain_id: row.build_domain_id,
+        definition_id: row.definition_id,
+        target_kind: row.target_kind,
+        target_name: row.target_name,
+        target_root: row.target_root,
+        summary_class: row.summary_class,
+        artifact_hash: row.artifact_hash,
+        summary_version: row.summary_version,
+        review_method: row.review_method,
+        scope_of_validity: row.scope_of_validity,
+        required_containment: row.required_containment,
+        invalidation_conditions: row.invalidation_conditions,
+        status: row.status,
+        evidence_use: row.evidence_use,
+        allowed_effects: row.allowed_effects,
+        blocker_reasons: row.blocker_reasons,
+    }
+}
+
+fn test_selection_info(
+    db: &Database,
+    report: DbCallTestSelectionReport,
+) -> Result<CallTestSelectionInfo, RagError> {
+    Ok(CallTestSelectionInfo {
+        target: call_node_info(report.target),
+        source_test_callers: report
+            .source_test_callers
+            .into_iter()
+            .map(call_node_info)
+            .collect(),
+        source_test_paths: report
+            .source_test_paths
+            .into_iter()
+            .map(|path| path_info(db, path))
+            .collect::<Result<Vec<_>, RagError>>()?,
+        generated_entrypoints: report
+            .generated_entrypoints
+            .into_iter()
+            .map(test_entrypoint_info)
+            .collect(),
+        build_domains: report
+            .build_domains
+            .into_iter()
+            .map(build_domain_info)
+            .collect(),
+    })
+}
+
+fn call_node_info(row: DbCallNodeInfo) -> CallNodeInfo {
+    CallNodeInfo {
+        id: row.id,
+        kind: format!("{:?}", row.kind),
+        name: row.name,
+        visibility: row.visibility,
+        is_public: row.is_public,
+        is_unsafe: row.is_unsafe,
+        is_async: row.is_async,
+        module_path: row.module_path.clone(),
+        file_path: NodeFilepath::new(row.file_path),
+        canon_path: CanonPath::new(row.module_path.join("::")),
+    }
+}
+
+fn path_nodes(db: &Database, path: &DbCallPath) -> Result<Vec<CallPathNodeInfo>, RagError> {
+    let ids = path_node_ids(path);
+
+    db.get_snippet_context_nodes_ordered(ids.into_iter().collect())
+        .map_err(|err| RagError::Db(ploke_db::DbError::Cozo(err.to_string())))?
+        .into_iter()
+        .map(|(node, paths)| {
+            Ok(CallPathNodeInfo {
+                id: node.id,
+                file_path: NodeFilepath::new(paths.file),
+                canon_path: CanonPath::new(paths.canon),
+            })
+        })
+        .collect()
+}
+
+fn path_node_ids(path: &DbCallPath) -> BTreeSet<Uuid> {
+    let mut ids = BTreeSet::from([path.start_id, path.end_id]);
+    for edge in &path.edges {
+        ids.insert(edge.caller_id);
+        ids.insert(edge.callee_id);
+    }
+    ids
+}
+
+fn path_node_cache(
+    db: &Database,
+    paths: &[DbCallPath],
+) -> Result<BTreeMap<Uuid, CallPathNodeInfo>, RagError> {
+    path_node_cache_for_paths(db, paths)
+}
+
+fn path_infos(db: &Database, paths: Vec<DbCallPath>) -> Result<Vec<CallPathInfo>, RagError> {
+    let node_cache = path_node_cache(db, &paths)?;
+    Ok(cached_path_infos(paths, &node_cache))
+}
+
+fn path_node_cache_for_paths<'a>(
+    db: &Database,
+    paths: impl IntoIterator<Item = &'a DbCallPath>,
+) -> Result<BTreeMap<Uuid, CallPathNodeInfo>, RagError> {
+    let ids = paths
+        .into_iter()
+        .flat_map(path_node_ids)
+        .collect::<BTreeSet<_>>();
+    let cache = db
+        .get_snippet_context_nodes_ordered(ids.into_iter().collect())
+        .map_err(|err| RagError::Db(ploke_db::DbError::Cozo(err.to_string())))?
+        .into_iter()
+        .map(|(node, paths)| {
+            (
+                node.id,
+                CallPathNodeInfo {
+                    id: node.id,
+                    file_path: NodeFilepath::new(paths.file),
+                    canon_path: CanonPath::new(paths.canon),
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    Ok(cache)
+}
+
+fn cached_path_infos(
+    paths: Vec<DbCallPath>,
+    node_cache: &BTreeMap<Uuid, CallPathNodeInfo>,
+) -> Vec<CallPathInfo> {
+    paths
+        .into_iter()
+        .map(|path| {
+            let nodes = cached_path_nodes(&path, node_cache);
+            path_info_with_nodes(path, nodes)
+        })
+        .collect()
+}
+
+fn cached_path_nodes(
+    path: &DbCallPath,
+    node_cache: &BTreeMap<Uuid, CallPathNodeInfo>,
+) -> Vec<CallPathNodeInfo> {
+    path_node_ids(path)
+        .into_iter()
+        .filter_map(|id| node_cache.get(&id).cloned())
+        .collect()
+}
+fn edge_info(edge: DbCallPathEdge) -> CallPathEdgeInfo {
+    CallPathEdgeInfo {
+        caller_id: edge.caller_id,
+        callee_id: edge.callee_id,
+        call_site_id: edge.call_site_id,
+        span: edge.span,
+        relation: target_kind(edge.relation),
+        source_kind: site_kind(edge.source_kind),
+        target_kind: call_target_kind(edge.target_kind),
+    }
+}
+fn row_to_proof_context(row: ProofGraphContextRow) -> ProofContextInfo {
+    ProofContextInfo {
+        fact_id: row.fact_id,
+        kind: row.kind,
+        build_domain_id: row.build_domain_id,
+        call_site_id: row.call_site_id,
+        call_edge_id: row.call_edge_id,
+        caller_def_id: row.caller_def_id,
+        callee_def_id: row.callee_def_id,
+        resolution_state: row.resolution_state,
+        resolved_def_id: row.resolved_def_id,
+        candidate_def_ids: row.candidate_def_ids,
+        external_summary_id: row.external_summary_id,
+        boundary_id: row.boundary_id,
+        boundary_kind: row.boundary_kind,
+        expanded_item_id: row.expanded_item_id,
+        definition_id: row.definition_id,
+        target_kind: row.target_kind,
+        target_name: row.target_name,
+        target_root: row.target_root,
+        profile: row.profile,
+        rustc_version: row.rustc_version,
+        proof_policy_version: row.proof_policy_version,
+        cfg_domain_id: row.cfg_domain_id,
+        active_cfg_hash: row.active_cfg_hash,
+        invocation_id: row.invocation_id,
+        rustc_program: row.rustc_program,
+        working_directory: row.working_directory,
+        argument_vector_hash: row.argument_vector_hash,
+        environment_hash: row.environment_hash,
+        effect_seed_id: row.effect_seed_id,
+        confidence: row.confidence,
+        blocker_if_unresolved: row.blocker_if_unresolved,
+        unsafe_block: row.unsafe_block,
+        authority_term: row.authority_term,
+        summary_class: row.summary_class,
+        artifact_hash: row.artifact_hash,
+        summary_version: row.summary_version,
+        review_method: row.review_method,
+        scope_of_validity: row.scope_of_validity,
+        allowed_effects: row.allowed_effects,
+        required_containment: row.required_containment,
+        invalidation_conditions: row.invalidation_conditions,
+        evidence_use: row.evidence_use,
+        source_file: row.source_file,
+        start_byte: row.start_byte,
+        end_byte: row.end_byte,
+        line_start: row.line_start,
+        line_end: row.line_end,
+        effect_class: row.effect_class,
+        blocker_reason: row.blocker_reason,
+        status: row.status,
+        detail: row.detail,
+    }
+}
+fn site_kind(kind: CallSiteKind) -> RagCallSiteKind {
+    match kind {
+        CallSiteKind::Path => RagCallSiteKind::Path,
+        CallSiteKind::Method => RagCallSiteKind::Method,
+        CallSiteKind::Dynamic => RagCallSiteKind::Dynamic,
+        CallSiteKind::Macro => RagCallSiteKind::Macro,
+    }
+}
+fn receiver_info(receiver: CallReceiver) -> CallReceiverInfo {
+    match receiver {
+        CallReceiver::SelfValue => CallReceiverInfo::SelfValue,
+        CallReceiver::SelfField { path } => CallReceiverInfo::SelfField { path },
+        CallReceiver::LocalBinding { name } => CallReceiverInfo::LocalBinding { name },
+        CallReceiver::TypedLocalBinding { name, type_path } => {
+            CallReceiverInfo::TypedLocalBinding { name, type_path }
+        }
+        CallReceiver::InitializedLocalBinding { name, init_path } => {
+            CallReceiverInfo::InitializedLocalBinding { name, init_path }
+        }
+        CallReceiver::AliasedLocalBinding { name, source_path } => {
+            CallReceiverInfo::AliasedLocalBinding { name, source_path }
+        }
+        CallReceiver::TupleReturnBinding { name, path, index } => {
+            CallReceiverInfo::TupleReturnBinding { name, path, index }
+        }
+        CallReceiver::TupleMethodReturn {
+            name,
+            method_name,
+            method_span,
+            index,
+        } => CallReceiverInfo::TupleMethodReturn {
+            name,
+            method_name,
+            method_span,
+            index,
+        },
+        CallReceiver::MethodResultLocalBinding {
+            name,
+            method_name,
+            method_span,
+        } => CallReceiverInfo::MethodResultLocalBinding {
+            name,
+            method_name,
+            method_span,
+        },
+        CallReceiver::MethodResultField {
+            method_name,
+            method_span,
+            field_path,
+        } => CallReceiverInfo::MethodResultField {
+            method_name,
+            method_span,
+            field_path,
+        },
+        CallReceiver::EnumVariantBinding {
+            name,
+            enum_path,
+            variant_name,
+            field_index,
+        } => CallReceiverInfo::EnumVariantBinding {
+            name,
+            enum_path,
+            variant_name,
+            field_index,
+        },
+        CallReceiver::BorrowedLocalBinding { name } => {
+            CallReceiverInfo::BorrowedLocalBinding { name }
+        }
+        CallReceiver::BorrowedTypedLocalBinding { name, type_path } => {
+            CallReceiverInfo::BorrowedTypedLocalBinding { name, type_path }
+        }
+        CallReceiver::BorrowedInitializedLocalBinding { name, init_path } => {
+            CallReceiverInfo::BorrowedInitializedLocalBinding { name, init_path }
+        }
+        CallReceiver::DereferencedLocalBinding { name } => {
+            CallReceiverInfo::DereferencedLocalBinding { name }
+        }
+        CallReceiver::DereferencedInitializedLocalBinding { name, init_path } => {
+            CallReceiverInfo::DereferencedInitializedLocalBinding { name, init_path }
+        }
+        CallReceiver::FieldLocalBinding { name, field_path } => {
+            CallReceiverInfo::FieldLocalBinding { name, field_path }
+        }
+        CallReceiver::FieldTypedLocalBinding {
+            name,
+            type_path,
+            field_path,
+        } => CallReceiverInfo::FieldTypedLocalBinding {
+            name,
+            type_path,
+            field_path,
+        },
+        CallReceiver::FieldInitializedLocalBinding {
+            name,
+            init_path,
+            field_path,
+        } => CallReceiverInfo::FieldInitializedLocalBinding {
+            name,
+            init_path,
+            field_path,
+        },
+        CallReceiver::PathCallResult { path } => CallReceiverInfo::PathCallResult { path },
+        CallReceiver::MethodCallResult { method_name } => {
+            CallReceiverInfo::MethodCallResult { method_name }
+        }
+        CallReceiver::AwaitResult => CallReceiverInfo::AwaitResult,
+        CallReceiver::AwaitPathCallResult { path } => {
+            CallReceiverInfo::AwaitPathCallResult { path }
+        }
+        CallReceiver::AwaitMethodCallResult { method_name } => {
+            CallReceiverInfo::AwaitMethodCallResult { method_name }
+        }
+        CallReceiver::TryResult => CallReceiverInfo::TryResult,
+        CallReceiver::TryPathCallResult { path } => CallReceiverInfo::TryPathCallResult { path },
+        CallReceiver::TryMethodCallResult { method_name } => {
+            CallReceiverInfo::TryMethodCallResult { method_name }
+        }
+        CallReceiver::IfBranchPaths { paths } => CallReceiverInfo::IfBranchPaths { paths },
+        CallReceiver::Literal => CallReceiverInfo::Literal,
+        CallReceiver::Unsupported => CallReceiverInfo::Unsupported,
+    }
+}
+fn target_kind(kind: CallRelationKind) -> CallTargetKind {
+    match kind {
+        CallRelationKind::Function => CallTargetKind::Function,
+        CallRelationKind::DynamicFunction => CallTargetKind::DynamicFunction,
+        CallRelationKind::Closure => CallTargetKind::Closure,
+        CallRelationKind::LocalFunction => CallTargetKind::LocalFunction,
+        CallRelationKind::DynamicClosure => CallTargetKind::DynamicClosure,
+        CallRelationKind::MethodCallbackFunction => CallTargetKind::MethodCallbackFunction,
+        CallRelationKind::MethodCallbackClosure => CallTargetKind::MethodCallbackClosure,
+        CallRelationKind::Method => CallTargetKind::Method,
+        CallRelationKind::AssociatedFunction => CallTargetKind::AssociatedFunction,
+        CallRelationKind::TupleStructConstructor => CallTargetKind::TupleStructConstructor,
+        CallRelationKind::EnumVariantConstructor => CallTargetKind::EnumVariantConstructor,
+    }
+}
+fn call_target_kind(kind: DbCallTargetKind) -> CallEndpointKind {
+    match kind {
+        DbCallTargetKind::Function => CallEndpointKind::Function,
+        DbCallTargetKind::Closure => CallEndpointKind::Closure,
+        DbCallTargetKind::LocalItem => CallEndpointKind::LocalItem,
+        DbCallTargetKind::Method => CallEndpointKind::Method,
+        DbCallTargetKind::Struct => CallEndpointKind::Struct,
+        DbCallTargetKind::Variant => CallEndpointKind::Variant,
+    }
+}
+fn local_binding_relation_kind(kind: LocalBindingRelationKind) -> RagLocalBindingRelationKind {
+    match kind {
+        LocalBindingRelationKind::OwnerContainsBinding => {
+            RagLocalBindingRelationKind::OwnerContainsBinding
+        }
+        LocalBindingRelationKind::BindingSourceClosure => {
+            RagLocalBindingRelationKind::BindingSourceClosure
+        }
+        LocalBindingRelationKind::BindingSourceCallResult => {
+            RagLocalBindingRelationKind::BindingSourceCallResult
+        }
+        LocalBindingRelationKind::BindingSourceFunction => {
+            RagLocalBindingRelationKind::BindingSourceFunction
+        }
+        LocalBindingRelationKind::BindingSourceLocalItem => {
+            RagLocalBindingRelationKind::BindingSourceLocalItem
+        }
+        LocalBindingRelationKind::BindingProjectsField => {
+            RagLocalBindingRelationKind::BindingProjectsField
+        }
+        LocalBindingRelationKind::BindingSourceParameter => {
+            RagLocalBindingRelationKind::BindingSourceParameter
+        }
+        LocalBindingRelationKind::BindingAliasesBinding => {
+            RagLocalBindingRelationKind::BindingAliasesBinding
+        }
+        LocalBindingRelationKind::ArgumentSuppliesParameter => {
+            RagLocalBindingRelationKind::ArgumentSuppliesParameter
+        }
+    }
+}
+fn returned_call_source_relation_kind(
+    kind: LocalBindingRelationKind,
+) -> Result<RagLocalBindingRelationKind, RagError> {
+    match kind {
+        LocalBindingRelationKind::BindingSourceClosure
+        | LocalBindingRelationKind::BindingSourceCallResult => {
+            Ok(local_binding_relation_kind(kind))
+        }
+        LocalBindingRelationKind::OwnerContainsBinding
+        | LocalBindingRelationKind::BindingSourceFunction
+        | LocalBindingRelationKind::BindingSourceLocalItem
+        | LocalBindingRelationKind::BindingProjectsField
+        | LocalBindingRelationKind::BindingSourceParameter
+        | LocalBindingRelationKind::BindingAliasesBinding
+        | LocalBindingRelationKind::ArgumentSuppliesParameter => Err(RagError::Db(DbError::Cozo(
+            format!("{kind:?} is not a returned-call source relation"),
+        ))),
+    }
+}
+fn returned_call_source_kind(kind: &str) -> Result<ReturnedCallSourceKind, RagError> {
+    match kind {
+        "Closure" => Ok(ReturnedCallSourceKind::Closure),
+        "Path" => Ok(ReturnedCallSourceKind::Path),
+        "Method" => Ok(ReturnedCallSourceKind::Method),
+        "Dynamic" => Ok(ReturnedCallSourceKind::Dynamic),
+        "Macro" => Ok(ReturnedCallSourceKind::Macro),
+        other => Err(RagError::Db(DbError::Cozo(format!(
+            "unknown returned-call source kind {other:?}"
+        )))),
+    }
+}
+fn status_kind(kind: DbCallStatusKind) -> RagCallStatusKind {
+    match kind {
+        DbCallStatusKind::Resolved => RagCallStatusKind::Resolved,
+        DbCallStatusKind::Unresolved => RagCallStatusKind::Unresolved,
+        DbCallStatusKind::Ambiguous => RagCallStatusKind::Ambiguous,
+        DbCallStatusKind::External => RagCallStatusKind::External,
+        DbCallStatusKind::Unsupported => RagCallStatusKind::Unsupported,
+    }
+}
+fn resolution_kind(kind: CallResolutionKind) -> RagCallResolutionKind {
+    match kind {
+        CallResolutionKind::LocalExact => RagCallResolutionKind::LocalExact,
     }
 }
 
@@ -179,6 +1449,8 @@ pub struct RagService {
     cfg: RagConfig,
     io: Option<Arc<IoManagerHandle>>,
     type_context_degraded: bool,
+    call_context_degraded: bool,
+    proof_context_degraded: bool,
 }
 
 impl RagService {
@@ -190,6 +1462,8 @@ impl RagService {
         io: Option<Arc<IoManagerHandle>>,
     ) -> Result<Self, RagError> {
         let type_context_degraded = Self::apply_type_context_gate(&db, &mut cfg)?;
+        let call_context_degraded = Self::apply_call_context_gate(&db, &mut cfg)?;
+        let proof_context_degraded = Self::apply_proof_context_gate(&db, &mut cfg)?;
         Ok(Self {
             db,
             dense_embedder,
@@ -197,10 +1471,675 @@ impl RagService {
             cfg,
             io,
             type_context_degraded,
+            call_context_degraded,
+            proof_context_degraded,
         })
     }
 
-    #[cfg(feature = "typed_type_graph")]
+    pub fn call_context_for_node(&self, node_id: Uuid) -> Result<Vec<CallContextInfo>, RagError> {
+        let cfg = self.cfg.call_context;
+        if !cfg.enabled || cfg.max_sites_per_owner == 0 {
+            return Ok(Vec::new());
+        }
+
+        self.call_context(node_id, cfg.max_sites_per_owner, cfg.max_targets_per_site)
+    }
+
+    pub fn exact_call_context(&self, node_id: Uuid) -> Result<Vec<CallContextInfo>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(Vec::new());
+        }
+
+        self.call_context(node_id, usize::MAX, usize::MAX)
+    }
+
+    pub fn exact_call_paths_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Vec<CallPathInfo>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(Vec::new());
+        }
+
+        path_infos(
+            self.db.as_ref(),
+            self.db.call_paths_from_owner(owner_id, options)?,
+        )
+    }
+
+    pub fn exact_call_paths_to_target(
+        &self,
+        target_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Vec<CallPathInfo>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(Vec::new());
+        }
+
+        path_infos(
+            self.db.as_ref(),
+            self.db.call_paths_to_target(target_id, options)?,
+        )
+    }
+
+    pub fn exact_call_paths_between(
+        &self,
+        owner_id: Uuid,
+        target_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Vec<CallPathInfo>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(Vec::new());
+        }
+
+        path_infos(
+            self.db.as_ref(),
+            self.db.call_paths_between(owner_id, target_id, options)?,
+        )
+    }
+
+    pub fn exact_call_guard_report_between(
+        &self,
+        source_id: Uuid,
+        target_id: Uuid,
+        guard_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<CallGuardInfo>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(guard_info(
+            self.db.as_ref(),
+            self.db
+                .call_guard_report_between(source_id, target_id, guard_id, options)?,
+        )?))
+    }
+
+    pub fn exact_call_cycles_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Vec<CallPathInfo>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(Vec::new());
+        }
+
+        path_infos(
+            self.db.as_ref(),
+            self.db.call_cycles_from_owner(owner_id, options)?,
+        )
+    }
+
+    pub fn exact_call_impact_for_target(
+        &self,
+        target_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<CallImpactInfo>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(impact_info(
+            self.db.as_ref(),
+            self.db.call_impact_for_target(target_id, options)?,
+        )?))
+    }
+
+    pub fn exact_call_reach_for_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<CallReachInfo>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(reach_info(
+            self.db.as_ref(),
+            self.db.call_reach_for_owner(owner_id, options)?,
+        )?))
+    }
+
+    pub fn exact_call_effects_reachable_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<Vec<CallReachEffectInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .call_effects_reachable_from_owner(owner_id, options)?
+                .into_iter()
+                .map(|row| reach_effect_info(self.db.as_ref(), row))
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_unsafe_block_calls_reachable_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<Vec<UnsafeBlockCallInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .unsafe_block_calls_reachable_from_owner(owner_id, options)?
+                .into_iter()
+                .map(|row| unsafe_block_call_info(self.db.as_ref(), row))
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_call_effect_guard_report_for_owner(
+        &self,
+        owner_id: Uuid,
+        guard_id: Uuid,
+        effect_class: &str,
+        options: CallPathOptions,
+    ) -> Result<Option<CallEffectGuardInfo>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(effect_guard_info(
+            self.db.as_ref(),
+            self.db.call_effect_guard_report_for_owner(
+                owner_id,
+                guard_id,
+                effect_class,
+                options,
+            )?,
+        )?))
+    }
+
+    pub fn exact_call_effect_policy_violations_for_owner<S: AsRef<str>>(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+        allowed_effects: &[S],
+    ) -> Result<Option<Vec<CallEffectPolicyViolationInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .call_effect_policy_violations_for_owner(owner_id, options, allowed_effects)?
+                .into_iter()
+                .map(|row| effect_policy_violation_info(self.db.as_ref(), row))
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_call_effect_policy_violations_for_stored_owner_policy(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<Vec<CallEffectPolicyViolationInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .call_effect_policy_violations_for_stored_owner_policy(owner_id, options)?
+                .into_iter()
+                .map(|row| effect_policy_violation_info(self.db.as_ref(), row))
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_call_proof_invariant_findings_for_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<Vec<CallProofInvariantFindingInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .call_proof_invariant_findings_for_owner(owner_id, options)?
+                .into_iter()
+                .map(proof_invariant_finding_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_external_summary_needs_for_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<Vec<ExternalSummaryNeedInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(external_summary_need_infos(
+            self.db.as_ref(),
+            self.db
+                .external_summary_needs_for_owner(owner_id, options)?,
+        )?))
+    }
+
+    pub fn exact_runtime_dispatch_needs_for_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<Vec<RuntimeDispatchNeedInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .runtime_dispatch_needs_for_owner(owner_id, options)?
+                .into_iter()
+                .map(|row| runtime_dispatch_need_info(self.db.as_ref(), row))
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_local_bindings_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<LocalBindingInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .local_bindings_for_owner(owner_id)?
+                .into_iter()
+                .map(local_binding_info)
+                .collect(),
+        ))
+    }
+
+    pub fn exact_local_binding_edges_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<LocalBindingEdgeInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .local_binding_edges_for_owner(owner_id)?
+                .into_iter()
+                .map(local_binding_edge_info)
+                .collect(),
+        ))
+    }
+
+    pub fn exact_call_callee_evidence_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<CallCalleeEvidenceInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .call_callee_evidence_for_owner(owner_id)?
+                .into_iter()
+                .map(call_callee_evidence_info)
+                .collect(),
+        ))
+    }
+
+    pub fn exact_self_field_parameter_flows_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<SelfFieldParameterFlowInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .self_field_parameter_flows_for_owner(owner_id)?
+                .into_iter()
+                .map(self_field_parameter_flow_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_self_field_assignment_flows_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<SelfFieldAssignmentFlowInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .self_field_assignment_flows_for_owner(owner_id)?
+                .into_iter()
+                .map(self_field_assignment_flow_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_self_field_assignment_argument_flows_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<SelfFieldAssignmentArgumentFlowInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .self_field_assignment_argument_flows_for_owner(owner_id)?
+                .into_iter()
+                .map(self_field_assignment_argument_flow_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_future_poll_field_producer_flows_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<FuturePollFieldProducerFlowInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .future_poll_field_producer_flows_for_owner(owner_id)?
+                .into_iter()
+                .map(future_poll_field_producer_flow_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_returned_call_binding_flows_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<ReturnedCallBindingFlowInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .returned_call_binding_flows_for_owner(owner_id)?
+                .into_iter()
+                .map(returned_call_binding_flow_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_returned_future_flows_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<ReturnedFutureFlowInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .returned_future_flows_for_owner(owner_id)?
+                .into_iter()
+                .map(returned_future_flow_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_returned_future_execution_flows_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<ReturnedFutureExecutionFlowInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .returned_future_execution_flows_for_owner(owner_id)?
+                .into_iter()
+                .map(returned_future_execution_flow_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_awaited_call_sites_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<AwaitedCallSiteInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .awaited_call_sites_for_owner(owner_id)?
+                .into_iter()
+                .map(awaited_call_site_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_module_boundary_edges_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<Vec<ModuleBoundaryEdgeInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .module_boundary_edges_from_owner(owner_id, options)?
+                .into_iter()
+                .map(module_boundary_edge_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_crate_boundary_edges_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<Vec<CrateBoundaryEdgeInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .crate_boundary_edges_from_owner(owner_id, options)?
+                .into_iter()
+                .map(crate_boundary_edge_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_module_boundary_policy_violations_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+        rules: &[DbModuleBoundaryPolicyRule],
+    ) -> Result<Option<Vec<ModuleBoundaryPolicyViolationInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .module_boundary_policy_violations_from_owner(owner_id, options, rules)?
+                .into_iter()
+                .map(module_boundary_policy_violation_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_crate_boundary_policy_violations_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+        rules: &[DbCrateBoundaryPolicyRule],
+    ) -> Result<Option<Vec<CrateBoundaryPolicyViolationInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .crate_boundary_policy_violations_from_owner(owner_id, options, rules)?
+                .into_iter()
+                .map(crate_boundary_policy_violation_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_call_build_domains_for_node(
+        &self,
+        node_id: Uuid,
+    ) -> Result<Option<Vec<CallBuildDomainInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .call_build_domains_for_node(node_id)?
+                .into_iter()
+                .map(build_domain_info)
+                .collect(),
+        ))
+    }
+
+    pub fn exact_call_test_entrypoints_for_node(
+        &self,
+        node_id: Uuid,
+    ) -> Result<Option<Vec<CallTestEntrypointInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .call_test_entrypoints_for_node(node_id)?
+                .into_iter()
+                .map(test_entrypoint_info)
+                .collect(),
+        ))
+    }
+
+    pub fn exact_call_test_selection_for_target(
+        &self,
+        target_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<CallTestSelectionInfo>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(test_selection_info(
+            &self.db,
+            self.db.call_test_selection_for_target(target_id, options)?,
+        )?))
+    }
+
+    pub fn exact_private_uncalled_nodes(&self) -> Result<Option<Vec<CallNodeInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .private_uncalled_nodes()?
+                .into_iter()
+                .map(call_node_info)
+                .collect(),
+        ))
+    }
+
+    fn call_context(
+        &self,
+        node_id: Uuid,
+        max_sites: usize,
+        max_targets: usize,
+    ) -> Result<Vec<CallContextInfo>, RagError> {
+        let node = self.db.call_context_for_node(node_id)?;
+        let mut seen_sites = HashSet::new();
+        node.outgoing
+            .into_iter()
+            .chain(node.incoming)
+            .filter(|row| seen_sites.insert(row.site.id))
+            .take(max_sites)
+            .map(|row| row_to_call_context(row, max_targets))
+            .collect()
+    }
+
+    pub fn proof_context_for_node(&self, node_id: Uuid) -> Result<Vec<ProofContextInfo>, RagError> {
+        let cfg = self.cfg.proof_context;
+        if !cfg.enabled || cfg.max_rows_per_part == 0 {
+            return Ok(Vec::new());
+        }
+
+        self.proof_context(node_id, Some(cfg.max_rows_per_part))
+    }
+
+    pub fn exact_proof_context(&self, node_id: Uuid) -> Result<Vec<ProofContextInfo>, RagError> {
+        if !self.cfg.proof_context.enabled {
+            return Ok(Vec::new());
+        }
+
+        self.proof_context(node_id, None)
+    }
+
+    fn proof_context(
+        &self,
+        node_id: Uuid,
+        max_rows: Option<usize>,
+    ) -> Result<Vec<ProofContextInfo>, RagError> {
+        let mut seen = HashSet::new();
+        let mut rows = self
+            .db
+            .proof_symbol_lookup(&node_id.to_string())?
+            .into_iter()
+            .map(row_to_proof_context)
+            .filter(|row| seen.insert((row.fact_id.clone(), row.blocker_reason.clone())))
+            .collect::<Vec<_>>();
+        rows.sort_by(|left, right| {
+            (
+                left.call_site_id.as_deref().unwrap_or(""),
+                left.kind.as_str(),
+                left.fact_id.as_str(),
+                left.blocker_reason.as_deref().unwrap_or(""),
+            )
+                .cmp(&(
+                    right.call_site_id.as_deref().unwrap_or(""),
+                    right.kind.as_str(),
+                    right.fact_id.as_str(),
+                    right.blocker_reason.as_deref().unwrap_or(""),
+                ))
+        });
+        if let Some(max_rows) = max_rows {
+            rows.truncate(max_rows);
+        }
+        Ok(rows)
+    }
+
     fn apply_type_context_gate(db: &Database, cfg: &mut RagConfig) -> Result<bool, RagError> {
         if !cfg.type_context.enabled {
             return Ok(false);
@@ -214,10 +2153,31 @@ impl RagService {
         cfg.type_context.enabled = false;
         Ok(true)
     }
-
-    #[cfg(not(feature = "typed_type_graph"))]
-    fn apply_type_context_gate(_db: &Database, _cfg: &mut RagConfig) -> Result<bool, RagError> {
-        Ok(false)
+    fn apply_call_context_gate(db: &Database, cfg: &mut RagConfig) -> Result<bool, RagError> {
+        if !cfg.call_context.enabled {
+            return Ok(false);
+        }
+        if db.has_call_graph_relations()? {
+            return Ok(false);
+        }
+        tracing::warn!(
+            "call-context payloads disabled: active database is missing populated call graph projection"
+        );
+        cfg.call_context.enabled = false;
+        Ok(true)
+    }
+    fn apply_proof_context_gate(db: &Database, cfg: &mut RagConfig) -> Result<bool, RagError> {
+        if !cfg.proof_context.enabled {
+            return Ok(false);
+        }
+        if db.has_proof_graph_facts()? {
+            return Ok(false);
+        }
+        tracing::warn!(
+            "proof-context payloads disabled: active database is missing populated proof facts"
+        );
+        cfg.proof_context.enabled = false;
+        Ok(true)
     }
 
     /// Construct a new RAG service, starting the BM25 service actor.
@@ -272,6 +2232,12 @@ impl RagService {
     /// because the active database lacks typed-graph relations.
     pub fn type_context_degraded(&self) -> bool {
         self.type_context_degraded
+    }
+    pub fn call_context_degraded(&self) -> bool {
+        self.call_context_degraded
+    }
+    pub fn proof_context_degraded(&self) -> bool {
+        self.proof_context_degraded
     }
 
     /// Convenience constructor for tests with an in-memory database and mock embedder.
@@ -687,7 +2653,6 @@ impl RagService {
         Ok(all_results)
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn expand_hits_with_type_context(
         &self,
         hits: &[(Uuid, f32)],
@@ -777,7 +2742,7 @@ impl RagService {
         let expanded_ids = expanded.iter().map(|(id, _)| *id).collect::<Vec<_>>();
         let materialized_ids = self
             .db
-            .get_nodes_ordered(expanded_ids)
+            .get_snippet_nodes_ordered(expanded_ids)
             .map_err(|e| RagError::Embed(e.to_string()))?
             .into_iter()
             .map(|node| node.id)
@@ -793,13 +2758,267 @@ impl RagService {
         expanded_context.retain(|id, _| materialized_ids.contains(id));
         Ok((merged, expanded_context))
     }
-
-    #[cfg(not(feature = "typed_type_graph"))]
-    fn expand_hits_with_type_context(
+    fn collect_call_context(
         &self,
         hits: &[(Uuid, f32)],
-    ) -> Result<(Vec<(Uuid, f32)>, HashMap<Uuid, TypeContextInfo>), RagError> {
-        Ok((hits.to_vec(), HashMap::new()))
+    ) -> Result<HashMap<Uuid, Vec<CallContextInfo>>, RagError> {
+        self.collect_call_context_with_required(hits, &HashSet::new())
+    }
+    fn collect_call_context_with_required(
+        &self,
+        hits: &[(Uuid, f32)],
+        required: &HashSet<Uuid>,
+    ) -> Result<HashMap<Uuid, Vec<CallContextInfo>>, RagError> {
+        let cfg = self.cfg.call_context;
+        if !cfg.enabled || cfg.max_owner_hits == 0 || hits.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let hit_ids = hits.iter().map(|(id, _)| *id).collect::<HashSet<_>>();
+        let mut seen = HashSet::new();
+        let mut nodes = Vec::new();
+        for &(node_id, _) in hits.iter().take(cfg.max_owner_hits) {
+            if seen.insert(node_id) {
+                nodes.push(node_id);
+            }
+        }
+        for node_id in required
+            .iter()
+            .copied()
+            .filter(|node_id| hit_ids.contains(node_id))
+        {
+            if seen.insert(node_id) {
+                nodes.push(node_id);
+            }
+        }
+
+        let mut out = HashMap::new();
+        for node_id in nodes {
+            let context = self.call_context_for_node(node_id)?;
+            if !context.is_empty() {
+                out.insert(node_id, context);
+            }
+        }
+        Ok(out)
+    }
+    fn collect_call_paths(
+        &self,
+        hits: &[(Uuid, f32)],
+        required: &HashSet<Uuid>,
+    ) -> Result<
+        (
+            HashMap<Uuid, Vec<CallPathInfo>>,
+            HashMap<Uuid, Vec<CallPathInfo>>,
+        ),
+        RagError,
+    > {
+        let cfg = self.cfg.call_context;
+        if !cfg.enabled
+            || cfg.max_owner_hits == 0
+            || cfg.path_depth == 0
+            || cfg.path_limit == 0
+            || hits.is_empty()
+        {
+            return Ok((HashMap::new(), HashMap::new()));
+        }
+
+        let hit_ids = hits.iter().map(|(id, _)| *id).collect::<HashSet<_>>();
+        let mut seen = HashSet::new();
+        let mut nodes = Vec::new();
+        for &(node_id, _) in hits.iter().take(cfg.max_owner_hits) {
+            if seen.insert(node_id) {
+                nodes.push(node_id);
+            }
+        }
+        for node_id in required
+            .iter()
+            .copied()
+            .filter(|node_id| hit_ids.contains(node_id))
+        {
+            if seen.insert(node_id) {
+                nodes.push(node_id);
+            }
+        }
+
+        let options = CallPathOptions {
+            max_depth: cfg.path_depth,
+            max_paths: cfg.path_limit,
+        };
+        let mut from_owner = HashMap::new();
+        let mut to_target = HashMap::new();
+        for node_id in nodes {
+            let outgoing = self.exact_call_paths_from_owner(node_id, options)?;
+            if !outgoing.is_empty() {
+                from_owner.insert(node_id, outgoing);
+            }
+            let incoming = self.exact_call_paths_to_target(node_id, options)?;
+            if !incoming.is_empty() {
+                to_target.insert(node_id, incoming);
+            }
+        }
+        Ok((from_owner, to_target))
+    }
+    fn collect_proof_context(
+        &self,
+        hits: &[(Uuid, f32)],
+    ) -> Result<HashMap<Uuid, Vec<ProofContextInfo>>, RagError> {
+        self.collect_proof_context_with_required(hits, &HashSet::new())
+    }
+    fn collect_proof_context_with_required(
+        &self,
+        hits: &[(Uuid, f32)],
+        required: &HashSet<Uuid>,
+    ) -> Result<HashMap<Uuid, Vec<ProofContextInfo>>, RagError> {
+        let cfg = self.cfg.proof_context;
+        if !cfg.enabled || cfg.max_seed_hits == 0 || cfg.max_rows_per_part == 0 || hits.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let hit_ids = hits.iter().map(|(id, _)| *id).collect::<HashSet<_>>();
+        let mut seen_seeds = HashSet::new();
+        let mut seed_ids = Vec::new();
+        for &(id, _) in hits.iter().take(cfg.max_seed_hits) {
+            if seen_seeds.insert(id) {
+                seed_ids.push(id);
+            }
+        }
+        for id in required.iter().copied().filter(|id| hit_ids.contains(id)) {
+            if seen_seeds.insert(id) {
+                seed_ids.push(id);
+            }
+        }
+
+        let mut out = HashMap::new();
+        for id in seed_ids {
+            let rows = self.proof_context_for_node(id)?;
+            if !rows.is_empty() {
+                out.insert(id, rows);
+            }
+        }
+        Ok(out)
+    }
+    fn expand_hits_with_call_context(
+        &self,
+        hits: &[(Uuid, f32)],
+    ) -> Result<Vec<(Uuid, f32)>, RagError> {
+        Ok(self.expand_hits_with_call_context_info(hits)?.0)
+    }
+    fn expand_hits_with_call_context_info(
+        &self,
+        hits: &[(Uuid, f32)],
+    ) -> Result<(Vec<(Uuid, f32)>, HashMap<Uuid, CallExpansionInfo>), RagError> {
+        let cfg = self.cfg.call_context;
+        if !cfg.enabled
+            || cfg.max_owner_hits == 0
+            || cfg.max_caller_hits == 0
+            || cfg.caller_factor <= 0.0
+            || hits.is_empty()
+        {
+            return Ok((hits.to_vec(), HashMap::new()));
+        }
+
+        let mut scores: HashMap<Uuid, f32> = HashMap::with_capacity(hits.len());
+        for &(id, score) in hits {
+            scores.entry(id).or_insert(score);
+        }
+
+        let mut expanded: HashMap<Uuid, f32> = HashMap::new();
+        let mut expanded_context: HashMap<Uuid, CallExpansionInfo> = HashMap::new();
+        let mut context_scores: HashMap<Uuid, f32> = HashMap::new();
+        for &(seed_id, score) in hits.iter().take(cfg.max_owner_hits) {
+            let seed_options = [
+                (
+                    CallContextSeed::Owner(seed_id),
+                    CallContextOptions {
+                        include_outgoing_targets: true,
+                        include_incoming_callers: false,
+                        max_candidates: cfg.max_caller_hits,
+                    },
+                ),
+                (
+                    CallContextSeed::Target(seed_id),
+                    CallContextOptions {
+                        include_outgoing_targets: false,
+                        include_incoming_callers: true,
+                        max_candidates: cfg.max_caller_hits,
+                    },
+                ),
+            ];
+
+            for (seed, options) in seed_options {
+                for candidate in self.db.expand_call_context(seed, options)? {
+                    record_call_expansion_candidate(
+                        &mut expanded,
+                        &mut expanded_context,
+                        &mut context_scores,
+                        &scores,
+                        seed_id,
+                        score,
+                        cfg.caller_factor,
+                        candidate,
+                    );
+                }
+            }
+
+            if cfg.path_depth > 1 && cfg.path_limit > 0 {
+                let path_options = CallPathOptions {
+                    max_depth: cfg.path_depth,
+                    max_paths: cfg.path_limit,
+                };
+                for seed in [
+                    CallContextSeed::Owner(seed_id),
+                    CallContextSeed::Target(seed_id),
+                ] {
+                    for candidate in self.db.expand_call_path_context(seed, path_options)? {
+                        record_call_expansion_candidate(
+                            &mut expanded,
+                            &mut expanded_context,
+                            &mut context_scores,
+                            &scores,
+                            seed_id,
+                            score,
+                            cfg.caller_factor,
+                            candidate,
+                        );
+                    }
+                }
+            }
+        }
+
+        if expanded.is_empty() {
+            return Ok((hits.to_vec(), HashMap::new()));
+        }
+
+        let mut caller_hits = expanded.into_iter().collect::<Vec<_>>();
+        caller_hits.sort_by(|(left_id, left_score), (right_id, right_score)| {
+            match right_score
+                .partial_cmp(left_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+            {
+                std::cmp::Ordering::Equal => left_id.as_bytes().cmp(right_id.as_bytes()),
+                other => other,
+            }
+        });
+        caller_hits.truncate(cfg.max_caller_hits);
+
+        let caller_ids = caller_hits.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        let materialized_ids = self
+            .db
+            .get_snippet_nodes_ordered(caller_ids)
+            .map_err(|e| RagError::Embed(e.to_string()))?
+            .into_iter()
+            .map(|node| node.id)
+            .collect::<HashSet<_>>();
+
+        let mut merged = Vec::with_capacity(hits.len() + materialized_ids.len());
+        merged.extend_from_slice(hits);
+        merged.extend(
+            caller_hits
+                .into_iter()
+                .filter(|(id, _)| materialized_ids.contains(id)),
+        );
+        expanded_context.retain(|id, _| materialized_ids.contains(id));
+        Ok((merged, expanded_context))
     }
 
     /// High-level API: retrieve and assemble a context using the chosen strategy and budget.
@@ -848,6 +3067,7 @@ impl RagService {
         };
 
         let (hits, type_context) = self.expand_hits_with_type_context(&hits)?;
+        let (hits, call_expansion) = self.expand_hits_with_call_context_info(&hits)?;
 
         // Optional reranker: requires IoManager to fetch texts
         let final_hits: Vec<(Uuid, f32)> = if let Some(rr) = &self.cfg.reranker {
@@ -888,6 +3108,11 @@ impl RagService {
         } else {
             hits
         };
+        let required = call_expansion.keys().copied().collect::<HashSet<_>>();
+        let call_context = self.collect_call_context_with_required(&final_hits, &required)?;
+        let (call_paths_from_owner, call_paths_to_target) =
+            self.collect_call_paths(&final_hits, &required)?;
+        let proof_context = self.collect_proof_context_with_required(&final_hits, &required)?;
 
         // 2) Assemble context
         let io = self
@@ -895,8 +3120,7 @@ impl RagService {
             .as_ref()
             .ok_or_else(|| RagError::Search("IoManagerHandle not configured".to_string()))?
             .clone();
-
-        assemble_context_with_type_context(
+        crate::context::assemble_context_with_context_maps(
             query,
             &final_hits,
             budget,
@@ -905,6 +3129,11 @@ impl RagService {
             &self.db,
             &io,
             &type_context,
+            &call_context,
+            &call_expansion,
+            &call_paths_from_owner,
+            &call_paths_to_target,
+            &proof_context,
         )
         .await
     }

@@ -60,17 +60,17 @@ fn repro_duplicate_closure_local_consts_resolves_successfully() {
 // `if/else`, where both branches define the same local `const HARD_LINE_BREAK`.
 // This fixture keeps that shape valid Rust and small enough to verify:
 // - the crate compiles under `cargo check`
-// - `syn_parser` skips executable-body local items instead of panicking on duplicate
-//   local const IDs
+// - `syn_parser` models executable-body local const initializers without
+//   creating duplicate item-level `Const` IDs
 #[test]
-fn repro_duplicate_if_branch_hard_line_break_consts_resolves_without_executable_local_item_nodes() {
+fn repro_duplicate_if_branch_hard_line_break_consts_resolves_without_duplicate_const_nodes() {
     let member_root =
         fixture_workspace_root().join("member_if_branch_hard_line_break_consts_repro");
 
     validate_fixture(&member_root);
 
     try_run_phases_and_resolve(&member_root)
-        .expect("parser should skip executable-body local const items instead of panicking");
+        .expect("parser should model executable local const initializers without panicking");
 }
 
 // TEST_NOTE:2026-03-29
@@ -90,16 +90,16 @@ fn repro_duplicate_if_branch_hard_line_break_consts_resolves_without_executable_
 // `if/else` and the same local `const Y` in both branches. This fixture keeps that
 // shape valid Rust and small enough to verify:
 // - the crate compiles under `cargo check`
-// - `syn_parser` skips executable-body local items instead of panicking on duplicate
-//   local const IDs
+// - `syn_parser` models executable-body local const initializers without
+//   creating duplicate item-level `Const` IDs
 #[test]
-fn repro_duplicate_if_branch_local_consts_resolves_without_executable_local_item_nodes() {
+fn repro_duplicate_if_branch_local_consts_resolves_without_duplicate_const_nodes() {
     let member_root = fixture_workspace_root().join("member_if_branch_local_consts_repro");
 
     validate_fixture(&member_root);
 
     try_run_phases_and_resolve(&member_root)
-        .expect("parser should skip executable-body local const items instead of panicking");
+        .expect("parser should model executable local const initializers without panicking");
 }
 
 // TEST_NOTE:2026-03-29
@@ -119,16 +119,16 @@ fn repro_duplicate_if_branch_local_consts_resolves_without_executable_local_item
 // that each define the same local `const H2`, plus a nested `impl` item in each
 // branch. This fixture keeps that shape valid Rust and small enough to verify:
 // - the crate compiles under `cargo check`
-// - `syn_parser` skips executable-body local items instead of panicking on duplicate
-//   local const IDs
+// - `syn_parser` models executable-body local const initializers without
+//   creating duplicate item-level `Const` IDs
 #[test]
-fn repro_duplicate_tls_branch_h2_consts_resolves_without_executable_local_item_nodes() {
+fn repro_duplicate_tls_branch_h2_consts_resolves_without_duplicate_const_nodes() {
     let member_root = fixture_workspace_root().join("member_tls_branch_h2_consts_repro");
 
     validate_fixture(&member_root);
 
     try_run_phases_and_resolve(&member_root)
-        .expect("parser should skip executable-body local const items instead of panicking");
+        .expect("parser should model executable local const initializers without panicking");
 }
 
 // TEST_NOTE:2026-03-29
@@ -148,16 +148,16 @@ fn repro_duplicate_tls_branch_h2_consts_resolves_without_executable_local_item_n
 // items in the same source file producing the same synthetic `Const` ID. This
 // fixture keeps the example valid Rust and small enough to verify:
 // - the crate compiles under `cargo check`
-// - `syn_parser` skips executable-body local items instead of panicking on duplicate
-//   local const IDs
+// - `syn_parser` models executable-body local const initializers without
+//   creating duplicate item-level `Const` IDs
 #[test]
-fn repro_duplicate_local_consts_resolves_without_executable_local_item_nodes() {
+fn repro_duplicate_local_consts_resolves_without_duplicate_const_nodes() {
     let member_root = fixture_workspace_root().join("member_const_repro");
 
     validate_fixture(&member_root);
 
     try_run_phases_and_resolve(&member_root)
-        .expect("parser should skip executable-body local const items instead of panicking");
+        .expect("parser should model executable local const initializers without panicking");
 }
 
 // TEST_NOTE:2026-03-29

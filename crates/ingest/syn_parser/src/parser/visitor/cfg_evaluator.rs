@@ -8,11 +8,10 @@
 //!
 //! The evaluator **silently rejects** the following commonly-used atoms:
 //!
-//! * `target_pointer_width = "64"` / `"32"`  
-//! * `target_endian = "little"` / `"big"`  
-
-//! * `target_env = "gnu"` / `"musl"` / `"msvc"`  
-//! * `windows`, `unix`, `test`, `debug_assertions`, `doc`, `proc_macro`  
+//! * `target_pointer_width = "64"` / `"32"`
+//! * `target_endian = "little"` / `"big"`
+//! * `target_env = "gnu"` / `"musl"` / `"msvc"`
+//! * `debug_assertions`, `doc`, `proc_macro`
 //! * `panic = "unwind"` / `"abort"`  
 //! * `target_has_atomic = "…"`, `target_feature = "…"`  
 //!

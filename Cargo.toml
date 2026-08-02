@@ -9,6 +9,7 @@ exclude = [
     "tests/fixture_crates/example_crate",
     "tests/fixture_crates/file_dir_detection",
     "tests/fixture_crates/fixture_cyclic_types",
+    "tests/fixture_crates/fixture_call_graph",
     "tests/fixture_crates/fixture_edge_cases",
     "tests/fixture_crates/fixture_generics",
     "tests/fixture_crates/fixture_macros",

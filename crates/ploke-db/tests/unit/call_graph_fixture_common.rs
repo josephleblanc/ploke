@@ -1,0 +1,70 @@
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, LazyLock, Mutex},
+};
+
+use cozo::{DataValue, Db, MemStorage, UuidWrapper};
+use ploke_db::{
+    CallCallerRow, CallContextCandidate, CallContextRelation, CallContextRow, CallReceiver,
+    CallRelationKind, CallResolutionKind, CallSiteKind, CallStatusKind, CallTargetKind, Database,
+    DbError, ProofGraphContextRow, ProofGraphStore, QueryResult, call_target_endpoint_relation,
+    to_uuid,
+};
+use ploke_transform::{schema::create_schema_all, transform::transform_parsed_graph};
+use uuid::Uuid;
+
+mod constructor;
+mod dynamic;
+mod lookup;
+mod proof;
+mod rows;
+mod scenarios;
+mod selectors;
+mod targetless;
+
+pub(super) use constructor::*;
+pub(super) use dynamic::*;
+pub(super) use lookup::*;
+pub(super) use proof::*;
+pub(super) use rows::*;
+pub(super) use scenarios::*;
+pub(super) use selectors::*;
+pub(super) use targetless::*;
+
+pub(super) fn setup_call_graph_fixture_db(fixture: &'static str) -> Result<Database, DbError> {
+    let db = Db::new(MemStorage::default()).expect("in-memory cozo db");
+    db.initialize().expect("initialize cozo db");
+    create_schema_all(&db).map_err(|err| DbError::QueryExecution(err.to_string()))?;
+
+    let mut merged = syn_parser::parser::ParsedCodeGraph::merge_new(
+        ploke_test_utils::test_run_phases_and_collect(fixture),
+    )
+    .map_err(|err| DbError::QueryExecution(err.to_string()))?;
+    let tree = merged
+        .build_tree_and_prune()
+        .map_err(|err| DbError::QueryExecution(err.to_string()))?;
+    transform_parsed_graph(&db, merged, &tree)
+        .map_err(|err| DbError::QueryExecution(err.to_string()))?;
+
+    Ok(Database::new(db))
+}
+
+static FIXTURE_CACHE: LazyLock<Mutex<BTreeMap<&'static str, Arc<Database>>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+/// Returns one shared database per fixture for tests that only perform reads.
+///
+/// Tests that insert proof facts or otherwise mutate the fixture must continue
+/// to use [`setup_call_graph_fixture_db`] for isolation.
+pub(super) fn shared_fixture_db(fixture: &'static str) -> Result<Arc<Database>, DbError> {
+    let mut cache = FIXTURE_CACHE.lock().map_err(|_| {
+        DbError::QueryExecution("shared call-graph fixture cache mutex was poisoned".to_string())
+    })?;
+    if let Some(db) = cache.get(fixture) {
+        return Ok(Arc::clone(db));
+    }
+
+    let db = Arc::new(setup_call_graph_fixture_db(fixture)?);
+    cache.insert(fixture, Arc::clone(&db));
+    Ok(db)
+}

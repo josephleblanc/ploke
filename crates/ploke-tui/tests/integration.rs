@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::sync::{Mutex as StdMutex, OnceLock};
 
 use tokio::sync::Mutex as TokioMutex;
 
@@ -6,6 +6,12 @@ use tokio::sync::Mutex as TokioMutex;
 pub(crate) fn workspace_registry_env_lock() -> &'static TokioMutex<()> {
     static LOCK: OnceLock<TokioMutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| TokioMutex::new(()))
+}
+
+/// Shared lock for integration tests that mutate fixture workspace files or parse them.
+pub(crate) fn fixture_workspace_lock() -> &'static StdMutex<()> {
+    static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| StdMutex::new(()))
 }
 
 #[path = "integration/approvals_overlay_keys.rs"]
@@ -31,6 +37,42 @@ mod command_stress_tokio;
 
 #[path = "integration/command_verbosity_profile.rs"]
 mod command_verbosity_profile;
+
+#[path = "integration/call_graph_tool_support.rs"]
+mod call_graph_tool_support;
+
+#[path = "integration/call_graph_tool_executable_owner.rs"]
+mod call_graph_tool_executable_owner;
+
+#[path = "integration/call_graph_tool_method_callback.rs"]
+mod call_graph_tool_method_callback;
+
+#[path = "integration/call_graph_tool_remaining_matrix.rs"]
+mod call_graph_tool_remaining_matrix;
+
+#[path = "integration/call_graph_tool_shared_matrix.rs"]
+mod call_graph_tool_shared_matrix;
+
+#[path = "integration/call_graph_tool_targetless_matrix.rs"]
+mod call_graph_tool_targetless_matrix;
+
+#[path = "integration/request_code_context_call_graph.rs"]
+mod request_code_context_call_graph;
+
+#[path = "integration/code_item_lookup_regression.rs"]
+mod code_item_lookup_regression;
+
+#[path = "integration/code_item_call_path.rs"]
+mod code_item_call_path;
+
+#[path = "integration/code_item_boundary_policy.rs"]
+mod code_item_boundary_policy;
+
+#[path = "integration/code_item_effect_guard.rs"]
+mod code_item_effect_guard;
+
+#[path = "integration/code_private_uncalled.rs"]
+mod code_private_uncalled;
 
 #[path = "integration/commands_parser_m1.rs"]
 mod commands_parser_m1;

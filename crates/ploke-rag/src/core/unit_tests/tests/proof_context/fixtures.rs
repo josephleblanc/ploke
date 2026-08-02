@@ -1,0 +1,16 @@
+mod ambiguous;
+mod blockers;
+mod callable_trait_objects;
+mod constructors;
+mod executable_owners;
+mod expanded;
+mod field_dynamic;
+mod initializers;
+mod method_targets;
+mod projected;
+mod raw_identifiers;
+mod real_corpus;
+mod result_field_receivers;
+mod returned_async_futures;
+mod special_forms;
+mod targetless_special_forms;
